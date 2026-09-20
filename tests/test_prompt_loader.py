@@ -27,13 +27,6 @@ class TestPromptLoader(unittest.TestCase):
             "video_quality_gate",
             "contextual_selector",
             "screenplay_coherence",
-            "reel_writer",
-            "news_verifier",
-            "video_director",
-            "fact_checker",
-            "researcher",
-            "editor",
-            "writer",
         ]
         for subagent in expected_subagents:
             md_path = PROMPTS_DIR / subagent / "prompt.md"
@@ -72,22 +65,14 @@ class TestPromptLoader(unittest.TestCase):
     def test_method_prompts_exist_and_render(self):
         from core.prompt_loader import render_prompt
         expected_method_prompts = [
-            ("news_validator/validate_news.md", {"headline": "Test Headline", "category": "Tech"}),
-            ("hook_strategist/craft_hook.md", {"headline": "Test Headline", "category": "Tech", "tone": "Funny", "duration": 15, "angle": "Sarcastic"}),
-            ("hook_strategist/craft_hooks_batch.md", {"headline": "Test Headline", "category": "Tech", "tone": "Funny", "duration": 15, "angle": "Sarcastic", "batch_count": 2}),
-            ("dialogue_writer/write_dialogue.md", {"selected_hook": "Hook", "headline": "Headline", "category": "Tech", "tone": "Funny", "duration": 15, "rec_words": 30, "min_words": 15, "max_words": 35, "wps": 2.2, "character_context_prompt": "", "character_count": 1, "scene_style": "Monologue", "angle": "Humorous"}),
-            ("dialogue_writer/write_dialogue_batch.md", {"selected_hook": "Hook", "headline": "Headline", "category": "Tech", "tone": "Funny", "duration": 15, "rec_words": 30, "min_words": 15, "max_words": 35, "wps": 2.2, "character_context_prompt": "", "character_count": 1, "scene_style": "Monologue", "angle": "Humorous", "batch_count": 2}),
-            ("scene_director/direct_scenes.md", {"dialogue": "Narration", "duration": 15, "angle": "Humorous", "tone": "Funny", "frame_count": 3, "character_context_prompt": ""}),
-            ("video_prompt_engineer/generate_prompts.md", {"storyboard_details": "Story", "tone": "Funny", "style": "9:16", "duration": 15, "aspect_ratio": "9:16", "resolution": "4K", "fps": "24fps", "camera_style": "Cinematic", "lighting_style": "Warm", "motion_style": "Smooth", "negative_prompt": "Blur", "characters_summary": "None"}),
-            ("video_quality_gate/audit_prompts.md", {"video_prompts_text": "Prompt 1", "tone": "Funny", "duration": 15, "aspect_ratio": "9:16", "resolution": "4K", "fps": "24fps"}),
-            ("reel_writer/generate_single_script.md", {"topic": "AI", "angle": "Tech", "tone": "Funny", "category": "Tech", "duration": 15, "fact_check_summary": "Verified", "reliability_score": 95, "character_context_prompt": ""}),
-            ("news_verifier/verify.md", {"topic": "AI"}),
-            ("video_director/generate_video_prompts.md", {"topic": "AI", "article_content": "Content", "tone": "Informative"}),
-            ("video_director/verify_prompts_quality.md", {"prompts_data": "Prompts"}),
-            ("fact_checker/audit.md", {"topic": "AI", "key_findings": "Findings", "sources_text": "Source 1"}),
-            ("researcher/analyze.md", {"topic": "AI", "sources_text": "Source 1"}),
-            ("writer/write.md", {"topic": "AI", "research_findings": "Findings", "target_word_count": 500, "fact_check_score": 90, "fact_check_notes": "Good"}),
-            ("editor/review_and_publish.md", {"topic": "AI", "draft_headline": "Headline", "draft_subheadline": "Subheadline", "draft_content": "Content", "reliability_score": 90, "audit_summary": "Passed"}),
+            ("news_validator/validate_news.md", {"news_input": "Test Headline", "scenario": "Tech", "sub_directive": "", "sources_count": 0, "sources_text": ""}),
+            ("hook_strategist/craft_hook.md", {"news_topic": "Test Headline", "angle_name": "Sarcastic", "angle_desc": "Sharp", "tone": "Funny", "duration_sec": 15, "cta_guidance": "Follow", "sub_directive": "", "verification_summary": "Verified"}),
+            ("hook_strategist/craft_hooks_batch.md", {"news_topic": "Test Headline", "tone": "Funny", "duration_sec": 15, "cta_guidance": "Follow", "sub_directive": "", "facts_text": "", "verification_summary": "Verified", "angles_text": "Angle 1"}),
+            ("dialogue_writer/write_dialogue.md", {"news_input": "Story", "hook": "Hook", "duration_sec": 15, "rec_words": 30, "min_words": 15, "max_words": 35, "sub_directive": "", "guidance": "", "tone": "Funny", "cta": "Follow", "correction_note": "", "facts_list": ""}),
+            ("dialogue_writer/write_dialogue_batch.md", {"news_input": "Story", "duration_sec": 15, "actual_scenes": 3, "rec_words": 30, "min_words": 15, "max_words": 35, "per_scene_words": 10, "per_scene_max": 12, "narrative_name": "Fun First", "narrative_desc": "Humor then news", "character_count": 2, "personas_list": "P1, P2", "setting_location": "Tapri", "physical_props": "Chai", "core_conflict": "Irony", "facts_text": "Facts", "creative_rules": "", "sample_directive": "", "sub_directive": "", "guidance": "", "items_desc": "Script 1", "sample_scenes": "Scene 1"}),
+            ("scene_director/direct_scenes.md", {"news_topic": "Topic", "hook": "Hook", "narration": "Narration", "duration_sec": 15, "target_frames": 3, "timestamps_text": "0:00 - 0:05", "props_text": "Chai", "locs_text": "Street", "actions_text": "Sip", "lines_summary": "Lines", "sub_directive": ""}),
+            ("video_prompt_engineer/generate_prompts.md", {"news_topic": "Topic", "tone": "Funny", "angle": "Sarcastic", "sub_directive": "", "scenes_desc": "Scenes"}),
+            ("video_quality_gate/audit_prompts.md", {"sub_directive": "", "prompts_summary": "Prompts"}),
         ]
 
         for rel_path, kwargs in expected_method_prompts:

@@ -9,7 +9,7 @@ from .scene_director import SceneVisualsDirectorAgent, scene_director
 from .video_prompt_engineer import AIVideoPromptAgent, video_prompt_engineer
 from .video_quality_gate import VideoQualityGateAgent, video_quality_gate
 from .chief_editor import ChiefEditorCoordinatorAgent, chief_editor_coordinator
-from .reel_writer import REEL_ANGLES
+from core.angles import REEL_ANGLES
 
 __all__ = [
     "BaseAgent",

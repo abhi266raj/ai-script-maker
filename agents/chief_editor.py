@@ -19,7 +19,7 @@ from agents.timing_auditor import timing_auditor
 from agents.scene_director import scene_director
 from agents.video_prompt_engineer import video_prompt_engineer
 from agents.video_quality_gate import video_quality_gate
-from agents.reel_writer import REEL_ANGLES
+from core.angles import REEL_ANGLES
 from core.metrics import get_duration_budget
 from core.dual_engine import ModelGenerationError
 
