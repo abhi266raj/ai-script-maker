@@ -1,0 +1,228 @@
+{
+  "project_name": "Hindi Reel Studio - Autonomous News Agent",
+  "version": "2.1.0",
+  "description": "Autonomous multi-agent system transforming breaking news into viral, fact-checked Hindi reels with Google Flow / Veo 9:16 prompts",
+  "default_language": "Hindi (Devanagari)",
+  "interface_language": "English",
+  "default_engine": "fm_only",
+  "default_duration": 20,
+  "default_batch_count": 1,
+  "default_tone": "\ud83d\ude02 Relatable Comedy & Sarcasm (\u0926\u0947\u0938\u0940 \u0939\u094d\u092f\u0942\u092e\u0930)",
+  "news_category": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance",
+  "engines": {
+    "hybrid": {
+      "key": "first_local_then_agy",
+      "display_name": "Hybrid (First Local FM, then Antigravity AGY Fallback)",
+      "description": "Attempts fast on-device Apple FM first, with seamless cloud AGY fallback"
+    },
+    "agy_only": {
+      "key": "agy_only",
+      "display_name": "Antigravity (AGY) Only (Verified & High Capacity)",
+      "path": "/opt/homebrew/bin/agy",
+      "description": "Cloud reasoning engine with web search and comprehensive Hindi fluency"
+    },
+    "fm_only": {
+      "key": "fm_only",
+      "display_name": "Local Apple FM Only (On-Device with Auto-Recovery)",
+      "path": "/usr/bin/fm",
+      "description": "Runs private on-device model with automatic zero-crash recovery"
+    }
+  },
+  "durations": {
+    "supported_seconds": [
+      5,
+      10,
+      15,
+      20,
+      25,
+      30,
+      45,
+      60,
+      90,
+      120,
+      180
+    ],
+    "custom_input_allowed": true,
+    "speech_rate_words_per_sec": 2.2,
+    "pacing_rules": {
+      "target_scope": "Spoken Hindi voiceover dialogue narration only (narration_hindi)",
+      "under_budget_policy": "Safe (Leaves breathing room for B-roll, SFX, and dramatic pauses. Never flagged as issue)",
+      "over_budget_policy": "Issue / Strict Failure (Overflows target duration or sounds unnaturally rushed. Must be trimmed)"
+    },
+    "word_limits": {
+      "5": {
+        "min_words": 4,
+        "recommended_words": 10,
+        "max_words": 11
+      },
+      "10": {
+        "min_words": 8,
+        "recommended_words": 20,
+        "max_words": 23
+      },
+      "15": {
+        "min_words": 12,
+        "recommended_words": 30,
+        "max_words": 34
+      },
+      "20": {
+        "min_words": 16,
+        "recommended_words": 40,
+        "max_words": 46
+      },
+      "25": {
+        "min_words": 20,
+        "recommended_words": 50,
+        "max_words": 58
+      },
+      "30": {
+        "min_words": 24,
+        "recommended_words": 60,
+        "max_words": 69
+      },
+      "45": {
+        "min_words": 36,
+        "recommended_words": 90,
+        "max_words": 104
+      },
+      "60": {
+        "min_words": 48,
+        "recommended_words": 120,
+        "max_words": 138
+      },
+      "90": {
+        "min_words": 72,
+        "recommended_words": 180,
+        "max_words": 207
+      },
+      "120": {
+        "min_words": 96,
+        "recommended_words": 240,
+        "max_words": 276
+      },
+      "180": {
+        "min_words": 144,
+        "recommended_words": 360,
+        "max_words": 414
+      }
+    }
+  },
+  "batch_output_counts": [
+    1,
+    2,
+    3,
+    5,
+    10,
+    20
+  ],
+  "autonomous_self_healing": {
+    "enabled": true,
+    "max_retries": 5,
+    "timing_tolerance_pct": 20
+  },
+  "video_specs": {
+    "aspect_ratio": "9:16",
+    "resolution": "4K UHD",
+    "frame_rate": "24fps",
+    "target_models": [
+      "Google Flow",
+      "Google Veo",
+      "OpenAI Sora"
+    ]
+  },
+  "tones": [
+    "\ud83c\uddee\ud83c\uddf3 Desi Swag & Cultural Pride (\u092d\u093e\u0930\u0924\u0940\u092f \u0917\u094c\u0930\u0935)",
+    "\ud83e\ude94 Traditional Heritage & Wisdom (\u0938\u093e\u0902\u0938\u094d\u0915\u0943\u0924\u093f\u0915 \u0927\u0930\u094b\u0939\u0930)",
+    "\ud83c\udfad Festive Celebration & Folklore (\u0909\u0924\u094d\u0938\u0935 \u0935 \u092a\u0930\u0902\u092a\u0930\u093e)",
+    "Funny & Relatable",
+    "Witty Meme & Satirical",
+    "Urgent Breaking News",
+    "Casual Conversational",
+    "Dramatic Storytelling",
+    "Analytical & Deep-Dive",
+    "Inspirational & Uplifting",
+    "Sarcastic & Edgy",
+    "Gen-Z Slang (Hinglish)",
+    "Investigative Reporter",
+    "Curiosity & Mystery",
+    "Debate & Opinionated",
+    "Fact-Check & Mythbuster",
+    "Tech Geek Enthusiast",
+    "Bollywood Masala Drama"
+  ],
+  "news_categories": [
+    "\ud83c\uddee\ud83c\uddf3 India Top Stories & Breaking",
+    "\ud83e\ude94 Indian Culture, Heritage & Festivals",
+    "\ud83d\ude80 India Tech, Space (ISRO) & Startups",
+    "Tech & AI",
+    "World News",
+    "Business & Markets",
+    "Science & Space"
+  ],
+  "pipeline_agents": [
+    {
+      "id": 1,
+      "name": "News Validation Specialist",
+      "role": "Live Wire Fact-Checking & Credibility Verification",
+      "icon": "\ud83d\udd0d"
+    },
+    {
+      "id": 2,
+      "name": "Hook & Angle Strategist",
+      "role": "Viral Hook Formulation & Angle Framing",
+      "icon": "\ud83c\udfaf"
+    },
+    {
+      "id": 3,
+      "name": "Spoken Hindi Dialogue Narration Writer",
+      "role": "Authentic Spoken Hindi Voiceover Generation",
+      "icon": "\u270d\ufe0f"
+    },
+    {
+      "id": 4,
+      "name": "Word Count & Pacing Timing Auditor",
+      "role": "Spoken Hindi Word Count & Duration Calibration",
+      "icon": "\u23f1\ufe0f"
+    },
+    {
+      "id": 5,
+      "name": "Scene Visuals & B-Roll Director",
+      "role": "Scene Breakdown, Visual B-Roll & SFX Direction",
+      "icon": "\ud83c\udfac"
+    },
+    {
+      "id": 6,
+      "name": "AI Video Prompt Engineer",
+      "role": "Google Flow & Veo 9:16 Prompt Synthesis",
+      "icon": "\ud83c\udfa5"
+    },
+    {
+      "id": 7,
+      "name": "AI Video Quality Gate Auditor",
+      "role": "Video Generation Feasibility & Compliance Check",
+      "icon": "\ud83d\udee1\ufe0f"
+    },
+    {
+      "id": 8,
+      "name": "Chief Editor & Pipeline Orchestrator",
+      "role": "Multi-Agent Coordination & Editorial Sign-Off",
+      "icon": "\ud83d\udc51"
+    }
+  ],
+  "server": {
+    "host": "127.0.0.1",
+    "port": 8501,
+    "health_endpoint": "http://127.0.0.1:8501/_stcore/health"
+  },
+  "max_retries": 5,
+  "batch_count": 1,
+  "selected_script_index": 0,
+  "default_angle": "Funny & Relatable",
+  "character_count": 2,
+  "scene_style": "Speech",
+  "enable_self_healing": true,
+  "frame_count": 3,
+  "studio_layout": "2_frame",
+  "source_mode": "\ud83d\udce1 Live News",
+  "selected_headline": "Parliament passes landmark governance bill"
+}

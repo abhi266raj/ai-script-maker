@@ -1,0 +1,155 @@
+"""Agent 2: Hook & Angle Strategist Agent."""
+
+import re
+from typing import Tuple, List, Optional
+from agents.base import BaseAgent
+from core.models import NewsVerificationReport
+
+HOOK_STRATEGIST_INSTRUCTIONS = """You are an expert Social Media Hook Strategist & Audience Retention Specialist.
+Your sole responsibility in the pipeline is crafting viral, scroll-stopping 0-3 second Hook lines in Hindi.
+Rules:
+1. The hook must stop viewers from scrolling within 3 seconds using humor, curiosity, or shock value.
+2. Align precisely with the requested tone (e.g., Funny & Relatable, Witty Meme, Urgent Breaking).
+3. Include high-engagement emojis and spoken Hindi conversational phrasing.
+4. When the news touches Indian culture, heritage, festivals, or Indian national stories, craft hooks rooted in cultural pride, relatable desi expressions (अरे भाई सुनो!, क्या आप जानते हैं?, हमारी परंपरा में...), and high audience resonance."""
+
+
+class HookAndAngleAgent(BaseAgent):
+    def __init__(self):
+        super().__init__(
+            name="Hook & Angle Strategist",
+            role="Viral Hook Formulation & Angle Framing",
+            icon="🎯",
+            instructions=HOOK_STRATEGIST_INSTRUCTIONS,
+        )
+
+    def craft_hook(
+        self,
+        news_topic: str,
+        angle_name: str,
+        angle_desc: str,
+        tone: str,
+        verification: NewsVerificationReport,
+        duration_sec: int = 30,
+        sub_instruction: Optional[str] = None,
+        engine_mode: str = "first_local_then_agy",
+    ) -> Tuple[str, str]:
+        """Generate a viral 0-3s Hindi hook and an engaging Call-To-Action (CTA)."""
+        cta_guidance = (
+            "Keep CTA ultra-short (1-2 words e.g. 'फॉलो करें!') because reel is very short."
+            if duration_sec <= 10 else
+            "Keep CTA concise (3-5 words e.g. 'फॉलो करें और राय बताएं!')."
+        )
+        sub_directive = f"\nChief Editor Directive:\n{sub_instruction}\n" if sub_instruction else ""
+        prompt = f"""News Topic: {news_topic}
+Angle: {angle_name} ({angle_desc})
+Target Tone: {tone}
+Duration: {duration_sec}s
+CTA Guideline: {cta_guidance}
+{sub_directive}
+Verified Context: {verification.verification_summary}
+
+Task:
+1. Write ONE 0-3s viral Hindi Hook (1 short sentence with emojis).
+2. Write ONE closing Hindi Call to Action (CTA) matching the CTA guideline.
+
+Output format:
+HOOK: [Catchy Hindi Hook with emojis]
+CTA: [Engaging Hindi Call to Action]"""
+
+        try:
+            raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except Exception:
+            raw_output = ""
+
+        hook = f"🔥 अरे सुनिए! {news_topic[:40]} को लेकर बड़ा अपडेट आ गया है!"
+        cta = "फॉलो करें!" if duration_sec <= 10 else "फॉलो करें और अपनी राय कमेंट में बताएं!"
+
+        for line in raw_output.split("\n"):
+            line_str = line.strip()
+            if line_str.startswith("HOOK:"):
+                hook = line_str.replace("HOOK:", "").strip("[] \"'")
+            elif line_str.startswith("CTA:"):
+                cta = line_str.replace("CTA:", "").strip("[] \"'")
+
+        return hook, cta
+
+    def craft_hooks_batch(
+        self,
+        news_topic: str,
+        angles: List[Tuple[str, str]],
+        tone: str,
+        verification: NewsVerificationReport,
+        duration_sec: int = 30,
+        sub_instruction: Optional[str] = None,
+        engine_mode: str = "first_local_then_agy",
+    ) -> List[Tuple[str, str]]:
+        """Generate viral hooks and CTAs for multiple angles in a single optimized inference call."""
+        angles_text = "\n".join([f"ANGLE {i+1}: {a[0]} ({a[1]})" for i, a in enumerate(angles)])
+        cta_guidance = (
+            f"Because reel is {duration_sec}s, keep CTA strictly 1 to 3 words (e.g. 'फॉलो करें!' or 'शेयर करें!')."
+            if duration_sec <= 10 else
+            f"Keep CTA concise (under 6 words)."
+        )
+        sub_directive = f"\nChief Editor Directive for Hooks & Angles:\n{sub_instruction}\n" if sub_instruction else ""
+        facts_text = "\n".join([f"- {f}" for f in (verification.verified_facts if verification else [])[:3]])
+        prompt = f"""News Topic: {news_topic}
+Target Tone: {tone}
+Target Duration: {duration_sec} Seconds
+CTA Guideline: {cta_guidance}
+{sub_directive}
+Verified Key Facts:
+{facts_text or news_topic}
+Verified Summary: {verification.verification_summary if verification else news_topic}
+
+Angles to formulate:
+{angles_text}
+
+Task:
+For each angle, write ONE 0-3s viral Hindi Hook (with emojis) and ONE closing CTA.
+Strict format:
+ANGLE 1:
+HOOK: [Catchy Hindi Hook]
+CTA: [Closing CTA]
+
+ANGLE 2:
+HOOK: [Catchy Hindi Hook]
+CTA: [Closing CTA]
+(continue for all angles)"""
+
+        try:
+            raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except Exception:
+            raw_output = ""
+
+        results: List[Tuple[str, str]] = []
+        blocks = re.split(r"ANGLE\s*(\d+):", raw_output, flags=re.IGNORECASE)
+
+        parsed_map = {}
+        if len(blocks) > 1:
+            for i in range(1, len(blocks), 2):
+                idx = int(blocks[i]) - 1
+                content = blocks[i + 1]
+                h = None
+                c = None
+                for line in content.split("\n"):
+                    ls = line.strip()
+                    if ls.startswith("HOOK:"):
+                        h = ls.replace("HOOK:", "").strip("[] \"'")
+                    elif ls.startswith("CTA:"):
+                        c = ls.replace("CTA:", "").strip("[] \"'")
+                if h and c:
+                    parsed_map[idx] = (h, c)
+
+        default_c = "फॉलो करें!" if duration_sec <= 10 else "शेयर करें और अपनी राय नीचे कमेंट में बताएं!"
+        for i, a in enumerate(angles):
+            if i in parsed_map:
+                results.append(parsed_map[i])
+            else:
+                default_h = f"🔥 {a[0].split('(')[0].strip()}: क्या आपको ये खबर पता चली?"
+                results.append((default_h, default_c))
+
+        return results
+
+
+hook_strategist = HookAndAngleAgent()

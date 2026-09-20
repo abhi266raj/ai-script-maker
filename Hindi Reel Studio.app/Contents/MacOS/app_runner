@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+# macOS Native App Runner: Auto-starts server & launches dedicated window
+
+PROJECT_DIR="/Users/abhiraj/Documents/news/agent"
+PORT=8501
+HOST="127.0.0.1"
+URL="http://${HOST}:${PORT}"
+LOG_FILE="${PROJECT_DIR}/.server.log"
+
+cd "${PROJECT_DIR}" || exit 1
+
+# Function to check if Streamlit is alive
+is_server_running() {
+    curl -s --connect-timeout 1 "${URL}/" > /dev/null 2>&1
+}
+
+# Auto-start server if not already running
+if ! is_server_running; then
+    if [ -f "${PROJECT_DIR}/.venv/bin/streamlit" ]; then
+        nohup "${PROJECT_DIR}/.venv/bin/streamlit" run "${PROJECT_DIR}/app.py" \
+            --server.headless true \
+            --server.address "${HOST}" \
+            --server.port ${PORT} < /dev/null > "${LOG_FILE}" 2>&1 &
+        
+        # Wait until server is healthy (up to 8 seconds)
+        for i in {1..16}; do
+            if is_server_running; then
+                break
+            fi
+            sleep 0.5
+        done
+    fi
+fi
+
+# Launch standalone window
+if [ -d "/Applications/Google Chrome.app" ]; then
+    open -na "Google Chrome" --args --app="${URL}"
+elif [ -d "/Applications/Brave Browser.app" ]; then
+    open -na "Brave Browser" --args --app="${URL}"
+elif [ -d "/Applications/Microsoft Edge.app" ]; then
+    open -na "Microsoft Edge" --args --app="${URL}"
+else
+    open "${URL}"
+fi

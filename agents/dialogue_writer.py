@@ -1,0 +1,951 @@
+"""Agent 3: Dialogue & Narration Scriptwriter Agent."""
+
+import re
+import random
+import logging
+from typing import Optional, List, Dict, Any, Tuple
+from agents.base import BaseAgent
+from core.models import NewsVerificationReport
+from core.metrics import get_duration_budget, count_words
+
+logger = logging.getLogger(__name__)
+
+DIALOGUE_INSTRUCTIONS = """You are a master Hindi Dialogue & Voiceover Scriptwriter for short reels and videos.
+Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari) that creators can read out loud smoothly.
+Rules:
+1. Ground every sentence in the verified news facts.
+2. The language MUST match the requested tone (e.g., Funny & Relatable everyday Hindi, Witty, Urgent, Desi Swag, Traditional Heritage).
+3. Strictly calibrate sentence length to match the assigned spoken word budget.
+4. Do NOT output stage directions or brackets in the narration; output only clean spoken Hindi dialogue.
+5. When covering Indian news, culture, heritage, or festivals, infuse authentic cultural idioms, respectful relatable Hindi cadence, and celebrate Indian pride, timeless traditions, and historical significance.
+6. SINGLE UNIFIED VIDEO REEL (ZERO BACKGROUND REPETITION): The script is for ONE continuous video reel. The setting and news premise are established ONCE in Scene 1. Subsequent scenes (Scene 2, Scene 3, etc.) MUST NEVER repeat the background context or re-explain the news premise; they must immediately advance the dialogue, character reaction, and punchy resolution.
+7. ANTI-MISINFORMATION & POLICY COMPLIANCE (STRICT): Fictional characters MUST NEVER be named after real living politicians (e.g. Rahul, Modi, Kejriwal, Amit Shah) to prevent deepfake or impersonation flags. Frame news responsibly as public events ('पोस्टर सामने आए हैं', 'रिपोर्ट्स के अनुसार'), avoiding unverified defamation or hate speech.
+8. DYNAMIC NARRATIVE ARCS (FIRST FUN, THEN NEWS): Reels do NOT always have to state dry news in sentence 1! For funny, sarcastic, and relatable angles, open with the FUN SITUATIONAL HOOK or relatable blunder in Part 1, reveal the actual news development in Part 2 as the cause/twist, and land the punchline payoff in Part 3."""
+
+
+POLITICAL_NAMES_BLACKLIST = {
+    "rahul", "modi", "narendra", "kejriwal", "gandhi", "amit shah", "amit",
+    "yogi", "adityanath", "sonia", "priyanka", "mamata", "stalin", "pawar",
+    "fadnavis", "shinde", "thackeray", "nitish", "lalu", "tejaswi"
+}
+
+
+def sanitize_persona_name(name: str) -> str:
+    """Ensure fictional characters never use politician names to prevent policy/misinformation flags."""
+    if not name:
+        return ""
+    t = name
+    for pol in POLITICAL_NAMES_BLACKLIST:
+        if re.search(rf"\b{pol}\b", t, re.IGNORECASE):
+            t = re.sub(rf"\b{pol}\b", "Rohan", t, flags=re.IGNORECASE)
+            t = t.replace("राहुल", "रोहन").replace("अमित", "आरव").replace("मोदी", "कबीर")
+    return t
+
+
+def get_sentence_guidance(duration_sec: int, rec_w: int, max_w: int, tone: str = "", angle: str = "") -> str:
+    """Return explicit structural sentence advice calibrated to target reel duration with Fun-First support."""
+    combined = f"{tone} {angle}".lower()
+    is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "roast", "relatable"])
+
+    if duration_sec <= 8:
+        return (
+            f"TARGET STRUCTURE: Exactly ONE punchy spoken Hindi sentence totaling ~{rec_w} words (MAX: {max_w}w).\n"
+            f"- State the core shock/update immediately and conclude. Do NOT use any introductory phrases."
+        )
+    elif duration_sec <= 15:
+        if is_funny:
+            return (
+                f"TARGET STRUCTURE: Exactly TWO crisp spoken Hindi sentences totaling ~{rec_w} words (MAX: {max_w}w).\n"
+                f"- Sentence 1 (FUN / SITUATION FIRST): A relatable comedic hook or personal blunder (NOT dry news yet!).\n"
+                f"- Sentence 2 (NEWS REVEAL & PUNCHLINE): The news fact reveal that caused it, concluding with a witty punchline."
+            )
+        return (
+            f"TARGET STRUCTURE: Exactly TWO crisp spoken Hindi sentences totaling ~{rec_w} words (MAX: {max_w}w).\n"
+            f"- Sentence 1: The core hook or breaking development.\n"
+            f"- Sentence 2: The takeaway or punchline with impactful conclusion."
+        )
+    elif duration_sec <= 30:
+        if is_funny:
+            return (
+                f"TARGET STRUCTURE: Exactly 3 to 4 concise spoken Hindi sentences totaling ~{rec_w} words (MAX: {max_w}w).\n"
+                f"- Sentence 1 (FUN FIRST HOOK): Everyday comedic situation, confusion, or funny reaction hook.\n"
+                f"- Sentence 2-3 (NEWS REVEAL): Unveiling the verified news facts and context explaining what happened.\n"
+                f"- Sentence 4 (PAYOFF): Witty punchline and conclusion tying it together."
+            )
+        return (
+            f"TARGET STRUCTURE: Exactly 3 to 4 concise spoken Hindi sentences totaling ~{rec_w} words (MAX: {max_w}w).\n"
+            f"- Sentence 1: Immediate hook context.\n"
+            f"- Sentence 2-3: Core facts, relatable impact, or cultural significance.\n"
+            f"- Sentence 4: Engaging closing takeaway."
+        )
+    elif duration_sec <= 60:
+        return (
+            f"TARGET STRUCTURE: 5 to 7 spoken Hindi sentences totaling ~{rec_w} words (MAX: {max_w}w).\n"
+            f"- Deliver informative pacing with natural cadence."
+        )
+    else:
+        return (
+            f"TARGET STRUCTURE: 8 to 12 spoken Hindi sentences totaling ~{rec_w} words (MAX: {max_w}w)."
+        )
+
+
+def strip_commenting_and_cta(text: str) -> str:
+    """Purge social media commenting, subscriber calls, and meta-CTAs from dialogue."""
+    if not text:
+        return ""
+    t = text
+    patterns = [
+        r"(?:नीचे\s*)?कमेंट\s*(?:में\s*(?:बताएं|बताओ|लिखें|लिखो)|करें|करो|सेक्शन\s*में\s*(?:बताएं|बताओ))[\s।!?]*",
+        r"(?:आपकी\s*क्या\s*राय\s*है\s*[,।]?\s*)?कमेंट\s*(?:करें|करके\s*बताएं|में\s*बताएं)[\s।!?]*",
+        r"(?:लाइक\s*(?:और|व)\s*)?शेयर\s*(?:करें|करो|करना\s*मत\s*भूलना)[\s।!?]*",
+        r"फॉलो\s*(?:करें|करो|करना\s*मत\s*भूलना)[\s।!?]*",
+        r"सब्सक्राइब\s*(?:करें|करो)[\s।!?]*",
+        r"(?:comment\s*below|share\s*your\s*thoughts|like\s*and\s*subscribe)[\s।!?]*",
+    ]
+    for pat in patterns:
+        t = re.sub(pat, "", t, flags=re.IGNORECASE)
+    t = " ".join(t.split())
+    return t.strip()
+
+
+def clean_hindi_dialogue(text: str) -> str:
+    """Strip out stage directions, script markers, markdown tags, and social media commenting."""
+    if not text:
+        return ""
+    t = text.strip()
+    t = re.sub(r"^(NARRATION|DIALOGUE|VOICEOVER|SCRIPT\s*\d*)\s*:\s*", "", t, flags=re.IGNORECASE)
+    t = re.sub(r"\[.*?\]", "", t)
+    t = re.sub(r"\(.*?\)", "", t)
+    t = re.sub(r"\*\*.*?\*\*", "", t)
+    t = re.sub(r"[-*_~#]{2,}", "", t)
+    t = re.sub(r"^[\"'\s\-_*~#]+|[\"'\s\-_*~#]+$", "", t.strip())
+    t = strip_commenting_and_cta(t)
+    t = " ".join(t.split())
+    return t.strip()
+
+
+def smart_trim_dialogue(text: str, max_words: int, rec_words: int, cta: str = "") -> str:
+    """Intelligently trim dialogue to fit max_words while preserving complete sentences without injecting commenting or CTA."""
+    cleaned = strip_commenting_and_cta(text)
+    if count_words(cleaned) <= max_words:
+        return cleaned
+
+    words = cleaned.split()
+    truncated_base = " ".join(words[:max_words])
+    
+    # Find the latest sentence boundary (। , ! , ?) within the truncated word limit
+    last_punct_idx = -1
+    for delim in ["।", "!", "?"]:
+        pos = truncated_base.rfind(delim)
+        if pos > last_punct_idx:
+            last_punct_idx = pos
+
+    # Only cut back to punctuation if it retains at least 50% of max_words
+    if last_punct_idx > 0 and count_words(truncated_base[:last_punct_idx + 1]) >= int(max_words * 0.5):
+        truncated_base = truncated_base[:last_punct_idx + 1]
+    elif not truncated_base.endswith(("।", "!", "?", "...", "…")):
+        truncated_base += "..."
+
+    return truncated_base.strip()
+
+
+class ScriptDialogue(str):
+    """
+    Subclass of str that behaves as a standard spoken dialogue string,
+    while carrying structured scene character turns in `scene_lines`.
+    """
+    scene_lines: List[Dict[str, str]]
+
+    def __new__(cls, narration: str, scene_lines: Optional[List[Dict[str, str]]] = None):
+        obj = super().__new__(cls, narration)
+        obj.scene_lines = scene_lines or []
+        return obj
+
+
+DIVERSE_SOCIOECONOMIC_PAIRS = [
+    # Rich & Working-Class Contrast
+    ("👩 Priya (Rich Tech Founder / Friend 1 - अमीर टेक फाउंडर)", "🧑 Rohan (Working-Class Auto Driver / Friend 2 - मेहनती ऑटो चालक)"),
+    # Police & Gig Worker / Common Citizen
+    ("👮 Sub-Inspector Sunita (Traffic Police / Friend 1 - पुलिस दरोगा)", "🛵 Rohan (Gig Delivery Partner / Friend 2 - डिलीवरी राइडर)"),
+    # Local Fictional Politician / Ward Corporator & Tapri Vendor
+    ("🏛️ Netaji Tiwari (Ward Corporator / Friend 1 - स्थानीय पार्षद)", "☕ Rohan (Street Chai Tapri Owner / Friend 2 - टपरी वाला)"),
+    # Government Servant (Babu) & Young Citizen / Student
+    ("👔 Sharma Ji (Government Clerk / Friend 1 - सरकारी बाबू)", "🧑 Rohan (UPSC Aspirant / Friend 2 - छात्र)"),
+    # Corporate Executive & Grassroots Citizen
+    ("💼 Ananya (Corporate Banker / Friend 1 - कॉर्पोरेट एग्जीक्यूटिव)", "🧑 Kabir (Street-Smart Youth / Friend 2 - देसी युवा)"),
+    # High Court Advocate & Small Trader
+    ("⚖️ Advocate Verma (High Court Lawyer / Friend 1 - वकील साहब)", "🛒 Mohan (Local Kirana Trader / Friend 2 - दुकानदार)"),
+    # Doctor & Daily Wage Worker
+    ("🩺 Dr. Rajesh (Government Hospital Doctor / Friend 1 - डॉक्टर साहब)", "👷 Ramesh (Construction Worker / Friend 2 - दिहाड़ी मजदूर)"),
+    # School Principal & Vegetable Vendor
+    ("📚 Master Ji (Government School Teacher / Friend 1 - सरकारी मास्टर जी)", "🥦 Rohan (Street Sabziwala / Friend 2 - सब्जी विक्रेता)"),
+    # Real Estate Investor & Auto Rickshaw Driver
+    ("🏢 Seth Radheshyam (Property Investor / Friend 1 - अमीर व्यापारी)", "🛺 Rohan (Auto Rickshaw Driver / Friend 2 - ऑटो चालक)"),
+    # Rural & City Contrast
+    ("🌾 Sarpanch Harpal (Village Pradhan / Friend 1 - ग्राम प्रधान)", "🧑 Rohan (City-Returned Youth / Friend 2 - युवा)"),
+    # Everyday Relatable Companions
+    ("👩 Priya / Friend 1 (प्रिया - दोस्त 1)", "🧑 Rohan / Friend 2 (रोहन - दोस्त 2)"),
+]
+
+DIVERSE_SOCIOECONOMIC_TRIOS = [
+    (
+        "🏛️ Netaji Tiwari (Local Corporator / Friend 1 - स्थानीय पार्षद)",
+        "🧑 Rohan (Auto Driver / Friend 2 - ऑटो चालक)",
+        "☕ Mohan (Chai Tapri Owner / Elder - टपरी वाला बुजुर्ग)",
+    ),
+    (
+        "💼 Ananya (Rich Corporate VP / Friend 1 - अमीर बैंकर)",
+        "🛵 Kabir (Delivery Rider / Friend 2 - डिलीवरी पार्टनर)",
+        "👮 Inspector Vikram (Police Sub-Inspector / Elder - पुलिस दरोगा)",
+    ),
+    (
+        "👔 Sharma Ji (Government Clerk / Friend 1 - सरकारी बाबू)",
+        "👩 Priya (Young Citizen / Friend 2 - नागरिक)",
+        "👴 Chacha Ji / Elder (चाचा जी - अनुभवी बुजुर्ग)",
+    ),
+    (
+        "🩺 Dr. Rajesh (Hospital Doctor / Friend 1 - वरिष्ठ चिकित्सक)",
+        "🧑 Rohan (Medical Representative / Friend 2 - युवा प्रतिनिधि)",
+        "👵 Amma (Elder Citizen / Witness - बुजुर्ग महिला)",
+    ),
+    (
+        "⚖️ Advocate Verma (Senior Lawyer / Friend 1 - वरिष्ठ अधिवक्ता)",
+        "👔 Clerk Tripathi (Court Babu / Friend 2 - पेशकार बाबू)",
+        "🧑 Kabir (Common Citizen / Friend 3 - आम नागरिक)",
+    ),
+]
+
+
+def select_script_grounded_solo(topic_or_script: str) -> str:
+    """Select the best-fitting solo persona grounded in the script's topic domain."""
+    text = (topic_or_script or "").lower()
+    if any(k in text for k in ["police", "दरोगा", "ट्रैफिक", "traffic", "challan", "fir", "arrest"]):
+        return "😂 Desi Creator Vikram (Beat Police Constable / Creator - देसी क्रिएटर विक्रम)"
+    if any(k in text for k in ["babu", "बाबू", "clerk", "सरकारी", "upsc", "pension"]):
+        return "😂 Desi Creator Sharma Ji (Government Clerk / Babu - देसी क्रिएटर सरकारी बाबू)"
+    if any(k in text for k in ["election", "नेता", "netaji", "पार्षद", "corporator", "party", "vote"]):
+        return "😂 Desi Creator Netaji Tiwari (Local Corporator - देसी क्रिएटर पार्षद)"
+    if any(k in text for k in ["chai", "चाय", "tapri", "टपरी", "पोहा", "poha"]):
+        return "😂 Desi Creator Mohan (Chai Tapri Owner - देसी क्रिएटर टपरी वाला)"
+    if any(k in text for k in ["auto", "ऑटो", "रिक्शा", "cab", "driver"]):
+        return "😂 Desi Creator Rohan (Outspoken Auto Driver / Creator - देसी क्रिएटर रोहन)"
+    return "😂 Desi Creator Priya (Tech Professional / Creator - देसी क्रिएटर प्रिया)"
+
+
+def select_script_grounded_pair(topic_or_script: str) -> Tuple[str, str]:
+    """Select the best-fitting socioeconomic pair grounded in the script's topic domain."""
+    text = (topic_or_script or "").lower()
+
+    # 1. Court / Legal / Justice / Lawyer / High Court / Supreme Court / Bail
+    if any(k in text for k in ["court", "कोर्ट", "कानून", "judge", "vakeel", "lawyer", "वकील", "मुकदमा", "justice", "फैसला", "पीठ", "bail", "बेल", "legal", "याचिका", "plea"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[5]  # High Court Lawyer vs Kirana Trader
+
+    # 2. Police / Law Enforcement / Traffic / Challan / FIR / Crime / Jail
+    if any(k in text for k in ["police", "दरोगा", "थाना", "गिरफ्तार", "arrest", "fir", "ट्रैफिक", "traffic", "challan", "चालान", "crime", "जेल", "scam"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[1]  # Police Sub-Inspector vs Gig Delivery Partner
+
+    # 3. Politics / Election / Netaji / Corporator / Municipal / Government / Scheme
+    if any(k in text for k in ["election", "चुनाव", "नेता", "netaji", "पार्षद", "corporator", "party", "पार्टी", "सरकार", "government", "mantri", "मंत्री", "योजना", "scheme", "नगर निगम"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[2]  # Ward Corporator Netaji vs Chai Tapri Owner
+
+    # 4. Government Servant / Babu / Clerk / Exam / UPSC / Pension
+    if any(k in text for k in ["babu", "बाबू", "clerk", "सरकारी बाबू", "upsc", "pension", "दफ्तर", "सरकारी"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[3]  # Government Clerk Sharma Ji vs UPSC Aspirant
+
+    # 5. Tech / Corporate / IT / Office / Work From Office / WFO / AI / Startup / Software / Laptop
+    if any(k in text for k in ["wfo", "rto", "office", "ऑफिस", "tech", "ai", "startup", "software", "बायोमेट्रिक", "biometric", "laptop", "कंप्यूटर", "developer", "engineer", "corporate"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[0]  # Rich Tech Founder vs Working-Class Auto Driver
+
+    # 6. Corporate Finance / Banking / Investment / Stock / Market
+    if any(k in text for k in ["bank", "बैंक", "invest", "share", "शेयर", "crypto", "fund", "finance", "करोड़"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[4]  # Corporate Banker vs Street-Smart Youth
+
+    # 7. Healthcare / Hospital / Doctor / Medical / Patient / Medicine / Clinic
+    if any(k in text for k in ["hospital", "अस्पताल", "doctor", "डॉक्टर", "nurse", "medicine", "दवा", "मरीज", "patient", "health", "स्वास्थ्य", "बीमारी", "clinic"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[6]  # Hospital Doctor vs Construction Worker
+
+    # 8. Education / School / Teacher / Master Ji / College / Student / Exam
+    if any(k in text for k in ["school", "स्कूल", "college", "कॉलेज", "exam", "परीक्षा", "student", "छात्र", "teacher", "मास्टर", "university", "cbse"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[7]  # School Teacher vs Vegetable Vendor
+
+    # 9. Real Estate / Property / Investor / Auto / Rickshaw
+    if any(k in text for k in ["property", "जमीन", "मकान", "builder", "auto", "ऑटो", "rickshaw", "किराया"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[8]  # Property Investor vs Auto Rickshaw Driver
+
+    # 10. Rural / Village / Agriculture / Farmer / Sarpanch / Panchayat / Mandi
+    if any(k in text for k in ["village", "गाँव", "गांव", "farmer", "किसान", "kheti", "खेती", "mandi", "मंडी", "panchayat", "sarpanch", "सरपंच", "प्रधान"]):
+        return DIVERSE_SOCIOECONOMIC_PAIRS[9]  # Village Pradhan vs City-Returned Youth
+
+    # Default fallback: random choice across all diverse pairs
+    return random.choice(DIVERSE_SOCIOECONOMIC_PAIRS)
+
+
+def select_script_grounded_trio(topic_or_script: str) -> Tuple[str, str, str]:
+    """Select the best-fitting socioeconomic trio grounded in the script's topic domain."""
+    text = (topic_or_script or "").lower()
+    if any(k in text for k in ["election", "नेता", "netaji", "पार्षद", "corporator", "party", "सरकार", "chai", "चाय", "tapri"]):
+        return DIVERSE_SOCIOECONOMIC_TRIOS[0]  # Netaji, Auto Driver, Chai Tapri Elder
+    if any(k in text for k in ["police", "दरोगा", "office", "tech", "corporate", "delivery", "राइडर"]):
+        return DIVERSE_SOCIOECONOMIC_TRIOS[1]  # Corporate VP, Delivery Rider, Inspector
+    if any(k in text for k in ["babu", "बाबू", "clerk", "सरकारी", "citizen", "पेंशन", "छात्र"]):
+        return DIVERSE_SOCIOECONOMIC_TRIOS[2]  # Government Clerk, Citizen, Elder
+    if any(k in text for k in ["hospital", "doctor", "डॉक्टर", "स्वास्थ्य", "दवा", "मरीज"]):
+        return DIVERSE_SOCIOECONOMIC_TRIOS[3]  # Doctor, Med Rep, Amma
+    if any(k in text for k in ["court", "कोर्ट", "वकील", "lawyer", "कानून", "जज"]):
+        return DIVERSE_SOCIOECONOMIC_TRIOS[4]  # Advocate, Clerk Babu, Citizen
+    return random.choice(DIVERSE_SOCIOECONOMIC_TRIOS)
+
+
+def get_character_personas(
+    scene_style: str,
+    character_count: int,
+    tone: str,
+    angle: str,
+    topic_or_script: str = "",
+    sample_story: Optional[str] = None,
+) -> List[str]:
+    """Generate rich, socioeconomically diverse character personas grounded in the script topic and representing India."""
+    import random
+    combined = f"{tone} {angle}".lower()
+    context_text = f"{topic_or_script} {sample_story or ''}"
+    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic"])
+    is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "रोस्ट", "edgy", "relatable"])
+    is_culture = any(w in combined for w in ["culture", "heritage", "pride", "गौरव", "धरोहर", "traditional", "wisdom"])
+    style_lower = scene_style.lower()
+
+    if character_count <= 1:
+        if is_sad or style_lower == "lament":
+            return ["💔 Grieving Citizen Meera (भावुक सूत्रधार मीरा)"]
+        elif is_funny or style_lower == "dialogue":
+            chosen_solo = select_script_grounded_solo(context_text)
+            return [sanitize_persona_name(chosen_solo)]
+        elif is_culture:
+            return ["🪔 Cultural Storyteller Shastri Ji (सांस्कृतिक सूत्रधार)"]
+        elif style_lower == "speech":
+            return [sanitize_persona_name("📢 Orator Vikrant (वक्ता विक्रांत)")]
+        else:
+            return [sanitize_persona_name("🎙️ Presenter Neha (मुख्य वक्ता नेहा)")]
+
+    if character_count == 2:
+        if is_sad or style_lower == "lament":
+            return [
+                sanitize_persona_name("👩 Ananya / Bereaved Person (शोकाकुल साथी अनन्या)"),
+                sanitize_persona_name("🤝 Vikram / Consoling Companion (सहयोगी विक्रम)")
+            ]
+        elif style_lower == "interview":
+            return [
+                sanitize_persona_name("🎙️ Journalist / Host Neha (पत्रकार नेहा)"),
+                sanitize_persona_name("👤 Guest / Insider Dr. Farhan (सरकारी अधिकारी / अतिथि डॉ. फरहान)")
+            ]
+        elif style_lower == "debate":
+            return [
+                sanitize_persona_name("🗣️ Speaker A - Sunita (पक्ष - सुनीता)"),
+                sanitize_persona_name("👥 Speaker B - Vikrant (विपक्ष - विक्रांत)")
+            ]
+        elif is_culture:
+            return [
+                sanitize_persona_name("🪔 Senior Scholar Shastri Ji (गुरु / शास्त्री जी)"),
+                sanitize_persona_name("👩 Curious Youth Meera (जिज्ञासु युवा मीरा)")
+            ]
+        else:
+            # Contextual script-grounded selection of diverse Indian socioeconomic pairings
+            # representing rich, poor, police, clerk, corporator, doctor, etc.
+            chosen_pair = select_script_grounded_pair(context_text)
+            return [sanitize_persona_name(chosen_pair[0]), sanitize_persona_name(chosen_pair[1])]
+
+    # 3 or more characters (Multi-generational, gender-balanced, socioeconomic diversity)
+    if is_sad or style_lower == "lament":
+        return [
+            sanitize_persona_name("👩 Ananya / Bereaved Person (शोकाकुल साथी अनन्या)"),
+            sanitize_persona_name("🤝 Vikram / Consoling Friend (सहयोगी विक्रम)"),
+            sanitize_persona_name("👵 Amma / Elder Witness (बुजुर्ग अभिभावक अम्मा)"),
+        ]
+    elif style_lower == "interview":
+        return [
+            sanitize_persona_name("🎙️ Host Neha (होस्ट नेहा)"),
+            sanitize_persona_name("👤 Guest Dr. Imran (वरिष्ठ विशेषज्ञ डॉ. इमरान)"),
+            sanitize_persona_name("👩‍💼 Analyst Lakshmi (अर्थशास्त्री लक्ष्मी)"),
+        ]
+    elif style_lower == "debate":
+        return [
+            sanitize_persona_name("🎙️ Moderator Anita (मध्यस्थ अनीता)"),
+            sanitize_persona_name("🗣️ Speaker A - Vikrant (पक्ष - विक्रांत)"),
+            sanitize_persona_name("👥 Speaker B - Fatima (विपक्ष - फातिमा)"),
+        ]
+    else:
+        # Contextual script-grounded selection of diverse socioeconomic trios
+        chosen_trio = select_script_grounded_trio(context_text)
+        return [sanitize_persona_name(c) for c in chosen_trio]
+
+
+NARRATIVE_MODES = [
+    {
+        "name": "Fun & Banter First (ह्यूमर पहले, खबर बाद में)",
+        "mode_key": "fun_first",
+        "description": "Start with hilarious relatable banter, boasting, or misunderstanding in Beat 1. Drop the actual verified news as a sudden revelation in Beat 2. Deliver a sharp punchline in Beat 3.",
+    },
+    {
+        "name": "Breaking News First (सीधी खबर और धरातलीय बहस)",
+        "mode_key": "news_first",
+        "description": "Start with an urgent breaking news hook in Beat 1. Examine facts and counterpoints in Beat 2. Conclude with a witty or thoughtful takeaway in Beat 3.",
+    },
+    {
+        "name": "Mid-Conversation Discovery (चर्चा के बीच में खबर की एंट्री)",
+        "mode_key": "mid_conversation",
+        "description": "Start with an everyday work or life debate in Beat 1. Suddenly discover/read the news on phone/newspaper in Beat 2. React with shock and comic resolution in Beat 3.",
+    },
+    {
+        "name": "Curiosity & Mystery First (जिज्ञासा और रहस्य)",
+        "mode_key": "curiosity_first",
+        "description": "Start with a curious observation or puzzling event in Beat 1. Unpack the verified news backstory explaining it in Beat 2. Land an eye-opening satirical takeaway in Beat 3.",
+    },
+]
+
+
+def get_creative_guidelines(scene_style: str, character_count: int, tone: str, angle: str) -> str:
+    """Generate explicit directives to ensure AI respects Angle (creative situation), Tone (jokes/emotions), and Style."""
+    combined = f"{tone} {angle}".lower()
+    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic"])
+
+    # Angle Guidance
+    angle_guidance = (
+        f"🎨 EDITORIAL ANGLE DIRECTIVE ({angle or 'Creative Angle'}):\n"
+        f"- The angle dictates HOW you imagine and set up the scene!\n"
+        f"- Do NOT just report dry news. Create an imaginary relatable situation, sketch, or scenario:\n"
+        f"  * If Tragic & Heartbreaking: Frame through a quiet, solemn moment of personal loss, deep empathy, and emotional vulnerability.\n"
+        f"  * If Funny & Relatable: Create an everyday situation (e.g. friends at a chai tapri, dealing with hilarious daily absurdities).\n"
+        f"  * If Sarcastic & Edgy: Roast the ironies and contrast expectations vs reality with sharp wit.\n"
+        f"  * If Bollywood Masala: Inject dramatic Hindi cinema flair, punchy one-liners, and dramatic tension.\n"
+        f"  * If Gen-Z Hinglish: Use modern viral slang, relatable meme references, and casual conversational flow.\n"
+        f"  * If Investigative Deep-Dive: Frame as uncovering startling behind-the-scenes curiosity.\n"
+        f"  * If Inspirational & Uplifting: Frame as a triumphant journey of courage, hard work, and national pride."
+    )
+
+    # Tone Guidance
+    if is_sad:
+        tone_guidance = (
+            f"😢 TONE DIRECTIVE ({tone}):\n"
+            f"- Infuse deep emotional weight, quiet sorrow, and heartfelt empathy.\n"
+            f"- Spoken dialogue must honor human grief with tender sensitivity and solemn dignity.\n"
+            f"- Avoid loud, sensational, or rushed delivery."
+        )
+    elif any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी"]):
+        tone_guidance = (
+            f"😂 TONE DIRECTIVE ({tone}):\n"
+            f"- THIS MUST BE GENUINELY FUNNY! Use real jokes, witty banter, humorous metaphors, and comedic punchlines.\n"
+            f"- Characters should react with funny shock, tease each other, or make hilarious relatable comparisons.\n"
+            f"- Avoid flat, boring news reciting. Be entertaining, witty, and creative!"
+        )
+    elif any(w in combined for w in ["viral", "high energy", "धमाकेदार"]):
+        tone_guidance = (
+            f"🔥 TONE DIRECTIVE ({tone}):\n"
+            f"- High-voltage excitement! Deliver shock-value hooks, explosive energy, and dramatic pacing."
+        )
+    elif any(w in combined for w in ["culture", "heritage", "pride", "गौरव"]):
+        tone_guidance = (
+            f"🪔 TONE DIRECTIVE ({tone}):\n"
+            f"- Celebrate timeless Indian heritage, deep cultural pride, and respectful desi swag with authentic idioms."
+        )
+    else:
+        tone_guidance = f"🎙️ TONE DIRECTIVE ({tone}):\n- Embody the spirit of {tone} with authentic spoken Hindi."
+
+    # Style Guidance
+    style_lower = scene_style.lower()
+    if style_lower == "lament":
+        style_guidance = (
+            "💔 SCENE STYLE DIRECTIVE: LAMENT / EULOGY:\n"
+            "- A deeply moving tribute and expression of shared sorrow, offering mutual solace and poignant remembrance across scenes."
+        )
+    elif style_lower == "dialogue" and character_count > 1:
+        style_guidance = (
+            f"👥 SCENE STYLE DIRECTIVE: DIALOGUE ({character_count} Characters):\n"
+            f"- This is an active in-universe conversation between {character_count} people!\n"
+            f"- Characters must speak back-and-forth across the scenes, reacting to each other's words, bantering, questioning, and dropping punchlines.\n"
+            f"- STRICT FORBIDDEN RULE: NO social media commenting, NO CTA, NO asking viewers to comment ('कमेंट करें', 'लाइक करें', 'कमेंट में बताओ'). Characters are having a real conversation with each other in their world—they DO NOT talk about comments!\n"
+            f"- Each scene must have a designated character speaking their exact line."
+        )
+    elif style_lower == "interview":
+        style_guidance = (
+            "🎤 SCENE STYLE DIRECTIVE: INTERVIEW:\n"
+            "- The interviewer asks sharp, engaging questions; the guest responds with exciting, funny, or deep revelations."
+        )
+    elif style_lower == "debate":
+        style_guidance = (
+            "⚔️ SCENE STYLE DIRECTIVE: DEBATE:\n"
+            "- Two opposing viewpoints clash with witty counter-points, lively banter, and engaging arguments."
+        )
+    elif style_lower == "speech":
+        style_guidance = (
+            "📢 SCENE STYLE DIRECTIVE: SPEECH:\n"
+            "- A charismatic public address delivered directly to an audience with rhetorical questions and impact."
+        )
+    else:
+        style_guidance = (
+            "🎙️ SCENE STYLE DIRECTIVE: MONOLOGUE / NARRATION:\n"
+            "- Direct-to-camera storytelling with punchy, energetic delivery addressing the viewer directly."
+        )
+
+    insta_story_guidance = (
+        "📱 REAL INSTAGRAM STORY / REEL VIBE & CADENCE:\n"
+        "- The dialogue MUST feel like a genuine, viral Instagram Story or Reel shot on a phone camera!\n"
+        "- Spontaneous, snappy, highly conversational spoken Hindi/Hinglish.\n"
+        "- Natural conversational openers & reactions: 'अरे यार सुनो!', 'सच में?', 'तू मज़ाक कर रहा है क्या?', 'भाई ये क्या सीन है?!', 'अरे यार दिमाग खराब हो गया!'\n"
+        "- Authentic back-and-forth rhythm with quick interruptions, funny expressions, and real-life camaraderie.\n"
+        "- NEVER sound like a formal television news anchor, textbook lecture, or rehearsed speech. Sound like real people talking on an Insta story!"
+    )
+
+    diversity_guidance = (
+        "🌍 DEMOGRAPHIC & GENDER DIVERSITY:\n"
+        "- Characters represent an authentic mix of genders (men, women) and diverse demographic backgrounds across India.\n"
+        "- Characters have distinct voices, unique cultural viewpoints, and natural colloquial warmth reflecting their background."
+    )
+
+    no_commenting_rule = (
+        "🚫 STRICT PROHIBITION ON COMMENTING & CTAs IN SCRIPT DIALOGUE:\n"
+        "- Spoken dialogue MUST NEVER contain social media meta-commentary, such as 'कमेंट करें', 'कमेंट में बताएं', 'लाइक करें', 'शेयर करें', or asking viewers to comment.\n"
+        "- Characters must remain 100% inside the scene and talk to each other naturally without breaking character."
+    )
+
+    single_video_flow_rule = (
+        "🎬 ONE CONTINUOUS VIDEO FLOW (ZERO REPETITION OF BACKGROUND CONTEXT):\n"
+        "- This is ONE single continuous video reel, not multiple separate videos.\n"
+        "- The setting, location, and news premise are established ONCE in Scene 1.\n"
+        "- Scene 2, Scene 3, and subsequent scenes MUST NOT re-explain the background, re-summarize what happened, or repeat context.\n"
+        "- Every turn must advance the story forward: direct reactions, sharp dialogue banter, prop interaction, and logical punchy resolution."
+    )
+
+    return f"{angle_guidance}\n\n{tone_guidance}\n\n{style_guidance}\n\n{insta_story_guidance}\n\n{diversity_guidance}\n\n{no_commenting_rule}\n\n{single_video_flow_rule}"
+
+
+class DialogueNarrationAgent(BaseAgent):
+    def __init__(self):
+        super().__init__(
+            name="Dialogue & Narration Scriptwriter",
+            role="Spoken Dialogue Writing & Timeline Calibration",
+            icon="🎙️",
+            instructions=DIALOGUE_INSTRUCTIONS,
+        )
+
+    def write_dialogue(
+        self,
+        news_input: str,
+        hook: str,
+        cta: str,
+        tone: str,
+        duration_sec: int,
+        verification: NewsVerificationReport,
+        correction_feedback: Optional[str] = None,
+        sub_instruction: Optional[str] = None,
+        engine_mode: str = "first_local_then_agy",
+    ) -> str:
+        """Craft spoken Hindi dialogue strictly calibrated to word budget."""
+        budget = get_duration_budget(duration_sec)
+        guidance = get_sentence_guidance(duration_sec, budget["recommended_words"], budget["max_words"])
+
+        correction_note = ""
+        if correction_feedback:
+            correction_note = f"\n[CRITICAL CORRECTION FROM TIMING AUDITOR: {correction_feedback}]\n"
+
+        sub_directive = f"\nChief Editor Directive & Dialogue Word Limits:\n{sub_instruction}\n" if sub_instruction else ""
+
+        prompt = f"""News Story: {news_input}
+Opening Hook: {hook}
+Target Duration: Exactly {duration_sec} Seconds
+Word Budget for Spoken Dialogue:
+- Target / Recommended: ~{budget['recommended_words']} words
+- Absolute Strict Maximum: {budget['max_words']} words
+- Minimum Safe Words: {budget['min_words']} words
+{sub_directive}
+{guidance}
+
+CRITICAL PACING & QUALITY DIRECTIVES:
+1. Less words ({budget['min_words']} to {budget['recommended_words']} words) is completely SAFE and encourages B-roll, pauses, and sound effects.
+2. More than {budget['max_words']} words is a STRICT FAILURE. Do NOT write verbose narration.
+3. NO greetings (Never say 'नमस्ते', 'नमस्कार', 'हेलो').
+4. NO intro filler (Never say 'आइए जानते हैं', 'दोस्तों जैसा कि आप जानते हैं').
+5. NO stage directions or brackets. Output ONLY pure spoken Hindi dialogue in Devanagari script.
+6. Tone: {tone}
+7. Closing CTA: {cta}
+{correction_note}
+Facts to incorporate:
+{chr(10).join(['- ' + f for f in verification.verified_facts[:3]])}
+
+Task: Write the spoken Devanagari Hindi dialogue. Keep total words <= {budget['max_words']} words:"""
+
+        try:
+            raw_output = self.execute(prompt, engine_mode=engine_mode)
+            cleaned = clean_hindi_dialogue(raw_output)
+            final_text = smart_trim_dialogue(cleaned, budget["max_words"], budget["recommended_words"], cta)
+            return final_text or f"{hook} {news_input}. {cta}"
+        except Exception:
+            fallback = f"{hook} {news_input}. {cta}"
+            return smart_trim_dialogue(fallback, budget["max_words"], budget["recommended_words"], cta)
+
+    def write_dialogues_batch(
+        self,
+        news_input: str,
+        items: List[Dict[str, str]],
+        tone: str,
+        duration_sec: int,
+        verification: NewsVerificationReport,
+        character_count: int = 1,
+        scene_style: str = "Dialogue",
+        preferred_angle: str = "",
+        sample_story: Optional[str] = None,
+        sub_instruction: Optional[str] = None,
+        engine_mode: str = "first_local_then_agy",
+        num_scenes: Optional[int] = None,
+    ) -> List[str]:
+        """Craft spoken Hindi dialogues for all items scene-by-scene respecting character count, style, tone, and angle."""
+        budget = get_duration_budget(duration_sec)
+        guidance = get_sentence_guidance(duration_sec, budget["recommended_words"], budget["max_words"])
+        personas = get_character_personas(
+            scene_style, character_count, tone, preferred_angle,
+            topic_or_script=news_input, sample_story=sample_story
+        )
+        creative_rules = get_creative_guidelines(scene_style, character_count, tone, preferred_angle)
+
+        # Dynamic scene count: respect user override or calculate from duration, style, and character count
+        if num_scenes is not None and 1 <= num_scenes <= 5:
+            actual_scenes = num_scenes
+        elif duration_sec <= 8 and (scene_style.lower() in ["speech", "monologue"] or character_count == 1):
+            actual_scenes = 1
+        elif duration_sec <= 15:
+            actual_scenes = 2
+        elif duration_sec <= 35:
+            actual_scenes = 3
+        else:
+            actual_scenes = budget.get("scenes", 3)
+
+        per_scene_words = max(6, budget["recommended_words"] // actual_scenes)
+        per_scene_max = max(8, budget["max_words"] // actual_scenes + 2)
+
+        sample_directive = ""
+        if sample_story and sample_story.strip():
+            sample_directive = (
+                f"\n⭐ SAMPLE STORY (HIGHEST PRECEDENCE OVER GENERAL INSTRUCTIONS):\n"
+                f"\"{sample_story.strip()}\"\n"
+                f"DISCREPANCY PRECEDENCE RULE: In case of any conflict between general instructions and this sample story, "
+                f"THE SAMPLE STORY TAKES PRECEDENCE! Adapt the characters, plot points, and dialogue from this sample story.\n"
+            )
+
+        items_desc = "\n\n".join([
+            f"SCRIPT {i+1}:\nAngle: {it['angle']}\nHook: {it['hook']}"
+            for i, it in enumerate(items)
+        ])
+
+        facts_text = "\n".join(['- ' + f for f in (verification.verified_facts if verification else [])[:3]]) if (verification and verification.verified_facts) else f"- {news_input[:80]}"
+        props_text = ", ".join(verification.physical_props) if (verification and verification.physical_props) else ""
+        locs_text = ", ".join(verification.key_locations) if (verification and verification.key_locations) else ""
+        conflict_text = verification.core_conflict_or_irony if (verification and verification.core_conflict_or_irony) else ""
+
+        sub_directive = f"\nChief Editor Directive & Dialogue Word Limits:\n{sub_instruction}\n" if sub_instruction else ""
+
+        # Dynamic narrative mode selection: randomly decide position of news and flow per script run
+        chosen_narrative = random.choice(NARRATIVE_MODES)
+        n_mode = chosen_narrative["mode_key"]
+
+        # Dynamically build continuous-shot beat templates for 1 to 5 scenes
+        scene_templates = []
+        for s_idx in range(1, actual_scenes + 1):
+            char_s = personas[(s_idx - 1) % len(personas)]
+            if actual_scenes == 1:
+                label = f"BEAT 1 (Continuous Master Shot: Complete Story - ~{per_scene_words} words, max {per_scene_max}w)"
+                act = f"Single continuous vertical shot in {locs_text or 'the setting'}; character holds {props_text or 'key prop'}, delivering complete narrative fluidly"
+                dial = "Dynamic Hindi dialogue stating what happened, the context, and key takeaway in one fluid take"
+            elif n_mode == "fun_first":
+                if s_idx == 1:
+                    label = f"BEAT 1 (Shot 1: Hilarious Banter / Misunderstanding - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Continuous shot starts in {locs_text or 'the setting'}; characters engaged in witty relatable banter or comedic misconception"
+                    dial = "Witty, humorous Hindi conversational opener establishing a relatable premise (NO direct news drop yet)"
+                elif s_idx == 2:
+                    label = f"BEAT 2 (Shot 2: The Shocking News Reveal - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera smoothly pivots/refocuses; character pulls out {props_text or 'smartphone/document'} revealing the verified news facts"
+                    dial = "Sharp Hindi reality check dropping the actual news facts and context, shattering the previous illusion"
+                elif s_idx == actual_scenes:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Humorous Punchline & Resolution - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera holds continuous framed reaction; crowd or companions react as character lands the punchline"
+                    dial = "Logical concluding Hindi line delivering witty punchline, satirical twist, or meme takeaway"
+                else:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Escalation & Fact Evidence - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera reframes; examining {props_text or 'the physical object'} with verified details"
+                    dial = "Conversational Hindi counterpoint or startling fact"
+            elif n_mode == "mid_conversation":
+                if s_idx == 1:
+                    label = f"BEAT 1 (Shot 1: Everyday Life Routine & Banter - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Continuous shot begins in {locs_text or 'the setting'}; characters debating daily life, work, or routine matters"
+                    dial = "Relatable conversational Hindi dialogue reflecting daily Indian hustle or workplace debate"
+                elif s_idx == 2:
+                    label = f"BEAT 2 (Shot 2: Sudden News Bombshell Discovery - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera tracks over shoulder as character notices breaking news on {props_text or 'smartphone screen/paper'} with wide-eyed shock"
+                    dial = "Urgent Hindi line interrupting the banter with the shocking verified news headline and fact"
+                elif s_idx == actual_scenes:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Mutual Shock & Comic Resolution - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera captures both characters in continuous two-shot sharing mutual disbelief and reaction"
+                    dial = "Witty concluding Hindi line re-evaluating their situation in light of the news"
+                else:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Examining the Evidence - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera continuously pans; verifying {props_text or 'the details'} together"
+                    dial = "Conversational Hindi detail verifying the bizarre fact"
+            elif n_mode == "curiosity_first":
+                if s_idx == 1:
+                    label = f"BEAT 1 (Shot 1: Puzzling Observation / Mystery - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Continuous shot opens in {locs_text or 'the setting'}; character points out a puzzling event or strange crowd behavior"
+                    dial = "Intriguing Hindi observation questioning what on earth is happening"
+                elif s_idx == 2:
+                    label = f"BEAT 2 (Shot 2: Unpacking the News Mystery - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera reframes smoothly; second character reveals the real verified news backstory holding {props_text or 'key prop'}"
+                    dial = "Hindi explanation revealing the verified facts and why this event is actually taking place"
+                elif s_idx == actual_scenes:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Satirical Realization & Payoff - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera holds the final reaction framed against the ongoing backdrop"
+                    dial = "Memorable Hindi punchline or eye-opening satirical takeaway"
+                else:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Deeper Revelation - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera reframes dynamically to show public reaction"
+                    dial = "Surprising Hindi supporting fact or evidence"
+            else:  # news_first default
+                if s_idx == 1:
+                    label = f"BEAT 1 (Shot 1: Breaking Hook & Disruption - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Continuous shot starts in {locs_text or 'the setting'}; character disrupts with breaking news holding {props_text or 'the news'}"
+                    dial = "Attention-grabbing Hindi hook line clearly introducing what happened and where"
+                elif s_idx == 2:
+                    label = f"BEAT 2 (Shot 2: Fact Counterpoint & Interaction - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera continuously refocuses; second character responds directly examining {props_text or 'the physical object'}"
+                    dial = "Hindi dialogue answering Beat 1 with verified facts and contextual depth"
+                elif s_idx == actual_scenes:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Payoff & Resolution - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera captures concluding two-shot; characters deliver final verdict"
+                    dial = "Logical concluding Hindi line delivering witty payoff, punchline, or impact"
+                else:
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Evidence & Escalation - ~{per_scene_words} words, max {per_scene_max}w)"
+                    act = f"Camera pivots continuously; revealing startling evidence"
+                    dial = "Conversational Hindi counterpoint or startling fact"
+
+            scene_templates.append(
+                f"{label}:\n"
+                f"CHARACTER: {char_s}\n"
+                f"ACTION: [{act}]\n"
+                f"DIALOGUE: [{dial}]"
+            )
+        sample_scenes = "\n\n".join(scene_templates)
+
+        prompt = f"""News Story: {news_input}
+Target Duration: Exactly {duration_sec} Seconds
+Total Word Limits (across all {actual_scenes} beats combined):
+- Target / Recommended: ~{budget['recommended_words']} words
+- Absolute Strict Maximum: {budget['max_words']} words
+- Minimum Safe Words: {budget['min_words']} words
+- Per Beat Target: ~{per_scene_words} words each (Strict Max ~{per_scene_max} words per beat)
+
+NARRATIVE FLOW (DYNAMICALLY SELECTED FOR THIS REEL):
+- Mode: {chosen_narrative['name']}
+- Narrative Staging: {chosen_narrative['description']}
+
+CHARACTERS IN THE SCENE ({len(personas)} characters):
+{chr(10).join(['- ' + p for p in personas])}
+
+RESEARCHED STORY FACTS & CONTEXT:
+- Setting / Location: {locs_text or 'Authentic Indian street or workplace setting'}
+- Physical Props: {props_text or 'Specific physical objects in the news story'}
+- Core Conflict / Irony: {conflict_text or 'The central viral story hook'}
+- Key Verified Facts to explain:
+{facts_text}
+
+CREATIVE GUIDELINES:
+{creative_rules}
+{sample_directive}
+{sub_directive}
+{guidance}
+
+CRITICAL STORYTELLING & SENSE DIRECTIVES:
+1. THE STORY MUST MAKE COMPLETE LOGICAL SENSE:
+   - Anyone watching this reel must immediately understand WHAT happened, WHO is involved, and WHERE it took place.
+   - Do NOT talk in vague riddles. Name the actual topic, key people, and places clearly in natural Hindi.
+2. CONVERSATIONAL CONTINUITY & FLOW:
+   - Characters must talk DIRECTLY to each other with natural back-and-forth cadence.
+   - Beat 2 MUST directly answer, counter, or react to what was said in Beat 1!
+   - The final beat MUST deliver a logical resolution, witty punchline, or satisfying takeaway that ties the entire story together.
+   - NEVER make disconnected jokes or non-sequitur remarks. The humor or drama MUST come from the actual news facts!
+   - NEVER use meaningless generic filler lines (e.g. never say 'अब देखते हैं आगे क्या होता है' or 'बात तो सही है' without real substance).
+3. NATURAL SPOKEN CADENCE:
+   - Clean spoken Devanagari Hindi only. Every line must be a complete, grammatically sound sentence.
+   - NO greetings ('नमस्ते'), NO intro filler ('आइए जानते हैं').
+   - STRICT PROHIBITION: NO social media commenting or CTAs ('कमेंट करें', 'लाइक करें', 'कमेंट में बताएं', 'शेयर करें'). Characters live in their world and talk to each other!
+4. ONE CONTINUOUS VIDEO FLOW (DO NOT REPEAT BACKGROUND CONTEXT):
+   - This script is for ONE continuous video reel shot in a single take.
+   - The setting and background context are introduced ONCE at the start.
+   - Subsequent beats MUST NOT repeat the background context or restart the setting.
+   - Progress the action forward fluidly with camera refocusing, prop interactions, and witty comebacks.
+
+Scripts to write:
+{items_desc}
+
+Task: Write the spoken Hindi dialogue for each script beat-by-beat (EXACTLY {actual_scenes} beats).
+Format strictly:
+SCRIPT 1:
+{sample_scenes}"""
+
+        try:
+            raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except Exception as e:
+            logger.warning(f"Dialogue generation execution failed ({e}), initiating intelligent Hindi fallback")
+            raw_output = ""
+
+        parsed_map = {}
+        # Parse blocks by SCRIPT header (supporting markdown like **SCRIPT 1:**, ### SCRIPT 1, etc.)
+        blocks = re.split(r"(?:###|\*\*|##)?\s*SCRIPT\s*(\d+)\s*(?:\*\*)?\s*:\s*", raw_output, flags=re.IGNORECASE)
+
+        def parse_scene_block(content: str) -> List[Dict[str, str]]:
+            scene_chunks = re.split(r"(?:###|\*\*|##)?\s*(?:SCENE|PART|BEAT)\s*(\d+)[^:]*:\s*", content, flags=re.IGNORECASE)
+            script_scenes = []
+            if len(scene_chunks) > 1:
+                for s_idx in range(1, len(scene_chunks), 2):
+                    s_num = int(scene_chunks[s_idx])
+                    s_body = scene_chunks[s_idx + 1]
+                    char_name = personas[(s_num - 1) % len(personas)]
+                    dial_text = ""
+                    action_text = ""
+                    for line in s_body.split("\n"):
+                        ls = line.strip()
+                        clean_ls = re.sub(r"^\*+|\*+$", "", ls).strip()
+                        upper_ls = clean_ls.upper()
+                        if upper_ls.startswith("CHARACTER:"):
+                            char_name = clean_ls.split(":", 1)[-1].strip("[] \"'*")
+                        elif upper_ls.startswith("ACTION:") or upper_ls.startswith("BACKGROUND & ACTION:") or upper_ls.startswith("BACKGROUND & VISUAL ACTION:") or upper_ls.startswith("BACKGROUND:") or upper_ls.startswith("VISUAL:"):
+                            action_text = clean_ls.split(":", 1)[-1].strip("[] \"'*")
+                        elif upper_ls.startswith("DIALOGUE:") or upper_ls.startswith("LINE:"):
+                            dial_text = clean_hindi_dialogue(clean_ls.split(":", 1)[-1].strip("[] \"'*"))
+                        elif not any(upper_ls.startswith(k) for k in ["SCENE", "SCRIPT", "PART", "BEAT", "TIME", "SHOT"]) and dial_text:
+                            dial_text += " " + clean_hindi_dialogue(clean_ls)
+                    if dial_text:
+                        script_scenes.append({
+                            "scene_number": s_num,
+                            "character": char_name,
+                            "dialogue": dial_text,
+                            "action": action_text,
+                        })
+            return script_scenes
+
+        if len(blocks) > 1:
+            for i in range(1, len(blocks), 2):
+                idx = int(blocks[i]) - 1
+                content = blocks[i + 1]
+                script_scenes = parse_scene_block(content)
+                if script_scenes:
+                    combined_text = " ".join(s["dialogue"] for s in script_scenes)
+                    parsed_map[idx] = (combined_text, script_scenes)
+                else:
+                    # Fallback to NARRATION line if model used legacy format
+                    narration_text = ""
+                    for line in content.split("\n"):
+                        ls = line.strip()
+                        if ls.startswith("NARRATION:") or ls.startswith("DIALOGUE:"):
+                            narration_text = ls.split(":", 1)[-1].strip("[] \"'*")
+                        elif narration_text and not ls.startswith("SCRIPT"):
+                            narration_text += " " + ls
+                    if narration_text:
+                        parsed_map[idx] = (clean_hindi_dialogue(narration_text), [])
+        elif raw_output:
+            # If no SCRIPT 1 header, parse scenes directly from raw_output for index 0
+            direct_scenes = parse_scene_block(raw_output)
+            if direct_scenes:
+                combined_text = " ".join(s["dialogue"] for s in direct_scenes)
+                parsed_map[0] = (combined_text, direct_scenes)
+
+        narrations: List[str] = []
+        for i, it in enumerate(items):
+            entry = parsed_map.get(i)
+            if entry and len(entry[0]) > 10:
+                raw_text, scene_lines = entry
+                final_text = smart_trim_dialogue(raw_text, budget["max_words"], budget["recommended_words"], it["cta"])
+
+                # If no structured scene lines parsed, split sentences evenly across characters
+                if not scene_lines:
+                    sentences = [s.strip() for s in re.split(r"[।!?]", final_text) if s.strip()]
+                    scene_lines = []
+                    for s_idx in range(actual_scenes):
+                        char_for_scene = personas[s_idx % len(personas)]
+                        if s_idx < len(sentences):
+                            line_text = sentences[s_idx] + "।"
+                        elif s_idx == actual_scenes - 1:
+                            line_text = it["cta"]
+                        else:
+                            line_text = final_text
+                        scene_lines.append({
+                            "scene_number": s_idx + 1,
+                            "character": char_for_scene,
+                            "dialogue": line_text,
+                        })
+
+                narrations.append(ScriptDialogue(final_text, scene_lines=scene_lines))
+            else:
+                # Intelligent Hindi fallback: NEVER use raw English headlines as spoken dialogue!
+                fact_detail = ""
+                if verification and verification.verified_facts:
+                    fact_detail = verification.verified_facts[0]
+                elif verification and verification.verification_summary:
+                    fact_detail = verification.verification_summary
+
+                # Construct authentic, meaningful Hindi dialogue lines aligned with narrative mode
+                clean_hook = it.get("hook") or "अरे सुनो भाई! आज की सबसे बड़ी खबर सामने आ गई है।"
+
+                if n_mode == "fun_first":
+                    beat_pool = [
+                        "अरे भाई सुनो, आज तो गजब ही ड्रामा हो गया, यकीन नहीं करोगे!",
+                        f"अरे ड्रामा छोड़ो, असली बात तो ये है कि {fact_detail or 'इस मामले का सबसे बड़ा सच अब सबके सामने आ चुका है।'}",
+                        "कागजातों और सबूतों से साफ है कि कहानी में जो दिख रहा है, बात उससे कहीं ज्यादा गहरी है।",
+                        "सड़कों पर लोगों और सोशल मीडिया पर अब इसी बात की जोरदार चर्चा चल रही है।",
+                        "अब देखना ये होगा कि इस पूरे सियासी घटनाक्रम का क्या मजेदार असर होता है!",
+                    ]
+                elif n_mode == "mid_conversation":
+                    beat_pool = [
+                        "रोज़-रोज़ की वही भागदौड़ और वही झंझट, इंसान करे तो क्या करे!",
+                        f"अरे रुको! ज़रा फोन पर ये खबर तो देखो—{clean_hook}",
+                        f"इस मामले में सबसे बड़ा मोड़ ये है कि {fact_detail or 'सारी सच्चाई अब सबके सामने खुल चुकी है।'}",
+                        "सड़कों से लेकर सोशल मीडिया तक अब इसी का शोर है!",
+                        "लो कर लो बात! अब तो पूरा खेल ही पलट गया!",
+                    ]
+                elif n_mode == "curiosity_first":
+                    beat_pool = [
+                        "भाई ज़रा इधर देखो, आज अचानक हर तरफ इतनी हलचल क्यों मची हुई है?",
+                        f"तुम्हें नहीं पता? सबसे बड़ी वजह ये है कि {clean_hook}",
+                        f"असली पेंच ये है कि {fact_detail or 'सबूतों के बाद अब प्रशासन में हड़कंप मच गया है।'}",
+                        "लोग हैरान हैं कि आखिर ये सब इतनी जल्दी कैसे हो गया!",
+                        "वाह भाई वाह! इसे कहते हैं असली ट्विस्ट, अब बात पूरी समझ आई!",
+                    ]
+                else:  # news_first
+                    beat_pool = [
+                        clean_hook,
+                        "इस पूरे मामले में सबसे बड़ा मोड़ ये आया है कि सच्चाई अब सबके सामने खुल चुकी है।",
+                        f"कागजातों और सबूतों से साफ है कि {fact_detail or 'बात उससे कहीं ज्यादा गहरी है।'}",
+                        "सड़कों पर लोगों और सोशल मीडिया पर अब इसी बात की जोरदार चर्चा चल रही है।",
+                        "अब देखना ये होगा कि इस पूरे घटनाक्रम का क्या नतीजा निकलता है!",
+                    ]
+
+                fallback_scenes = []
+                if actual_scenes == 1:
+                    fallback_scenes.append({"scene_number": 1, "character": personas[0], "dialogue": clean_hook})
+                else:
+                    for s_i in range(actual_scenes):
+                        c_p = personas[s_i % len(personas)]
+                        if s_i == 0:
+                            d_p = beat_pool[0]
+                        elif s_i == actual_scenes - 1:
+                            d_p = beat_pool[4]
+                        elif s_i == 1:
+                            d_p = beat_pool[1]
+                        elif s_i == 2:
+                            d_p = beat_pool[2]
+                        else:
+                            d_p = beat_pool[3]
+                        fallback_scenes.append({"scene_number": s_i + 1, "character": c_p, "dialogue": d_p})
+
+                combined_fallback = " ".join(s["dialogue"] for s in fallback_scenes)
+                trimmed_default = smart_trim_dialogue(combined_fallback, budget["max_words"], budget["recommended_words"], it["cta"])
+                narrations.append(ScriptDialogue(trimmed_default, scene_lines=fallback_scenes))
+
+        return narrations
+
+
+dialogue_writer = DialogueNarrationAgent()
