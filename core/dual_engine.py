@@ -5,6 +5,7 @@ import shutil
 import logging
 import os
 import re
+import json
 from typing import Optional, Tuple, Dict, Any
 
 logger = logging.getLogger("DualEngine")
@@ -165,6 +166,28 @@ def _classify_grok_error(details: str) -> str:
     if any(marker in lower for marker in ("service unavailable", "capacity")):
         return f"Grok service-capacity error: {details}"
     return details
+
+
+def _extract_grok_stream_text(raw: str) -> str:
+    """Extract assistant text from Grok streaming JSON without exposing thinking logs."""
+    text_parts = []
+    final_result = ""
+    for line in (raw or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "stream_event":
+            delta = event.get("event", {}).get("delta", {})
+            if delta.get("type") == "text_delta":
+                text_parts.append(delta.get("text", ""))
+        elif event.get("type") == "result" and event.get("result"):
+            final_result = event["result"]
+        elif event.get("type") == "assistant":
+            for block in event.get("message", {}).get("content", []):
+                if block.get("type") == "text":
+                    final_result = block.get("text", "")
+    return "".join(text_parts).strip() or final_result.strip()
 
 
 class ModelGenerationError(RuntimeError):
@@ -500,7 +523,20 @@ class DualEngine:
         if instructions:
             full_prompt = f"System Instructions:\n{instructions}\n\nTask:\n{prompt}"
 
-        cmd = [self.grok_bin, "--single", full_prompt, "--output-format", "plain"]
+        # Grok is used here as a model provider, not as an autonomous coding
+        # agent. Disable planning, subagents, and web tools so a reel step is
+        # bounded by the app timeout and uses the live news already in prompt.
+        cmd = [
+            self.grok_bin,
+            "--single",
+            full_prompt,
+            "--output-format",
+            "streaming-messages-json",
+            "--include-partial-messages",
+            "--no-plan",
+            "--no-subagents",
+            "--disable-web-search",
+        ]
         try:
             res = subprocess.run(
                 cmd,
@@ -510,7 +546,7 @@ class DualEngine:
                 stdin=subprocess.DEVNULL,
             )
         except subprocess.TimeoutExpired as e:
-            partial = e.stdout or ""
+            partial = _extract_grok_stream_text(e.stdout or "")
             if isinstance(partial, bytes):
                 partial = partial.decode("utf-8", errors="replace")
             raise ModelGenerationError(
@@ -518,9 +554,10 @@ class DualEngine:
                 partial_output=partial,
             ) from e
 
-        output = res.stdout.strip()
+        output = _extract_grok_stream_text(res.stdout)
         err = res.stderr.strip()
-        combined = f"{err}\n{output}".strip()
+        raw_output = res.stdout.strip()
+        combined = f"{err}\n{raw_output}".strip()
         if res.returncode != 0:
             details = combined or "No error details returned"
             raise RuntimeError(f"Grok error (exit {res.returncode}): {_classify_grok_error(details)}")
