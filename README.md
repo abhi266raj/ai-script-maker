@@ -2,11 +2,12 @@
 ### Autonomous Multi-Agent Screenplay Studio for 9:16 Vertical Hindi Short Content (Instagram Reels, YouTube Shorts, TikTok)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![Release](https://img.shields.io/badge/Release-v1.0.0-success.svg)]()
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B.svg)](https://streamlit.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Multi--Agent-success.svg)]()
 [![Inference](https://img.shields.io/badge/Inference-Apple%20FM%20%7C%20Grok%20%7C%20Antigravity-orange.svg)]()
 [![Screenplay](https://img.shields.io/badge/Format-9%3A16%20Industry%20Standard-purple.svg)]()
-[![Tests](https://img.shields.io/badge/Tests-17%20Passed%20100%25-brightgreen.svg)]()
+[![Tests](https://img.shields.io/badge/Tests-13%20Passed%20100%25-brightgreen.svg)]()
 
 ---
 
