@@ -3,16 +3,27 @@
 import time
 from typing import Callable, Optional
 from core.dual_engine import dual_engine
+from core.prompt_loader import load_prompt
 
 
 class BaseAgent:
     """Base class for autonomous newsroom agents powered by Dual Engine (FM + Antigravity)."""
 
-    def __init__(self, name: str, role: str, icon: str, instructions: str):
+    def __init__(
+        self,
+        name: str,
+        role: str,
+        icon: str,
+        instructions: Optional[str] = None,
+        prompt_file: Optional[str] = None,
+    ):
         self.name = name
         self.role = role
         self.icon = icon
-        self.instructions = instructions
+        if prompt_file:
+            self.instructions = load_prompt(prompt_file, default=instructions or "")
+        else:
+            self.instructions = instructions or ""
 
     def execute(
         self,

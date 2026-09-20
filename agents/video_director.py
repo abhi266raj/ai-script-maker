@@ -4,18 +4,10 @@ import re
 from typing import List, Tuple, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, VideoPassVerification, SceneItem
+from core.prompt_loader import load_prompt
 
 
-VIDEO_DIRECTOR_INSTRUCTIONS = """You are an elite AI Video Director and Prompt Engineer specializing in next-generation generative video tools like Google Flow, Google Veo, and Sora.
-Your goal is to transform script scenes into ultra-detailed, cinematic 9:16 vertical AI video generation prompts.
-Rules:
-1. Every prompt must be in English for the video generation AI (Google Flow / Veo), describing:
-   - Subject & action
-   - Camera motion (e.g. slow push-in, low-angle tracking, sweeping pan)
-   - Lighting, atmosphere, and color grading
-   - Aspect ratio: 9:16 vertical
-2. Enforce realistic physics and high temporal consistency across clips.
-3. Keep prompts within safety guidelines (no gore, violence, or sensitive IP)."""
+VIDEO_DIRECTOR_INSTRUCTIONS = load_prompt("video_director/prompt.md")
 
 
 class AIVideoDirectorAgent(BaseAgent):
@@ -25,6 +17,7 @@ class AIVideoDirectorAgent(BaseAgent):
             role="AI Video Generation Prompts & Feasibility Verification",
             icon="🎥",
             instructions=VIDEO_DIRECTOR_INSTRUCTIONS,
+            prompt_file="video_director/prompt.md",
         )
 
     def generate_video_prompts(

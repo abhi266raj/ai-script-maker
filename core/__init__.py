@@ -15,6 +15,7 @@ from .metrics import (
     evaluate_clarity,
     get_duration_budget,
 )
+from .prompt_loader import load_prompt, PROMPTS_DIR
 
 __all__ = [
     "dual_engine",
@@ -31,4 +32,6 @@ __all__ = [
     "verify_timeline_fit",
     "evaluate_clarity",
     "get_duration_budget",
+    "load_prompt",
+    "PROMPTS_DIR",
 ]

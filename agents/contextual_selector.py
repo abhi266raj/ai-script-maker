@@ -20,13 +20,9 @@ from agents.scene_catalog import (
     get_creative_angle_catalog,
     get_domain_catalog,
 )
+from core.prompt_loader import load_prompt
 
-CONTEXTUAL_SELECTOR_INSTRUCTIONS = """You are the Chief Casting Director and Production Location Scout.
-Your mission is analyzing news topics and wire verification facts to assign:
-1. Authentic Domain & Physical Venue (Government administrative office, hospital OPD, court corridors, IT tech park, household living room, police station).
-2. Character Personas strictly matching the domain and socioeconomic context (Government Babu, Officer, Investor, Doctor, Lawyer, Engineer, Homemaker).
-3. Character Wardrobe strictly matching the professional setting (NO tea aprons in government planning meetings or hospital wards!).
-STRICT RULE: Only use chai tapri when the news is specifically about street life, tea, or everyday casual banter. Institutional topics MUST use their authentic institutional venues."""
+CONTEXTUAL_SELECTOR_INSTRUCTIONS = load_prompt("contextual_selector/prompt.md")
 
 
 class ContextualSceneCharacterSelectorAgent(BaseAgent):
@@ -36,6 +32,7 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
             role="Domain-Grounded Setting, Persona & Wardrobe Alignment",
             icon="🎯",
             instructions=CONTEXTUAL_SELECTOR_INSTRUCTIONS,
+            prompt_file="contextual_selector/prompt.md",
         )
 
     def get_scene_style_setups(self, scene_style: str) -> List[Dict[str, Any]]:

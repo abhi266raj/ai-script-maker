@@ -31,13 +31,10 @@ import re
 from typing import List, Dict, Any, Optional, Tuple
 from agents.base import BaseAgent
 from core.models import SceneItem, ReelScript
+from core.prompt_loader import load_prompt
 
 
-COHERENCE_INSTRUCTIONS = """You are the Chief Screenplay Coherence & Kinematics Auditor.
-Your sole mission is guaranteeing that whatever characters talk about in spoken dialogue is directly mirrored in the visual action, camera focus, and sound effects.
-If a character says 'चाय छोड़' or 'चाय का घूंट', the actor must physically interact with the tea glass.
-If a character mentions an 'अखबार' or 'सरकारी फाइल', the actor must hold, unfold, or point at the newspaper or file.
-Never allow disconnected, random gestures when physical objects are referenced in dialogue."""
+COHERENCE_INSTRUCTIONS = load_prompt("screenplay_coherence/prompt.md")
 
 
 class ScreenplayCoherenceAgent(BaseAgent):
@@ -47,6 +44,7 @@ class ScreenplayCoherenceAgent(BaseAgent):
             role="Dialogue-Action Physical Synchronization & Prop Coherence",
             icon="🎯",
             instructions=COHERENCE_INSTRUCTIONS,
+            prompt_file="screenplay_coherence/prompt.md",
         )
 
     def extract_character_clean_name(self, char_str: str) -> str:

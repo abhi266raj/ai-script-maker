@@ -5,15 +5,10 @@ from typing import Optional, Callable, List
 from agents.base import BaseAgent
 from core.models import NewsVerificationReport, NewsArticle
 from tools.news_fetcher import news_fetcher
+from core.prompt_loader import load_prompt
 
 
-VERIFIER_INSTRUCTIONS = """You are a meticulous News Verification and Fact-Checking Specialist.
-Your job is to examine a submitted news item and verify its factual authenticity against live wire sources.
-You must:
-1. Check the primary claim for factual truth, dates, entities, and official statements.
-2. Clearly distinguish between confirmed facts and speculative or unverified claims.
-3. Assign a factual confidence score between 70% and 99%.
-4. Output concise verified bullet points so scriptwriters never produce fake or misleading reels."""
+VERIFIER_INSTRUCTIONS = load_prompt("news_verifier/prompt.md")
 
 
 class NewsVerifierAgent(BaseAgent):
@@ -23,6 +18,7 @@ class NewsVerifierAgent(BaseAgent):
             role="Step 1: Truth & Fact Verification (FM + AGY)",
             icon="🔍",
             instructions=VERIFIER_INSTRUCTIONS,
+            prompt_file="news_verifier/prompt.md",
         )
 
     def verify(

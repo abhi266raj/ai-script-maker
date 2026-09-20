@@ -4,16 +4,10 @@ import re
 from typing import Optional, Callable
 from agents.base import BaseAgent
 from core.models import ResearchBrief, FactCheckReport, FactCheckItem
+from core.prompt_loader import load_prompt
 
 
-FACT_CHECKER_INSTRUCTIONS = """You are a rigorous, impartial Senior Fact-Checker and Editorial Auditor.
-Your responsibility is to critically audit the provided Research Brief against known facts and source integrity.
-You must:
-1. Scrutinize specific factual claims (figures, dates, statements, company actions).
-2. Assign a status to each claim: [VERIFIED], [PLAUSIBLE], or [CAUTION/UNVERIFIED].
-3. Identify potential cognitive bias, hyperbole, or speculative reporting.
-4. Calculate an Overall Reliability Score (between 0% and 100%).
-5. Provide specific cautionary guidelines for the Writer to ensure 100% editorial integrity."""
+FACT_CHECKER_INSTRUCTIONS = load_prompt("fact_checker/prompt.md")
 
 
 class FactCheckerAgent(BaseAgent):
@@ -23,6 +17,7 @@ class FactCheckerAgent(BaseAgent):
             role="Verification, Neutrality & Rigor",
             icon="🛡️",
             instructions=FACT_CHECKER_INSTRUCTIONS,
+            prompt_file="fact_checker/prompt.md",
         )
 
     def audit(

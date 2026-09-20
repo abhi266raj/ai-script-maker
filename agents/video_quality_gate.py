@@ -5,13 +5,9 @@ from typing import List, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, VideoPassVerification
 from core.dual_engine import ModelGenerationError
+from core.prompt_loader import load_prompt
 
-QUALITY_GATE_INSTRUCTIONS = """You are a Quality Gate Auditor for Generative AI Video Systems.
-Your sole task is verifying whether visual prompts are physically feasible, temporally coherent, and policy-compliant.
-Rules:
-1. Verify each scene prompt can realistically be generated in a 3-5 second clip.
-2. Flag impossible scene morphing, sudden camera teleportation, or safety violations.
-3. Assign a Feasibility Score (0-100%) and a definitive [PASSED] or [FAILED] verdict."""
+QUALITY_GATE_INSTRUCTIONS = load_prompt("video_quality_gate/prompt.md")
 
 
 class VideoQualityGateAgent(BaseAgent):
@@ -21,6 +17,7 @@ class VideoQualityGateAgent(BaseAgent):
             role="AI Video Feasibility & Quality Gate Verification",
             icon="🛡️",
             instructions=QUALITY_GATE_INSTRUCTIONS,
+            prompt_file="video_quality_gate/prompt.md",
         )
 
     def audit_prompts(
