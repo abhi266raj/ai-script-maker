@@ -4,8 +4,8 @@
   "description": "Autonomous multi-agent system transforming breaking news into viral, fact-checked Hindi reels with Google Flow / Veo 9:16 prompts",
   "default_language": "Hindi (Devanagari)",
   "interface_language": "English",
-  "default_engine": "grok_medium",
-  "default_duration": 15,
+  "default_engine": "agy_only",
+  "default_duration": 20,
   "default_batch_count": 1,
   "local_llm_support": {
     "status": "work_in_progress",
@@ -17,8 +17,8 @@
     ],
     "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
   },
-  "default_tone": "\u26a1 Urgent Breaking News (\u0924\u093e\u091c\u093c\u093e \u0916\u092c\u0930)",
-  "news_category": "\ud83d\udcc8 Business & Economy",
+  "default_tone": "\ud83d\ude02 Relatable Comedy & Sarcasm (\u0926\u0947\u0938\u0940 \u0939\u094d\u092f\u0942\u092e\u0930)",
+  "news_category": "\ud83c\udf0d World News",
   "engines": {
     "hybrid": {
       "key": "first_local_then_agy",
@@ -245,12 +245,12 @@
   "max_retries": 3,
   "batch_count": 1,
   "selected_script_index": 0,
-  "default_angle": "Funny & Relatable",
+  "default_angle": "Sarcastic & Edgy",
   "character_count": 3,
-  "scene_style": "Monologue",
+  "scene_style": "Dialogue",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
-  "source_mode": "\ud83d\udce1 Live News",
-  "selected_headline": "Google\u2019s Gemini is the latest AI model to hack other companies"
+  "source_mode": "\u270f\ufe0f Manual Topic",
+  "selected_headline": "Ajit Doval Predicts India's Economy Will Hit $38 Trillion by 2047"
 }

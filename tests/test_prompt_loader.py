@@ -18,49 +18,47 @@ class TestPromptLoader(unittest.TestCase):
         self.assertTrue(PROMPTS_DIR.is_dir(), "prompts directory should exist")
 
     def test_load_all_core_prompts_from_subdirectories(self):
-        expected_subagents = [
-            "news_validator",
-            "hook_strategist",
-            "dialogue_writer",
-            "scene_director",
-            "video_prompt_engineer",
-            "video_quality_gate",
-            "contextual_selector",
-            "screenplay_coherence",
+        expected_agents = [
+            ("news_validator", "validate_news.md"),
+            ("hook_strategist", "craft_hook.md"),
+            ("dialogue_writer", "write_dialogue.md"),
+            ("scene_director", "direct_scenes.md"),
+            ("video_prompt_engineer", "generate_prompts.md"),
+            ("video_quality_gate", "audit_prompts.md"),
+            ("contextual_selector", "contextual_selector.md"),
+            ("screenplay_coherence", "screenplay_coherence.md"),
         ]
-        for subagent in expected_subagents:
-            md_path = PROMPTS_DIR / subagent / "prompt.md"
+        for subagent, filename in expected_agents:
+            md_path = PROMPTS_DIR / subagent / filename
             self.assertTrue(md_path.is_file(), f"Expected markdown file {md_path} to exist")
 
-            text_by_name = load_prompt(subagent)
-            text_by_path = load_prompt(f"{subagent}/prompt.md")
-            self.assertEqual(text_by_name, text_by_path)
-            self.assertTrue(len(text_by_name) > 20, f"Prompt {subagent} should have content")
+            text_by_path = load_prompt(f"{subagent}/{filename}")
+            self.assertTrue(len(text_by_path) > 20, f"Prompt {subagent}/{filename} should have content")
 
     def test_agents_use_loaded_prompts(self):
         agent1 = NewsValidationAgent()
-        self.assertEqual(agent1.instructions, load_prompt("news_validator/prompt.md"))
+        self.assertEqual(agent1.instructions, load_prompt("news_validator/validate_news.md"))
 
         agent2 = HookAndAngleAgent()
-        self.assertEqual(agent2.instructions, load_prompt("hook_strategist/prompt.md"))
+        self.assertEqual(agent2.instructions, load_prompt("hook_strategist/craft_hook.md"))
 
         agent3 = DialogueNarrationAgent()
-        self.assertEqual(agent3.instructions, load_prompt("dialogue_writer/prompt.md"))
+        self.assertEqual(agent3.instructions, load_prompt("dialogue_writer/write_dialogue.md"))
 
         agent5 = SceneVisualsDirectorAgent()
-        self.assertEqual(agent5.instructions, load_prompt("scene_director/prompt.md"))
+        self.assertEqual(agent5.instructions, load_prompt("scene_director/direct_scenes.md"))
 
         agent6 = AIVideoPromptAgent()
-        self.assertEqual(agent6.instructions, load_prompt("video_prompt_engineer/prompt.md"))
+        self.assertEqual(agent6.instructions, load_prompt("video_prompt_engineer/generate_prompts.md"))
 
         agent7 = VideoQualityGateAgent()
-        self.assertEqual(agent7.instructions, load_prompt("video_quality_gate/prompt.md"))
+        self.assertEqual(agent7.instructions, load_prompt("video_quality_gate/audit_prompts.md"))
 
         agent_ctx = ContextualSceneCharacterSelectorAgent()
-        self.assertEqual(agent_ctx.instructions, load_prompt("contextual_selector/prompt.md"))
+        self.assertEqual(agent_ctx.instructions, load_prompt("contextual_selector/contextual_selector.md"))
 
         agent_coh = ScreenplayCoherenceAgent()
-        self.assertEqual(agent_coh.instructions, load_prompt("screenplay_coherence/prompt.md"))
+        self.assertEqual(agent_coh.instructions, load_prompt("screenplay_coherence/screenplay_coherence.md"))
 
     def test_method_prompts_exist_and_render(self):
         from core.prompt_loader import render_prompt

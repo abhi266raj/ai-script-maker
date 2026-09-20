@@ -8,7 +8,7 @@ from core.dual_engine import ModelGenerationError
 from tools.news_fetcher import news_fetcher
 from core.prompt_loader import load_prompt, render_prompt
 
-VALIDATOR_INSTRUCTIONS = load_prompt("news_validator/prompt.md")
+VALIDATOR_INSTRUCTIONS = load_prompt("news_validator/validate_news.md")
 
 
 class NewsValidationAgent(BaseAgent):
@@ -18,7 +18,7 @@ class NewsValidationAgent(BaseAgent):
             role="Factual Verification & Intelligence Audit",
             icon="🔍",
             instructions=VALIDATOR_INSTRUCTIONS,
-            prompt_file="news_validator/prompt.md",
+            prompt_file="news_validator/validate_news.md",
         )
 
     def validate_news(

@@ -34,7 +34,7 @@ from core.models import SceneItem, ReelScript
 from core.prompt_loader import load_prompt
 
 
-COHERENCE_INSTRUCTIONS = load_prompt("screenplay_coherence/prompt.md")
+COHERENCE_INSTRUCTIONS = load_prompt("screenplay_coherence/screenplay_coherence.md")
 
 
 class ScreenplayCoherenceAgent(BaseAgent):
@@ -44,7 +44,7 @@ class ScreenplayCoherenceAgent(BaseAgent):
             role="Dialogue-Action Physical Synchronization & Prop Coherence",
             icon="🎯",
             instructions=COHERENCE_INSTRUCTIONS,
-            prompt_file="screenplay_coherence/prompt.md",
+            prompt_file="screenplay_coherence/screenplay_coherence.md",
         )
 
     def extract_character_clean_name(self, char_str: str) -> str:

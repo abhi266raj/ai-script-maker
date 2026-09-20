@@ -32,7 +32,7 @@ def clean_beat_action(text: str) -> str:
     return t.strip()
 
 
-SCENE_DIRECTOR_INSTRUCTIONS = load_prompt("scene_director/prompt.md")
+SCENE_DIRECTOR_INSTRUCTIONS = load_prompt("scene_director/direct_scenes.md")
 
 
 def calculate_scene_timestamps(duration_sec: int, num_scenes: int) -> List[str]:
@@ -58,9 +58,7 @@ def calculate_scene_timestamps(duration_sec: int, num_scenes: int) -> List[str]:
     times = [f"0:00 - 0:{t_hook:02d}"]
     prev = t_hook
     for i in range(1, rem_scenes):
-        curr = int(round(t_hook + i * step))
-        if curr <= prev:
-            curr = prev + 1
+        curr = int(t_hook + i * step)
         times.append(f"0:{prev:02d} - 0:{curr:02d}")
         prev = curr
     times.append(f"0:{prev:02d} - 0:{d:02d}")
@@ -74,7 +72,7 @@ class SceneVisualsDirectorAgent(BaseAgent):
             role="Scene Breakdown, Visual B-Roll & SFX Direction",
             icon="🎬",
             instructions=SCENE_DIRECTOR_INSTRUCTIONS,
-            prompt_file="scene_director/prompt.md",
+            prompt_file="scene_director/direct_scenes.md",
         )
 
     def direct_scenes(

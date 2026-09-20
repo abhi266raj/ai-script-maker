@@ -23,7 +23,7 @@ def clean_prompt_text(text: str) -> str:
     return t.strip()
 
 
-VIDEO_PROMPT_INSTRUCTIONS = load_prompt("video_prompt_engineer/prompt.md")
+VIDEO_PROMPT_INSTRUCTIONS = load_prompt("video_prompt_engineer/generate_prompts.md")
 
 
 class AIVideoPromptAgent(BaseAgent):
@@ -33,7 +33,7 @@ class AIVideoPromptAgent(BaseAgent):
             role="Cinematic 9:16 Visual Prompt Synthesis",
             icon="🎥",
             instructions=VIDEO_PROMPT_INSTRUCTIONS,
-            prompt_file="video_prompt_engineer/prompt.md",
+            prompt_file="video_prompt_engineer/generate_prompts.md",
         )
 
     def generate_prompts(

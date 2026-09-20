@@ -22,7 +22,7 @@ from agents.scene_catalog import (
 )
 from core.prompt_loader import load_prompt
 
-CONTEXTUAL_SELECTOR_INSTRUCTIONS = load_prompt("contextual_selector/prompt.md")
+CONTEXTUAL_SELECTOR_INSTRUCTIONS = load_prompt("contextual_selector/contextual_selector.md")
 
 
 class ContextualSceneCharacterSelectorAgent(BaseAgent):
@@ -32,7 +32,7 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
             role="Domain-Grounded Setting, Persona & Wardrobe Alignment",
             icon="🎯",
             instructions=CONTEXTUAL_SELECTOR_INSTRUCTIONS,
-            prompt_file="contextual_selector/prompt.md",
+            prompt_file="contextual_selector/contextual_selector.md",
         )
 
     def get_scene_style_setups(self, scene_style: str) -> List[Dict[str, Any]]:

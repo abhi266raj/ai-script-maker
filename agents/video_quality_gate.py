@@ -7,7 +7,7 @@ from core.models import VideoScenePrompt, VideoPassVerification
 from core.dual_engine import ModelGenerationError
 from core.prompt_loader import load_prompt, render_prompt
 
-QUALITY_GATE_INSTRUCTIONS = load_prompt("video_quality_gate/prompt.md")
+QUALITY_GATE_INSTRUCTIONS = load_prompt("video_quality_gate/audit_prompts.md")
 
 
 class VideoQualityGateAgent(BaseAgent):
@@ -17,7 +17,7 @@ class VideoQualityGateAgent(BaseAgent):
             role="AI Video Feasibility & Quality Gate Verification",
             icon="🛡️",
             instructions=QUALITY_GATE_INSTRUCTIONS,
-            prompt_file="video_quality_gate/prompt.md",
+            prompt_file="video_quality_gate/audit_prompts.md",
         )
 
     def audit_prompts(

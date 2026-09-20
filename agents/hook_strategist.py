@@ -7,7 +7,7 @@ from core.models import NewsVerificationReport
 from core.dual_engine import ModelGenerationError
 from core.prompt_loader import load_prompt, render_prompt
 
-HOOK_STRATEGIST_INSTRUCTIONS = load_prompt("hook_strategist/prompt.md")
+HOOK_STRATEGIST_INSTRUCTIONS = load_prompt("hook_strategist/craft_hook.md")
 
 
 class HookAndAngleAgent(BaseAgent):
@@ -17,7 +17,7 @@ class HookAndAngleAgent(BaseAgent):
             role="Viral Hook Formulation & Angle Framing",
             icon="🎯",
             instructions=HOOK_STRATEGIST_INSTRUCTIONS,
-            prompt_file="hook_strategist/prompt.md",
+            prompt_file="hook_strategist/craft_hook.md",
         )
 
     def craft_hook(

@@ -12,7 +12,7 @@ from core.prompt_loader import load_prompt, render_prompt
 
 logger = logging.getLogger(__name__)
 
-DIALOGUE_INSTRUCTIONS = load_prompt("dialogue_writer/prompt.md")
+DIALOGUE_INSTRUCTIONS = load_prompt("dialogue_writer/write_dialogue.md")
 
 
 POLITICAL_NAMES_BLACKLIST = {
@@ -874,7 +874,7 @@ class DialogueNarrationAgent(BaseAgent):
             role="Spoken Dialogue Writing & Timeline Calibration",
             icon="🎙️",
             instructions=DIALOGUE_INSTRUCTIONS,
-            prompt_file="dialogue_writer/prompt.md",
+            prompt_file="dialogue_writer/write_dialogue.md",
         )
 
     def write_dialogue(
