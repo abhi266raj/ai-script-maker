@@ -177,8 +177,9 @@ AI Script Maker operates on an autonomous dual-engine architecture that **priori
 
 4. **🧠 Grok — Cloud Model:**
    - Uses the installed Grok CLI with a fresh one-shot request for every generation.
+   - The engine selector provides **Grok Low**, **Grok Medium**, and **Grok High** reasoning modes.
    - Login/model access is checked before generation; rate limits, quota, authentication, and service errors are shown as real failures.
-   - Grok is strict: it does not silently fall back to Apple FM or Antigravity.
+   - Each Grok mode is strict: it does not silently fall back to Apple FM or Antigravity.
 
 ### 🛡️ Autonomous Zero-Crash Failover
    - If the selected model is unavailable or fails, generation stops quickly and the UI reports the failure. No synthetic or stale script is shown as a successful result.

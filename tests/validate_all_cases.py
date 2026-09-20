@@ -33,7 +33,9 @@ def test_1_configuration_files():
     assert "first_local_then_agy" in pcfg["engines"]["hybrid"]["key"]
     assert "agy_only" in pcfg["engines"]["agy_only"]["key"]
     assert "fm_only" in pcfg["engines"]["fm_only"]["key"]
-    assert "grok_only" in pcfg["engines"]["grok_only"]["key"]
+    assert "grok_low" in pcfg["engines"]["grok_low"]["key"]
+    assert "grok_medium" in pcfg["engines"]["grok_medium"]["key"]
+    assert "grok_high" in pcfg["engines"]["grok_high"]["key"]
 
     cfg = load_config()
     assert "default_engine" in cfg

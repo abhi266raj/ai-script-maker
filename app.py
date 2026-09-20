@@ -788,7 +788,9 @@ with col_settings:
             engine_options = {
                 "Local First Then Antigravity": "first_local_then_agy",
                 "Antigravity": "agy_only",
-                "Grok": "grok_only",
+                "Grok Low": "grok_low",
+                "Grok Medium": "grok_medium",
+                "Grok High": "grok_high",
                 "On-device": "fm_only",
             }
             def cfg_row(label, widget):
@@ -962,7 +964,9 @@ with col_output:
         engine_labels = {
             "fm_only": "On-device Apple Foundation Model",
             "agy_only": "Antigravity",
-            "grok_only": "Grok",
+            "grok_low": "Grok Low",
+            "grok_medium": "Grok Medium",
+            "grok_high": "Grok High",
             "first_local_then_agy": "Local First Then Antigravity",
         }
         st.error("Script generation failed")

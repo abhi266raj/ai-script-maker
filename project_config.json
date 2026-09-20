@@ -4,16 +4,20 @@
   "description": "Autonomous multi-agent system transforming breaking news into viral, fact-checked Hindi reels with Google Flow / Veo 9:16 prompts",
   "default_language": "Hindi (Devanagari)",
   "interface_language": "English",
-  "default_engine": "grok_only",
+  "default_engine": "grok_medium",
   "default_duration": 15,
   "default_batch_count": 1,
   "local_llm_support": {
     "status": "work_in_progress",
     "supported_ui_engine": "fm_only",
-    "generic_servers": ["ollama", "llama.cpp", "lmstudio"],
+    "generic_servers": [
+      "ollama",
+      "llama.cpp",
+      "lmstudio"
+    ],
     "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
   },
-  "default_tone": "\ud83e\ude94 Traditional Heritage & Wisdom (\u0938\u093e\u0902\u0938\u094d\u0915\u0943\u0924\u093f\u0915 \u0927\u0930\u094b\u0939\u0930)",
+  "default_tone": "\u26a1 Urgent Breaking News (\u0924\u093e\u091c\u093c\u093e \u0916\u092c\u0930)",
   "news_category": "\ud83d\udcc8 Business & Economy",
   "engines": {
     "hybrid": {
@@ -27,11 +31,23 @@
       "path": "/opt/homebrew/bin/agy",
       "description": "Antigravity cloud reasoning with web search and comprehensive Hindi fluency"
     },
-    "grok_only": {
-      "key": "grok_only",
-      "display_name": "Grok Only (Verified)",
+    "grok_low": {
+      "key": "grok_low",
+      "display_name": "Grok Low (Verified)",
       "path": "/opt/homebrew/bin/grok",
-      "description": "Grok one-shot generation with verified login/model access; no silent fallback"
+      "description": "Grok low reasoning effort with verified login/model access; no silent fallback"
+    },
+    "grok_medium": {
+      "key": "grok_medium",
+      "display_name": "Grok Medium (Verified)",
+      "path": "/opt/homebrew/bin/grok",
+      "description": "Grok medium reasoning effort with verified login/model access; no silent fallback"
+    },
+    "grok_high": {
+      "key": "grok_high",
+      "display_name": "Grok High (Verified)",
+      "path": "/opt/homebrew/bin/grok",
+      "description": "Grok high reasoning effort with verified login/model access; no silent fallback"
     },
     "fm_only": {
       "key": "fm_only",
@@ -231,7 +247,7 @@
   "selected_script_index": 0,
   "default_angle": "Funny & Relatable",
   "character_count": 3,
-  "scene_style": "Dialogue",
+  "scene_style": "Monologue",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",

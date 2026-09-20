@@ -42,6 +42,11 @@ LOCAL_MODEL_TIMEOUT_SECONDS = 240
 REMOTE_MODEL_TIMEOUT_SECONDS = 120
 LOCAL_CONTEXT_CHAR_LIMIT = 12000
 LOCAL_GROUNDING_CHAR_LIMIT = 3500
+GROK_MODES = {
+    "grok_low": "low",
+    "grok_medium": "medium",
+    "grok_high": "high",
+}
 
 
 def _compact_local_text(text: Optional[str], limit: int) -> Optional[str]:
@@ -159,13 +164,36 @@ def _classify_agy_error(details: str) -> str:
 def _classify_grok_error(details: str) -> str:
     """Keep Grok's provider/CLI error while identifying common failure types."""
     lower = details.lower()
-    if any(marker in lower for marker in ("rate limit", "rate_limit", "too many requests", "quota", "429")):
+    if any(marker in lower for marker in (
+        "rate limit", "rate_limit", "too many requests", "quota", "429",
+        "usage limit", "free grok build", "reached your", "try again later",
+    )):
         return f"Grok rate-limit/quota error: {details}"
     if any(marker in lower for marker in ("unauthorized", "authentication", "sign in", "login")):
         return f"Grok authentication error: {details}"
     if any(marker in lower for marker in ("service unavailable", "capacity")):
         return f"Grok service-capacity error: {details}"
     return details
+
+
+def _extract_grok_error(raw: str) -> str:
+    """Extract concise provider errors from Grok's streaming JSON output."""
+    errors = []
+    for line in (raw or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        values = event.get("errors", [])
+        if isinstance(values, str):
+            values = [values]
+        if isinstance(values, list):
+            errors.extend(str(value) for value in values if value)
+        if event.get("type") == "error":
+            message = event.get("message") or event.get("error")
+            if message:
+                errors.append(str(message))
+    return "\n".join(dict.fromkeys(errors)).strip()
 
 
 def _extract_grok_stream_text(raw: str) -> str:
@@ -220,6 +248,7 @@ class DualEngine:
         self._fm_restricted: Optional[bool] = None
         self._agy_verified: Optional[bool] = None
         self._grok_verified: Optional[bool] = None
+        self._grok_effort = "low"
         self._cached_status: Optional[Dict[str, Any]] = None
 
     def check_status(self, force: bool = False, check_fm: bool = True) -> Dict[str, Any]:
@@ -391,13 +420,13 @@ class DualEngine:
 
     def validate_mode(self, mode: str) -> Dict[str, Any]:
         """Fail fast when the user-selected model is not ready."""
-        if mode not in {"first_local_then_agy", "fm_only", "agy_only", "grok_only"}:
+        if mode not in {"first_local_then_agy", "fm_only", "agy_only", *GROK_MODES}:
             raise ValueError(f"Unknown engine mode: {mode}")
 
-        status = self.check_status(force=True, check_fm=mode not in {"agy_only", "grok_only"})
+        status = self.check_status(force=True, check_fm=mode not in {"agy_only", *GROK_MODES})
         if mode == "agy_only" and status["agy"]["available"]:
             status = self._probe_agy_service(status)
-        if mode == "grok_only" and status["grok"]["available"]:
+        if mode in GROK_MODES and status["grok"]["available"]:
             status = self._probe_grok_service(status)
         if mode == "fm_only" and not status["fm"]["available"]:
             raise ModelGenerationError(
@@ -410,7 +439,7 @@ class DualEngine:
                 f"Antigravity model is not available: {status['agy']['message']}. "
                 "Please start or sign in to Antigravity and try again. No script was generated."
             )
-        if mode == "grok_only" and not status["grok"]["available"]:
+        if mode in GROK_MODES and not status["grok"]["available"]:
             raise ModelGenerationError(
                 f"Grok model is not available: {status['grok']['message']}. "
                 "Please sign in to Grok and try again. No script was generated."
@@ -536,6 +565,8 @@ class DualEngine:
             "--no-plan",
             "--no-subagents",
             "--disable-web-search",
+            "--reasoning-effort",
+            getattr(self, "_grok_effort", "low"),
         ]
         try:
             res = subprocess.run(
@@ -557,7 +588,8 @@ class DualEngine:
         output = _extract_grok_stream_text(res.stdout)
         err = res.stderr.strip()
         raw_output = res.stdout.strip()
-        combined = f"{err}\n{raw_output}".strip()
+        provider_error = _extract_grok_error(raw_output)
+        combined = f"{err}\n{provider_error or raw_output}".strip()
         if res.returncode != 0:
             details = combined or "No error details returned"
             raise RuntimeError(f"Grok error (exit {res.returncode}): {_classify_grok_error(details)}")
@@ -580,13 +612,14 @@ class DualEngine:
           If it fails or is restricted, seamlessly falls back to Antigravity (agy).
         - Mode 'fm_only': Strictly uses Local Apple FM and raises a model error on failure.
         - Mode 'agy_only': Strictly uses Antigravity (agy) and raises a model error on failure.
-        - Mode 'grok_only': Strictly uses Grok and raises a model error on failure.
+        - Modes 'grok_low', 'grok_medium', and 'grok_high': Strictly use Grok
+          with the selected reasoning effort and raise a model error on failure.
 
         Returns:
             (response_text, engine_used_description)
         """
         # Ensure status is checked so _fm_restricted is set without wasting 8s on every call
-        if mode not in {"agy_only", "grok_only"} and self._fm_restricted is None:
+        if mode not in {"agy_only", *GROK_MODES} and self._fm_restricted is None:
             self.check_status()
 
         if mode == "first_local_then_agy":
@@ -650,7 +683,8 @@ class DualEngine:
                     partial_output=e.partial_output,
                 ) from e
 
-        elif mode == "grok_only":
+        elif mode in GROK_MODES:
+            self._grok_effort = GROK_MODES[mode]
             try:
                 output = self.run_grok(prompt, instructions, timeout=min(timeout, REMOTE_MODEL_TIMEOUT_SECONDS))
                 return output, "🧠 Grok"
