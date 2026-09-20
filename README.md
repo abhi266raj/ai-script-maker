@@ -265,6 +265,17 @@ python tests/test_character_and_creative_scenes.py
 
 ---
 
+## 🌿 Agent & Developer Workflow Rules (Universal)
+
+All AI agents and contributors must strictly adhere to the project's Git workflow:
+- **No Coding on Main:** Agents are strictly forbidden from writing or modifying code directly on `main`.
+- **No Direct Commits to Main:** Direct commits to `main` are prohibited and blocked by pre-commit hooks.
+- **Always Start with a Feature Branch:** `git checkout -b feature/<name>` from up-to-date `main`.
+- **Merge Only When Complete & Tested:** Merge feature branches back into `main` using `--no-ff` once all unit tests pass.
+- Detailed rules: [`AGENTS.md`](./AGENTS.md), [`GEMINI.md`](./GEMINI.md), and [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+
+---
+
 ## 📂 Project Structure
 
 ```text
