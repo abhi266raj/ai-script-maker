@@ -272,7 +272,7 @@ ai-script-maker/
 ├── app.py                         # Streamlit Web Studio UI
 ├── workflow.py                    # Multi-agent streaming orchestrator
 ├── run.sh                         # One-click startup script
-├── REQUIREMENTS.md                # Comprehensive technical specification
+├── AGENT_ARCHITECTURE.md          # Multi-agent architecture and technical specification
 ├── project_config.json            # Studio settings & category preferences
 ├── studio_config.json             # Active runtime session state
 ├── agents/                        # Autonomous AI sub-agents

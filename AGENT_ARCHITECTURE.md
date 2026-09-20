@@ -1,4 +1,4 @@
-# 📋 Product Requirements Document (PRD): Hindi Short Reel Script Agent
+# 🏛️ Multi-Agent System Architecture & Specifications (Hindi Short Reel Studio)
 
 **Project:** Autonomous Hindi Short Reel Script Generator with Specialized Multi-Agent Architecture  
 **Architecture:** **8 Dedicated Specialized Pipeline Agents with Autonomous Self-Healing Hand-offs**  
