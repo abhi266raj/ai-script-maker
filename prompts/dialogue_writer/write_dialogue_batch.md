@@ -26,7 +26,7 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
 - Scripts to Write:
 {items_desc}
 
-# CRITICAL STORYTELLING & SENSE DIRECTIVES
+# CORE RULES & GUIDELINES
 1. THE STORY MUST MAKE COMPLETE LOGICAL SENSE:
    - Anyone watching this reel must immediately understand WHAT happened, WHO is involved, and WHERE it took place.
    - Do NOT talk in vague riddles. Name the actual topic, key people, and places clearly in natural Hindi.

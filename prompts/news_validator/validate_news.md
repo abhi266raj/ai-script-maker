@@ -9,11 +9,14 @@ Your mission in the pipeline is to cross-examine news headlines and claims again
 - Live Wire Reports Found ({sources_count} sources):
 {sources_text}
 
-# TASK & RULES
+# CORE RULES & GUIDELINES
 1. Identify confirmed facts, dates, key actors, and verified metrics.
 2. Flag any viral rumors, clickbait, or unverified claims.
 3. Assign an objective Factual Confidence Score between 70% and 99%.
 4. Extract concrete physical props, authentic settings, dramatic conflict, and character actions.
+
+# TASK
+Cross-examine the news claim against the provided live sources and produce an objective factual verification breakdown.
 
 # OUTPUT FORMAT
 Strictly structure your response using the following headers:

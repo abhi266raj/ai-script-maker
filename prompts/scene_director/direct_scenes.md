@@ -18,7 +18,7 @@ Your mission in the pipeline is translating spoken narration and character dialo
 {lines_summary}
 {sub_directive}
 
-# CRITICAL SCREENWRITING & SCENE DESCRIPTION RULES
+# CORE RULES & GUIDELINES
 1. PROFESSIONAL SCREENPLAY SETUP (SETTING & CAMERA IN SCENE DESCRIPTION ONLY):
    - Location, environment, and camera staging belong ONCE in SCENE DESCRIPTION.
    - Running scene beats must ONLY describe physical actor actions, prop interactions, and facial reactions.

@@ -18,7 +18,7 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
 - Facts to incorporate:
 {facts_list}
 
-# CRITICAL PACING & QUALITY DIRECTIVES
+# CORE RULES & GUIDELINES
 1. Less words ({min_words} to {rec_words} words) is completely SAFE and encourages B-roll, pauses, and sound effects.
 2. More than {max_words} words is a STRICT FAILURE. Do NOT write verbose narration.
 3. Ground every sentence in verified news facts matching the requested tone.

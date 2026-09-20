@@ -7,7 +7,7 @@ Your sole task is verifying whether visual prompts are physically feasible, temp
 {sub_directive}
 {prompts_summary}
 
-# EVALUATION CRITERIA & RULES
+# CORE RULES & GUIDELINES
 1. Feasible for 3-5 second generative clip?
 2. Temporal continuity between scenes?
 3. Safety and prompt policy compliance? Flag impossible scene morphing or sudden camera teleportation.

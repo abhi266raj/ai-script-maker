@@ -14,10 +14,13 @@ Your responsibility is crafting batch variants of viral, scroll-stopping 0-3 sec
 - Angles to Formulate:
 {angles_text}
 
-# TASK & RULES
+# CORE RULES & GUIDELINES
 1. For each designated angle, write ONE 0-3s viral Hindi Hook (with emojis) and ONE closing CTA.
 2. The hook must stop viewers from scrolling within 3 seconds using humor, curiosity, or shock value.
 3. Match the requested tone and ground hooks in relatable desi phrasing.
+
+# TASK
+Formulate batch variants of viral Hindi hooks and CTAs across the designated creative angles.
 
 # OUTPUT FORMAT
 Strictly format each angle as:

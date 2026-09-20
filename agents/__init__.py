@@ -9,6 +9,8 @@ from .scene_director import SceneVisualsDirectorAgent, scene_director
 from .video_prompt_engineer import AIVideoPromptAgent, video_prompt_engineer
 from .video_quality_gate import VideoQualityGateAgent, video_quality_gate
 from .chief_editor import ChiefEditorCoordinatorAgent, chief_editor_coordinator
+from .contextual_selector import ContextualSceneCharacterSelectorAgent, contextual_selector
+from .screenplay_coherence import ScreenplayCoherenceAgent, screenplay_coherence_agent
 from core.angles import REEL_ANGLES
 
 __all__ = [
@@ -29,5 +31,9 @@ __all__ = [
     "video_quality_gate",
     "ChiefEditorCoordinatorAgent",
     "chief_editor_coordinator",
+    "ContextualSceneCharacterSelectorAgent",
+    "contextual_selector",
+    "ScreenplayCoherenceAgent",
+    "screenplay_coherence_agent",
     "REEL_ANGLES",
 ]
