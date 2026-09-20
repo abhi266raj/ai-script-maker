@@ -2,10 +2,12 @@
 
 ## 🌿 Git Branching & Feature Workflow Rules
 
-### 1. STRICT PROHIBITION: NO DIRECT COMMITS ON MAIN
+### 1. STRICT PROHIBITION: NO CODING OR COMMITTING ON MAIN
+- **Agents are STRICTLY FORBIDDEN from writing, modifying, creating, or editing code files while on the `main` branch.**
 - **Agents are STRICTLY FORBIDDEN from committing directly to the `main` branch.**
-- Before staging or committing any code, the agent MUST verify the current branch using `git branch --show-current`.
-- If the current branch is `main`, the agent MUST NOT run `git commit`.
+- Before editing or writing any code, the agent MUST verify the current branch using `git branch --show-current`.
+- If the current branch is `main`, the agent MUST immediately switch to or create a feature branch (`git checkout -b feature/<name>`) BEFORE making any file modifications or edits.
+- The `main` branch is reserved EXCLUSIVELY for clean integration merges of fully tested feature branches.
 
 ### 2. ALWAYS START BY CREATING A NEW FEATURE BRANCH
 - When starting any new task, fix, or feature, the agent MUST create and switch to a dedicated feature branch from `main`:
