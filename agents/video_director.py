@@ -4,7 +4,7 @@ import re
 from typing import List, Tuple, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, VideoPassVerification, SceneItem
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 VIDEO_DIRECTOR_INSTRUCTIONS = load_prompt("video_director/prompt.md")
@@ -24,6 +24,7 @@ class AIVideoDirectorAgent(BaseAgent):
         self,
         news_topic: str,
         scenes: List[SceneItem],
+        duration_sec: int = 30,
         engine_mode: str = "first_local_then_agy",
     ) -> List[VideoScenePrompt]:
         """Generate structured 9:16 AI video prompts for Google Flow / Veo."""
@@ -31,20 +32,12 @@ class AIVideoDirectorAgent(BaseAgent):
         for s in scenes:
             scenes_desc += f"Scene {s.scene_number} ({s.timestamp}): B-Roll: {s.visual_b_roll} | Text: {s.on_screen_text}\n"
 
-        prompt = f"""Topic: {news_topic}
-
-Scenes to convert into Google Flow / Veo AI Video Prompts:
-{scenes_desc}
-
-Task:
-For each scene, output an ultra-detailed AI video prompt formatted as:
-SCENE 1:
-PROMPT: [Ultra-detailed 9:16 cinematic visual prompt describing camera motion, lighting, realistic textures, 4k 24fps]
-CAMERA: [e.g., Low-angle tracking shot moving forward]
-LIGHTING: [e.g., Volumetric golden rim lighting]
-MOTION: [e.g., High dynamic movement]
-
-(Repeat for each scene)"""
+        prompt = render_prompt(
+            "video_director/generate_video_prompts.md",
+            news_topic=news_topic,
+            duration_sec=duration_sec,
+            scenes_desc=scenes_desc,
+        )
 
         raw_output = self.execute(prompt, engine_mode=engine_mode)
 
@@ -121,18 +114,10 @@ MOTION: [e.g., High dynamic movement]
         """
         prompts_summary = "\n".join([f"Scene {p.scene_number} ({p.timestamp}): {p.visual_prompt_ai[:100]}..." for p in prompts])
 
-        eval_prompt = f"""Evaluate these Google Flow / Veo AI Video generation prompts for feasibility, safety, and 9:16 vertical video compliance:
-{prompts_summary}
-
-Evaluation Criteria:
-1. Is it feasible for a 3-5 second generative clip? (No impossible multi-scene jumps in a single shot)
-2. Does it maintain temporal visual continuity across scenes?
-3. Is it safe (free from policy violations)?
-
-Output:
-STATUS: [PASSED / FAILED]
-SCORE: [70-99]%
-FEEDBACK: (1-2 sentences on why it passed or what needs revision)"""
+        eval_prompt = render_prompt(
+            "video_director/verify_prompts_quality.md",
+            prompts_summary=prompts_summary,
+        )
 
         raw_output = self.execute(eval_prompt, engine_mode=engine_mode)
 

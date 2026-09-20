@@ -3,7 +3,7 @@
 from typing import List, Optional, Callable
 from agents.base import BaseAgent
 from core.models import NewsArticle, ResearchBrief
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 RESEARCHER_INSTRUCTIONS = load_prompt("researcher/prompt.md")
@@ -25,8 +25,7 @@ class ResearchAgent(BaseAgent):
         articles: List[NewsArticle],
         status_callback: Optional[Callable[[str, str], None]] = None,
     ) -> ResearchBrief:
-        """Analyze gathered articles and create a structured Research Brief."""
-        # Format sources into a readable context block
+        """Analyze gathered articles and extract key facts into a structured dossier."""
         sources_text = ""
         for idx, art in enumerate(articles, 1):
             sources_text += f"\n[Source {idx}]: {art.title} (Outlet: {art.source})\n"
@@ -35,28 +34,11 @@ class ResearchAgent(BaseAgent):
             if art.published:
                 sources_text += f"Published: {art.published}\n"
 
-        prompt = f"""Topic: {topic}
-
-Gathered News Articles & Live Sources:
-{sources_text if sources_text else "No external articles retrieved. Synthesize from your knowledge."}
-
-Task:
-Produce a comprehensive Research Dossier formatted as:
-# RESEARCH BRIEF: {topic}
-## 1. Executive Summary
-(2-3 sentences summarizing the event or status)
-
-## 2. Key Facts & Verified Chronology
-(Bullet points with specific dates, figures, and actions)
-
-## 3. Stakeholders & Perspectives
-(Different parties and their statements/positions)
-
-## 4. Key Metrics & Quotes
-(Noteworthy numbers, quotes, or findings)
-
-## 5. Knowledge Gaps or Developing Questions
-(What is still unknown or pending)"""
+        prompt = render_prompt(
+            "researcher/analyze.md",
+            topic=topic,
+            sources_text=sources_text if sources_text else "No external articles retrieved. Synthesize from your knowledge.",
+        )
 
         raw_output = self.execute(prompt, status_callback=status_callback)
 

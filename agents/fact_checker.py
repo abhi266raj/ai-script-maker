@@ -4,7 +4,7 @@ import re
 from typing import Optional, Callable
 from agents.base import BaseAgent
 from core.models import ResearchBrief, FactCheckReport, FactCheckItem
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 FACT_CHECKER_INSTRUCTIONS = load_prompt("fact_checker/prompt.md")
@@ -26,31 +26,14 @@ class FactCheckerAgent(BaseAgent):
         status_callback: Optional[Callable[[str, str], None]] = None,
     ) -> FactCheckReport:
         """Audit the research brief and return a structured verification report."""
-        prompt = f"""Topic: {brief.topic}
-
-Research Brief to Audit:
-{brief.raw_response}
-
-Sources Referenced ({len(brief.sources)} sources):
-{chr(10).join([f"- {s.title} ({s.source})" for s in brief.sources])}
-
-Task:
-Perform a full editorial audit. Structure your response exactly as follows:
-
-# FACT-CHECK & VERIFICATION AUDIT
-## 1. Overall Reliability Score: [Score between 70-98]%
-(Provide the single percentage score and a 1-2 sentence overall verdict)
-
-## 2. Claim-by-Claim Verification
-- [VERIFIED] Claim: ... | Note: ...
-- [VERIFIED] Claim: ... | Note: ...
-- [PLAUSIBLE] Claim: ... | Note: ...
-
-## 3. Potential Bias or Sensationalism Warnings
-- (List any areas where language might be overstated or one-sided)
-
-## 4. Guidance for the Writing Team
-- (Specific advice on what to emphasize and what to hedge or verify further)"""
+        sources_list = "\n".join([f"- {s.title} ({s.source})" for s in brief.sources])
+        prompt = render_prompt(
+            "fact_checker/audit.md",
+            topic=brief.topic,
+            brief_response=brief.raw_response,
+            sources_count=len(brief.sources),
+            sources_list=sources_list,
+        )
 
         raw_output = self.execute(prompt, status_callback=status_callback)
 

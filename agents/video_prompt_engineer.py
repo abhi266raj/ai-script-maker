@@ -5,7 +5,7 @@ from typing import List, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, SceneItem
 from core.dual_engine import ModelGenerationError
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 def clean_prompt_text(text: str) -> str:
@@ -58,21 +58,14 @@ class AIVideoPromptAgent(BaseAgent):
 
         sub_directive = f"\nChief Editor Directive for AI Video Prompts:\n{sub_instruction}\n" if sub_instruction else ""
 
-        prompt = f"""Topic: {news_topic}
-Tone: {tone} | Angle: {angle}
-{sub_directive}
-Storyboard Scenes to translate into Cinematic 9:16 AI Video Prompts:
-{scenes_desc}
-
-Task:
-For each scene, output:
-SCENE 1:
-PROMPT: [Ultra-detailed 9:16 cinematic visual prompt starting with 'Cinematic 9:16 vertical shot:' describing camera motion, actor action, physical props, specular reflections, volumetric lighting, photorealistic 4k 24fps. Do NOT include vendor/engine names.]
-CAMERA: [e.g., Handheld dynamic low-angle push-in]
-LIGHTING: [e.g., Warm golden late-afternoon street sunlight]
-MOTION: [e.g., High dynamic movement]
-
-(Repeat for each scene)"""
+        prompt = render_prompt(
+            "video_prompt_engineer/generate_prompts.md",
+            news_topic=news_topic,
+            tone=tone,
+            angle=angle,
+            sub_directive=sub_directive,
+            scenes_desc=scenes_desc,
+        )
 
         raw_output = ""
         try:

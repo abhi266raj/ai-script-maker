@@ -6,7 +6,7 @@ from agents.base import BaseAgent
 from core.models import SceneItem
 from core.metrics import get_duration_budget
 from core.dual_engine import ModelGenerationError
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 def clean_beat_action(text: str) -> str:
     """Strip camera framing and background setting preamble from running beat action."""
@@ -134,40 +134,22 @@ class SceneVisualsDirectorAgent(BaseAgent):
 
         sub_directive = f"\nChief Editor Directive for Scene Direction:\n{sub_instruction}\n" if sub_instruction else ""
 
-        prompt = f"""News Topic: {news_topic}
-Angle: {angle} | Tone: {tone} | Style: {scene_style}
-Target Duration: {duration_sec}s ({target_frames} Scenes)
+        timestamps_text = ", ".join(calculate_scene_timestamps(duration_sec, target_frames))
 
-RESEARCHED STORY INTELLIGENCE (Agent 1):
-- Verified Facts: {facts_summary or news_topic}
-- Core Conflict / Irony: {core_conflict_or_irony or 'Viral controversy and humor'}
-- Physical Props to Visualize: {props_text}
-- Locations & Settings: {locs_text}
-- Tangible Character Actions: {actions_text}
-
-UPSTREAM SPOKEN DIALOGUE (Agent 3):
-{lines_summary}
-
-{sub_directive}
-
-TASK:
-Direct {target_frames} distinct, visually coordinated 9:16 scenes matching the story's narrative flow.
-Every scene's visual B-roll MUST feature the exact physical props and actions researched above!
-Maintain visual continuity:
-- Scene 1 establishes the setting ({locs_text}) and introduces the primary prop ({props_text}).
-- Subsequent scenes show close-up/POV interaction with props executing the spoken dialogue.
-- Final scene shows the wider crowd or community reaction and comedic/dramatic payoff.
-
-Format strictly as:
-SCENE 1:
-TIME: [e.g., 0:00 - 0:03]
-CHARACTER: [Speaker name]
-DIALOGUE: [Exact Hindi dialogue line]
-ACTION: [Specific physical actor action, gesture, and prop interaction ONLY - do NOT describe the general location or camera framing here as that is in Scene Description]
-TEXT: [Devanagari on-screen text overlay]
-SFX: [Sound effect, e.g. Street Ambience + Whoosh]
-
-(Repeat for SCENE 2 to SCENE {target_frames})"""
+        prompt = render_prompt(
+            "scene_director/direct_scenes.md",
+            news_topic=news_topic,
+            hook=hook,
+            narration=narration,
+            duration_sec=duration_sec,
+            target_frames=target_frames,
+            timestamps_text=timestamps_text,
+            props_text=props_text,
+            locs_text=locs_text,
+            actions_text=actions_text,
+            lines_summary=lines_summary,
+            sub_directive=sub_directive,
+        )
 
         raw_output = ""
         try:

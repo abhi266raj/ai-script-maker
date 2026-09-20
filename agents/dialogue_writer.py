@@ -8,7 +8,7 @@ from agents.base import BaseAgent
 from core.models import NewsVerificationReport
 from core.metrics import get_duration_budget, count_words
 from core.dual_engine import ModelGenerationError
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -898,30 +898,23 @@ class DialogueNarrationAgent(BaseAgent):
             correction_note = f"\n[CRITICAL CORRECTION FROM TIMING AUDITOR: {correction_feedback}]\n"
 
         sub_directive = f"\nChief Editor Directive & Dialogue Word Limits:\n{sub_instruction}\n" if sub_instruction else ""
+        facts_list = "\n".join(["- " + f for f in verification.verified_facts[:3]])
 
-        prompt = f"""News Story: {news_input}
-Opening Hook: {hook}
-Target Duration: Exactly {duration_sec} Seconds
-Word Budget for Spoken Dialogue:
-- Target / Recommended: ~{budget['recommended_words']} words
-- Absolute Strict Maximum: {budget['max_words']} words
-- Minimum Safe Words: {budget['min_words']} words
-{sub_directive}
-{guidance}
-
-CRITICAL PACING & QUALITY DIRECTIVES:
-1. Less words ({budget['min_words']} to {budget['recommended_words']} words) is completely SAFE and encourages B-roll, pauses, and sound effects.
-2. More than {budget['max_words']} words is a STRICT FAILURE. Do NOT write verbose narration.
-3. NO greetings (Never say 'नमस्ते', 'नमस्कार', 'हेलो').
-4. NO intro filler (Never say 'आइए जानते हैं', 'दोस्तों जैसा कि आप जानते हैं').
-5. NO stage directions or brackets. Output ONLY pure spoken Hindi dialogue in Devanagari script.
-6. Tone: {tone}
-7. Closing CTA: {cta}
-{correction_note}
-Facts to incorporate:
-{chr(10).join(['- ' + f for f in verification.verified_facts[:3]])}
-
-Task: Write the spoken Devanagari Hindi dialogue. Keep total words <= {budget['max_words']} words:"""
+        prompt = render_prompt(
+            "dialogue_writer/write_dialogue.md",
+            news_input=news_input,
+            hook=hook,
+            duration_sec=duration_sec,
+            rec_words=budget["recommended_words"],
+            max_words=budget["max_words"],
+            min_words=budget["min_words"],
+            sub_directive=sub_directive,
+            guidance=guidance,
+            tone=tone,
+            cta=cta,
+            correction_note=correction_note,
+            facts_list=facts_list,
+        )
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
@@ -1083,61 +1076,31 @@ Task: Write the spoken Devanagari Hindi dialogue. Keep total words <= {budget['m
             )
         sample_scenes = "\n\n".join(scene_templates)
 
-        prompt = f"""News Story: {news_input}
-Target Duration: Exactly {duration_sec} Seconds
-Total Word Limits (across all {actual_scenes} beats combined):
-- Target / Recommended: ~{budget['recommended_words']} words
-- Absolute Strict Maximum: {budget['max_words']} words
-- Minimum Safe Words: {budget['min_words']} words
-- Per Beat Target: ~{per_scene_words} words each (Strict Max ~{per_scene_max} words per beat)
-
-NARRATIVE FLOW (DYNAMICALLY SELECTED FOR THIS REEL):
-- Mode: {chosen_narrative['name']}
-- Narrative Staging: {chosen_narrative['description']}
-
-CHARACTERS IN THE SCENE ({len(personas)} characters):
-{chr(10).join(['- ' + p for p in personas])}
-
-RESEARCHED STORY FACTS & CONTEXT:
-- Setting / Location: {locs_text or 'Authentic Indian street or workplace setting'}
-- Physical Props: {props_text or 'Specific physical objects in the news story'}
-- Core Conflict / Irony: {conflict_text or 'The central viral story hook'}
-- Key Verified Facts to explain:
-{facts_text}
-
-CREATIVE GUIDELINES:
-{creative_rules}
-{sample_directive}
-{sub_directive}
-{guidance}
-
-CRITICAL STORYTELLING & SENSE DIRECTIVES:
-1. THE STORY MUST MAKE COMPLETE LOGICAL SENSE:
-   - Anyone watching this reel must immediately understand WHAT happened, WHO is involved, and WHERE it took place.
-   - Do NOT talk in vague riddles. Name the actual topic, key people, and places clearly in natural Hindi.
-2. CONVERSATIONAL CONTINUITY & FLOW:
-   - Characters must talk DIRECTLY to each other with natural back-and-forth cadence.
-   - Beat 2 MUST directly answer, counter, or react to what was said in Beat 1!
-   - The final beat MUST deliver a logical resolution, witty punchline, or satisfying takeaway that ties the entire story together.
-   - NEVER make disconnected jokes or non-sequitur remarks. The humor or drama MUST come from the actual news facts!
-   - NEVER use meaningless generic filler lines (e.g. never say 'अब देखते हैं आगे क्या होता है' or 'बात तो सही है' without real substance).
-3. NATURAL SPOKEN CADENCE:
-   - Clean spoken Devanagari Hindi only. Every line must be a complete, grammatically sound sentence.
-   - NO greetings ('नमस्ते'), NO intro filler ('आइए जानते हैं').
-   - STRICT PROHIBITION: NO social media commenting or CTAs ('कमेंट करें', 'लाइक करें', 'कमेंट में बताएं', 'शेयर करें'). Characters live in their world and talk to each other!
-4. ONE CONTINUOUS VIDEO FLOW (DO NOT REPEAT BACKGROUND CONTEXT):
-   - This script is for ONE continuous video reel shot in a single take.
-   - The setting and background context are introduced ONCE at the start.
-   - Subsequent beats MUST NOT repeat the background context or restart the setting.
-   - Progress the action forward fluidly with camera refocusing, prop interactions, and witty comebacks.
-
-Scripts to write:
-{items_desc}
-
-Task: Write the spoken Hindi dialogue for each script beat-by-beat (EXACTLY {actual_scenes} beats).
-Format strictly:
-SCRIPT 1:
-{sample_scenes}"""
+        prompt = render_prompt(
+            "dialogue_writer/write_dialogue_batch.md",
+            news_input=news_input,
+            duration_sec=duration_sec,
+            actual_scenes=actual_scenes,
+            rec_words=budget["recommended_words"],
+            max_words=budget["max_words"],
+            min_words=budget["min_words"],
+            per_scene_words=per_scene_words,
+            per_scene_max=per_scene_max,
+            narrative_name=chosen_narrative["name"],
+            narrative_desc=chosen_narrative["description"],
+            character_count=len(personas),
+            personas_list="\n".join(["- " + p for p in personas]),
+            setting_location=locs_text or "Authentic Indian street or workplace setting",
+            physical_props=props_text or "Specific physical objects in the news story",
+            core_conflict=conflict_text or "The central viral story hook",
+            facts_text=facts_text,
+            creative_rules=creative_rules,
+            sample_directive=sample_directive,
+            sub_directive=sub_directive,
+            guidance=guidance,
+            items_desc=items_desc,
+            sample_scenes=sample_scenes,
+        )
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)

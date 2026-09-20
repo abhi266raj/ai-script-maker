@@ -5,7 +5,7 @@ from typing import Optional, Callable, List
 from agents.base import BaseAgent
 from core.models import NewsVerificationReport, NewsArticle
 from tools.news_fetcher import news_fetcher
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 VERIFIER_INSTRUCTIONS = load_prompt("news_verifier/prompt.md")
@@ -38,22 +38,13 @@ class NewsVerifierAgent(BaseAgent):
         for i, a in enumerate(articles, 1):
             sources_text += f"Source {i} ({a.source}): {a.title}\n{a.snippet}\n\n"
 
-        prompt = f"""News to Verify: {news_input}
-Context/Scenario: {scenario}
-
-Live Wire Reports Found ({len(articles)} sources):
-{sources_text if sources_text else "No immediate wire feed found; verify using factual reasoning."}
-
-Task:
-Perform Step 1: News Verification. Format your response strictly as:
-## VERIFICATION STATUS: [VERIFIED / PARTIALLY VERIFIED / UNCONFIRMED]
-## CONFIDENCE SCORE: [75-98]%
-## SUMMARY: (2 sentences explaining what is confirmed vs unconfirmed)
-## VERIFIED FACTS:
-- (Fact 1 with key entities/dates)
-- (Fact 2 with key entities/dates)
-## POTENTIAL FLAGS OR MISCONCEPTIONS:
-- (Any rumor or common exaggeration to avoid in reels)"""
+        prompt = render_prompt(
+            "news_verifier/verify.md",
+            news_input=news_input,
+            scenario=scenario,
+            sources_count=len(articles),
+            sources_text=sources_text if sources_text else "No immediate wire feed found; verify using factual reasoning.",
+        )
 
         raw_output = self.execute(prompt, status_callback=status_callback, engine_mode=engine_mode)
 

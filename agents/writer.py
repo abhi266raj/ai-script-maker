@@ -3,7 +3,7 @@
 from typing import Optional, Callable
 from agents.base import BaseAgent
 from core.models import ResearchBrief, FactCheckReport, ArticleDraft
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 WRITER_INSTRUCTIONS = load_prompt("writer/prompt.md")
@@ -28,30 +28,14 @@ class WriterAgent(BaseAgent):
         status_callback: Optional[Callable[[str, str], None]] = None,
     ) -> ArticleDraft:
         """Draft a publication-grade article based on research and fact-check results."""
-        prompt = f"""Topic: {topic}
-Target Style: {editorial_style}
-
-RESEARCH DOSSIER:
-{brief.raw_response}
-
-FACT-CHECKER AUDIT & GUIDELINES (Reliability: {audit.overall_score}%):
-{audit.raw_response}
-
-Task:
-Draft a full-length, professional news article in Markdown format:
-# [Catchy, Accurate Headline]
-### [Subheadline: Context & Stakes]
-
-**DATELINE** — [Compelling opening paragraph establishing what happened, when, and why it matters.]
-
-## [Section Header 1: Key Developments & Background]
-[Detailed reporting and context...]
-
-## [Section Header 2: Stakeholders & Impact]
-[Quotes, multiple perspectives, industry/social ripple effects...]
-
-## [Section Header 3: Looking Forward]
-[Upcoming decisions, what to watch, or broader implications.]"""
+        prompt = render_prompt(
+            "writer/write.md",
+            topic=topic,
+            editorial_style=editorial_style,
+            brief_response=brief.raw_response,
+            reliability_score=audit.overall_score,
+            audit_response=audit.raw_response,
+        )
 
         raw_output = self.execute(prompt, status_callback=status_callback)
 

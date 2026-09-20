@@ -69,6 +69,33 @@ class TestPromptLoader(unittest.TestCase):
         agent_coh = ScreenplayCoherenceAgent()
         self.assertEqual(agent_coh.instructions, load_prompt("screenplay_coherence/prompt.md"))
 
+    def test_method_prompts_exist_and_render(self):
+        from core.prompt_loader import render_prompt
+        expected_method_prompts = [
+            ("news_validator/validate_news.md", {"headline": "Test Headline", "category": "Tech"}),
+            ("hook_strategist/craft_hook.md", {"headline": "Test Headline", "category": "Tech", "tone": "Funny", "duration": 15, "angle": "Sarcastic"}),
+            ("hook_strategist/craft_hooks_batch.md", {"headline": "Test Headline", "category": "Tech", "tone": "Funny", "duration": 15, "angle": "Sarcastic", "batch_count": 2}),
+            ("dialogue_writer/write_dialogue.md", {"selected_hook": "Hook", "headline": "Headline", "category": "Tech", "tone": "Funny", "duration": 15, "rec_words": 30, "min_words": 15, "max_words": 35, "wps": 2.2, "character_context_prompt": "", "character_count": 1, "scene_style": "Monologue", "angle": "Humorous"}),
+            ("dialogue_writer/write_dialogue_batch.md", {"selected_hook": "Hook", "headline": "Headline", "category": "Tech", "tone": "Funny", "duration": 15, "rec_words": 30, "min_words": 15, "max_words": 35, "wps": 2.2, "character_context_prompt": "", "character_count": 1, "scene_style": "Monologue", "angle": "Humorous", "batch_count": 2}),
+            ("scene_director/direct_scenes.md", {"dialogue": "Narration", "duration": 15, "angle": "Humorous", "tone": "Funny", "frame_count": 3, "character_context_prompt": ""}),
+            ("video_prompt_engineer/generate_prompts.md", {"storyboard_details": "Story", "tone": "Funny", "style": "9:16", "duration": 15, "aspect_ratio": "9:16", "resolution": "4K", "fps": "24fps", "camera_style": "Cinematic", "lighting_style": "Warm", "motion_style": "Smooth", "negative_prompt": "Blur", "characters_summary": "None"}),
+            ("video_quality_gate/audit_prompts.md", {"video_prompts_text": "Prompt 1", "tone": "Funny", "duration": 15, "aspect_ratio": "9:16", "resolution": "4K", "fps": "24fps"}),
+            ("reel_writer/generate_single_script.md", {"topic": "AI", "angle": "Tech", "tone": "Funny", "category": "Tech", "duration": 15, "fact_check_summary": "Verified", "reliability_score": 95, "character_context_prompt": ""}),
+            ("news_verifier/verify.md", {"topic": "AI"}),
+            ("video_director/generate_video_prompts.md", {"topic": "AI", "article_content": "Content", "tone": "Informative"}),
+            ("video_director/verify_prompts_quality.md", {"prompts_data": "Prompts"}),
+            ("fact_checker/audit.md", {"topic": "AI", "key_findings": "Findings", "sources_text": "Source 1"}),
+            ("researcher/analyze.md", {"topic": "AI", "sources_text": "Source 1"}),
+            ("writer/write.md", {"topic": "AI", "research_findings": "Findings", "target_word_count": 500, "fact_check_score": 90, "fact_check_notes": "Good"}),
+            ("editor/review_and_publish.md", {"topic": "AI", "draft_headline": "Headline", "draft_subheadline": "Subheadline", "draft_content": "Content", "reliability_score": 90, "audit_summary": "Passed"}),
+        ]
+
+        for rel_path, kwargs in expected_method_prompts:
+            file_path = PROMPTS_DIR / rel_path
+            self.assertTrue(file_path.is_file(), f"Method prompt file {file_path} should exist")
+            rendered = render_prompt(rel_path, **kwargs)
+            self.assertTrue(len(rendered) > 10, f"Rendered prompt for {rel_path} should not be empty")
+
 
 if __name__ == "__main__":
     unittest.main()

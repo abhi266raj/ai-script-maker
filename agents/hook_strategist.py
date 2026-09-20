@@ -5,7 +5,7 @@ from typing import Tuple, List, Optional
 from agents.base import BaseAgent
 from core.models import NewsVerificationReport
 from core.dual_engine import ModelGenerationError
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 HOOK_STRATEGIST_INSTRUCTIONS = load_prompt("hook_strategist/prompt.md")
 
@@ -38,21 +38,17 @@ class HookAndAngleAgent(BaseAgent):
             "Keep CTA concise (3-5 words e.g. 'फॉलो करें और राय बताएं!')."
         )
         sub_directive = f"\nChief Editor Directive:\n{sub_instruction}\n" if sub_instruction else ""
-        prompt = f"""News Topic: {news_topic}
-Angle: {angle_name} ({angle_desc})
-Target Tone: {tone}
-Duration: {duration_sec}s
-CTA Guideline: {cta_guidance}
-{sub_directive}
-Verified Context: {verification.verification_summary}
-
-Task:
-1. Write ONE 0-3s viral Hindi Hook (1 short sentence with emojis).
-2. Write ONE closing Hindi Call to Action (CTA) matching the CTA guideline.
-
-Output format:
-HOOK: [Catchy Hindi Hook with emojis]
-CTA: [Engaging Hindi Call to Action]"""
+        prompt = render_prompt(
+            "hook_strategist/craft_hook.md",
+            news_topic=news_topic,
+            angle_name=angle_name,
+            angle_desc=angle_desc,
+            tone=tone,
+            duration_sec=duration_sec,
+            cta_guidance=cta_guidance,
+            sub_directive=sub_directive,
+            verification_summary=verification.verification_summary,
+        )
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
@@ -92,29 +88,17 @@ CTA: [Engaging Hindi Call to Action]"""
         )
         sub_directive = f"\nChief Editor Directive for Hooks & Angles:\n{sub_instruction}\n" if sub_instruction else ""
         facts_text = "\n".join([f"- {f}" for f in (verification.verified_facts if verification else [])[:3]])
-        prompt = f"""News Topic: {news_topic}
-Target Tone: {tone}
-Target Duration: {duration_sec} Seconds
-CTA Guideline: {cta_guidance}
-{sub_directive}
-Verified Key Facts:
-{facts_text or news_topic}
-Verified Summary: {verification.verification_summary if verification else news_topic}
-
-Angles to formulate:
-{angles_text}
-
-Task:
-For each angle, write ONE 0-3s viral Hindi Hook (with emojis) and ONE closing CTA.
-Strict format:
-ANGLE 1:
-HOOK: [Catchy Hindi Hook]
-CTA: [Closing CTA]
-
-ANGLE 2:
-HOOK: [Catchy Hindi Hook]
-CTA: [Closing CTA]
-(continue for all angles)"""
+        prompt = render_prompt(
+            "hook_strategist/craft_hooks_batch.md",
+            news_topic=news_topic,
+            tone=tone,
+            duration_sec=duration_sec,
+            cta_guidance=cta_guidance,
+            sub_directive=sub_directive,
+            facts_text=facts_text or news_topic,
+            verification_summary=verification.verification_summary if verification else news_topic,
+            angles_text=angles_text,
+        )
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)

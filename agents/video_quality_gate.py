@@ -5,7 +5,7 @@ from typing import List, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, VideoPassVerification
 from core.dual_engine import ModelGenerationError
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 QUALITY_GATE_INSTRUCTIONS = load_prompt("video_quality_gate/prompt.md")
 
@@ -30,19 +30,11 @@ class VideoQualityGateAgent(BaseAgent):
         prompts_summary = "\n".join([f"Scene {p.scene_number} ({p.timestamp}): {p.visual_prompt_ai[:110]}..." for p in prompts])
         sub_directive = f"\nChief Editor Quality Gate Directive:\n{sub_instruction}\n" if sub_instruction else ""
 
-        prompt = f"""Evaluate these 9:16 cinematic video generation prompts:
-{sub_directive}
-{prompts_summary}
-
-Evaluation Criteria:
-1. Feasible for 3-5 second generative clip?
-2. Temporal continuity between scenes?
-3. Safety and prompt policy compliance?
-
-Output format:
-STATUS: [PASSED / FAILED]
-SCORE: [70-99]%
-FEEDBACK: (1-2 sentences on why it passed or what needs correction)"""
+        prompt = render_prompt(
+            "video_quality_gate/audit_prompts.md",
+            sub_directive=sub_directive,
+            prompts_summary=prompts_summary,
+        )
 
         raw_output = ""
         try:

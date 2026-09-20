@@ -3,7 +3,7 @@
 from typing import Optional, Callable
 from agents.base import BaseAgent
 from core.models import ResearchBrief, FactCheckReport, ArticleDraft, FinalPublication
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 EDITOR_INSTRUCTIONS = load_prompt("editor/prompt.md")
@@ -28,36 +28,15 @@ class ChiefEditorAgent(BaseAgent):
         status_callback: Optional[Callable[[str, str], None]] = None,
     ) -> FinalPublication:
         """Review the draft, polish the prose, generate summary and takeaways, and approve."""
-        prompt = f"""Topic: {topic}
-
-DRAFT HEADLINE: {draft.headline}
-DRAFT SUBHEADLINE: {draft.subheadline}
-
-WRITER'S DRAFT ARTICLE:
-{draft.content}
-
-FACT-CHECK AUDIT (Reliability Score: {audit.overall_score}%):
-{audit.summary}
-
-Task:
-Produce the finalized publication package in this exact markdown structure:
-
-# FINAL_TITLE: [Refined Headline]
-# FINAL_SUBTITLE: [Refined Subheadline]
-
-## EXECUTIVE_SUMMARY
-(A concise, authoritative 2-sentence summary)
-
-## KEY_TAKEAWAYS
-- [Takeaway 1]
-- [Takeaway 2]
-- [Takeaway 3]
-
-## POLISHED_ARTICLE
-(The complete, polished body of the article with clean headings and formatting)
-
-## EDITORIAL_SIGN_OFF
-(1 brief sentence on fact-check verification and editorial sign-off)"""
+        prompt = render_prompt(
+            "editor/review_and_publish.md",
+            topic=topic,
+            draft_headline=draft.headline,
+            draft_subheadline=draft.subheadline,
+            draft_content=draft.content,
+            reliability_score=audit.overall_score,
+            audit_summary=audit.summary,
+        )
 
         raw_output = self.execute(prompt, status_callback=status_callback)
 

@@ -5,7 +5,7 @@ from typing import List, Optional, Callable
 from agents.base import BaseAgent
 from core.models import ReelScript, SceneItem, NewsVerificationReport
 from core.metrics import verify_word_count, verify_timeline_fit, evaluate_clarity, get_duration_budget
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
 
 
 REEL_WRITER_INSTRUCTIONS = load_prompt("reel_writer/prompt.md")
@@ -51,46 +51,19 @@ class ReelWriterAgent(BaseAgent):
 
         angle_name, angle_desc = angle_tuple
 
-        prompt = f"""Target Duration: Exactly {t_sec} Seconds
-Target Spoken Word Budget: {budget['words_str']} (Keep narration strictly within this word limit)
-Recommended Structure: {budget['breakdown']}
-Angle: {angle_name} ({angle_desc})
-Tone/Scenario: {scenario}
-News Item: {news_input}
+        verified_facts = "\n".join(['- ' + f for f in verification.verified_facts[:3]])
 
-Verified Facts to Base Script On:
-{chr(10).join(['- ' + f for f in verification.verified_facts[:3]])}
-
-Instructions:
-1. Write spoken-word Hindi narration in Devanagari matching {budget['words_str']}.
-2. Provide an ultra-catchy 0-3s Hook.
-3. Provide scene breakdowns matching the {t_sec}s timeline.
-4. Output format:
-
-9:16 VERTICAL | ~{t_sec} SECONDS
-
-# HOOK (0-3s):
-[Catchy Hindi Hook with emojis]
-
-# HINDI NARRATION:
-[Spoken Hindi narration matching {budget['words_str']}]
-
-# SCENE 1 (0-3s):
-VISUAL: [Visual B-roll camera shot description in English]
-CHARACTER: [Speaker name]
-DIALOGUE: [Spoken Hindi dialogue for this scene]
-TEXT: [Hindi text on screen]
-SFX: [Audio cue / Sound effect]
-
-# SCENE 2 (3-{t_sec}s):
-VISUAL: [Visual B-roll description in English]
-CHARACTER: [Speaker name]
-DIALOGUE: [Spoken Hindi dialogue for this scene]
-TEXT: [Hindi text on screen]
-SFX: [Audio cue]
-
-# CALL TO ACTION:
-[Engaging Hindi CTA]"""
+        prompt = render_prompt(
+            "reel_writer/generate_single_script.md",
+            target_seconds=t_sec,
+            words_budget_str=budget["words_str"],
+            breakdown=budget["breakdown"],
+            angle_name=angle_name,
+            angle_desc=angle_desc,
+            scenario=scenario,
+            news_input=news_input,
+            verified_facts=verified_facts,
+        )
 
         raw_output = self.execute(prompt, engine_mode=engine_mode)
 
