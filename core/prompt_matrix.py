@@ -38,7 +38,13 @@ TONE_INSTRUCTIONS: Dict[str, str] = {
         "and heartfelt sorrow. Spoken Hindi should carry quiet pathos, touching sensitivity, "
         "and profound respect for human suffering and loss. Avoid loud, rushed, or robotic cadence."
     ),
+    "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)": (
+        "⚔️ TONE DIRECTIVE (Heated Argument & Clash / तीखी बहस): Deliver fiery high-voltage verbal friction, sharp counter-arguments, "
+        "passionate convictions, and snappy comebacks. Characters challenge each other's assumptions aggressively "
+        "yet entertainingly, trading defensive justifications and emotional comebacks."
+    ),
 }
+
 
 ANGLE_INSTRUCTIONS: Dict[str, str] = {
     "Funny & Relatable": (
@@ -102,6 +108,14 @@ SCENE_STYLE_INSTRUCTIONS: Dict[str, str] = {
         "⚔️ SCENE STYLE DIRECTIVE (Debate):\n"
         "- Fiery, witty clash of two opposing perspectives with sharp counter-arguments and substantive exchanges."
     ),
+    "Argument": (
+        "🔥 SCENE STYLE DIRECTIVE (Argument / Heated Clash - तकरार):\n"
+        "- A fiery, high-stakes verbal argument between characters with passionate, opposing convictions.\n"
+        "- Characters clash directly over the situation: trading sharp comebacks, defensive justifications, and escalating emotional stakes.\n"
+        "- Grounded in authentic relationship dynamics: colleagues arguing over deadlines/workplace rules, husband vs wife over household realities, father vs son across generational divides, or friends disputing news facts.\n"
+        "- Concludes with a dramatic reveal, unexpected reality check, or humorous twist ending.\n"
+        "- STRICT RULE: NO social media commenting, NO asking viewers to comment ('कमेंट करें', 'लाइक करें')."
+    ),
     "Monologue": (
         "👤 SCENE STYLE DIRECTIVE (Monologue):\n"
         "- Expressive solo creator addressing the camera directly, breaking the 4th wall with high intimacy and strong reactions."
@@ -134,9 +148,10 @@ def get_scene_style_instruction(scene_style: str, character_count: int) -> str:
     """Retrieve scene style directive tailored to character count."""
     style_key = scene_style.capitalize()
     base = SCENE_STYLE_INSTRUCTIONS.get(style_key, SCENE_STYLE_INSTRUCTIONS["Dialogue"])
-    if scene_style.lower() == "dialogue" and character_count > 1:
+    if scene_style.lower() in ["dialogue", "argument", "debate"] and character_count > 1:
         base += f"\n- Distinctly feature {character_count} different characters speaking across the scenes directly to each other without commenting or social media CTAs."
     return base
+
 
 
 def build_tailored_instruction(
@@ -194,8 +209,9 @@ def build_tailored_instruction(
             f"Reference Sample Story: \"{sample_clean}\"\n"
             "CRITICAL PRECEDENCE INSTRUCTION: In case of any discrepancy or conflict between the general instructions "
             "and this sample story, THE SAMPLE STORY TAKES HIGHEST PRECEDENCE! "
-            "Adapt and prioritize the characters, narrative events, and tone from the sample story while fitting "
-            f"within the strict {budget['max_words']}-word budget."
+            "If the sample story specifies or defines characters (e.g. Husband & Wife / पति-पत्नी, Father & Son / पिता-पुत्र, Colleagues, Friends, Doctor & Patient, or custom named characters), "
+            "relationships, or scene descriptions, THOSE CHARACTERS AND RELATIONSHIPS MUST BE DIRECTLY EXTRACTED, RESPECTED, AND FEATURED "
+            "as the speaking characters in the screenplay, while fitting within the strict word budget."
         )
 
     return "\n\n".join(instructions)

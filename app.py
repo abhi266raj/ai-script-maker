@@ -738,16 +738,29 @@ with col_settings:
                 save_config("selected_headline", news_input)
 
             with st.expander("📝 Sample Story (Optional Reference)", expanded=bool(st.session_state.get("chosen_sample_story"))):
+                if "sample_story_rev" not in st.session_state:
+                    st.session_state.sample_story_rev = 0
                 sample_story_val = st.text_area(
                     "Sample Story / Reference Script",
                     value=st.session_state.get("chosen_sample_story", ""),
                     height=75,
                     placeholder="Paste reference story or script snippet here. If provided, AI prioritizes it over general instructions...",
                     help="Optional reference story or script snippet. If provided, the AI adapts and prioritizes this sample story. In case of any discrepancy with general instructions, the sample story takes highest precedence!",
-                    key="sample_story_textarea",
+                    key=f"sample_story_textarea_{st.session_state.sample_story_rev}",
                 )
                 if sample_story_val != st.session_state.get("chosen_sample_story", ""):
                     st.session_state.chosen_sample_story = sample_story_val
+
+                c_info, c_clear = st.columns([4, 1.2])
+                with c_info:
+                    st.caption("Adapts narrative, characters, and tone with highest precedence.")
+                with c_clear:
+                    if st.button("🗑️ Clear", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
+                        st.session_state.chosen_sample_story = ""
+                        st.session_state.sample_story_rev += 1
+                        st.session_state.instruction_cfg_sig = None
+                        st.rerun()
+
         # ─── Configuration (below Story & Topic) ───
         top_l, top_r = st.columns([8, 1.2])
         with top_l:
@@ -791,6 +804,7 @@ with col_settings:
                 "🔥 Viral & High Energy (धमाकेदार)", "😂 Relatable Comedy & Sarcasm (देसी ह्यूमर)",
                 "⚡ Urgent Breaking News (ताज़ा खबर)", "💡 Deep Analysis & Curious (गहन पड़ताल)", "🎭 Cinematic Storytelling (भावुक कहानी)",
                 "😢 Emotional & Heartbreaking (भावुक / दुखद)",
+                "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)",
             ]
             tone_idx = tone_options.index(st.session_state.chosen_tone) if st.session_state.chosen_tone in tone_options else 0
             st.session_state.chosen_tone = cfg_row("Tone", lambda: st.selectbox("Tone", tone_options, index=tone_idx, label_visibility="collapsed"))
@@ -813,10 +827,11 @@ with col_settings:
             save_config("max_retries", st.session_state.chosen_max_retries)
             st.session_state.chosen_character_count = int(cfg_row("Characters", lambda: st.number_input("Characters", step=1, value=int(st.session_state.chosen_character_count), label_visibility="collapsed")))
             save_config("character_count", st.session_state.chosen_character_count)
-            scene_styles = ["Dialogue", "Speech", "Narration", "Interview", "Debate", "Monologue", "Lament"]
+            scene_styles = ["Dialogue", "Argument", "Speech", "Narration", "Interview", "Debate", "Monologue", "Lament"]
             style_idx = scene_styles.index(st.session_state.chosen_scene_style) if st.session_state.chosen_scene_style in scene_styles else 0
             st.session_state.chosen_scene_style = cfg_row("Scene style", lambda: st.selectbox("Scene style", scene_styles, index=style_idx, label_visibility="collapsed"))
             save_config("scene_style", st.session_state.chosen_scene_style)
+
 
         dur_val = int(st.session_state.chosen_duration)
         budget_val = get_duration_budget(dur_val)

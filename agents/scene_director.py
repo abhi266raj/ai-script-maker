@@ -266,6 +266,9 @@ SFX: [Sound effect, e.g. Street Ambience + Whoosh]
                 preferred_frames=target_frames,
             )
 
+        from core.script_analyzer import audit_and_heal_dialogue_targets, audit_and_enhance_visual_kinematics
+        scenes = audit_and_heal_dialogue_targets(scenes)
+        scenes = audit_and_enhance_visual_kinematics(scenes)
         return scenes
 
     def _synthesize_coordinated_storyboard(
@@ -316,6 +319,8 @@ SFX: [Sound effect, e.g. Street Ambience + Whoosh]
         has_qr_or_poster = any(k in combined_context for k in ["qr", "कोड", "स्कैन", "scan", "poster", "पोस्टर"])
         has_poha = any(k in combined_context for k in ["पोहा", "पोहे", "poha", "नाश्ता", "जलेबी"])
         has_court_or_legal = any(k in combined_context for k in ["court", "सुप्रीम कोर्ट", "जज", "कानून", "फैसला", "गिरफ्तार", "police", "fir"])
+        has_sir_or_gov = any(k in combined_context for k in ["sir", "dholera", "investment region", "special investment", "industrial corridor", "collectorate", "secretariat", "babu", "clerk", "land acquisition", "land registry", "सरकारी दफ्तर", "कलेक्टर", "सचिवालय"])
+        has_hospital_or_medical = any(k in combined_context for k in ["hospital", "casualty", "opd", "डॉक्टर", "doctor", "medicine", "मरीज", "patient", "अस्पताल"])
         has_money_or_scam = any(k in combined_context for k in ["करोड़", "रुपये", "घोटाला", "scam", "bank", "tax", "शेयर", "crypto", "fraud"])
         has_tech_or_ai = any(k in combined_context for k in ["ai", "tech", "robot", "phone", "apple", "google", "software", "इंटरनेट", "app"])
 
@@ -381,6 +386,36 @@ SFX: [Sound effect, e.g. Street Ambience + Whoosh]
                 "Tense Synth Riser + Sub Drop",
                 "Camera Shutter Flashes + Reporter Murmurs",
                 "Dramatic Impact Hit + Legal Outro Chime",
+            ]
+        elif has_sir_or_gov:
+            vis_pool = [
+                f"{{char}} taps an index finger emphatically on a blueprint map of the Special Investment Region laid out across a wooden desk, speaking with animated bureaucratic urgency on {topic_subject}",
+                f"{{char}} gestures with a ballpoint pen toward official red-taped clearance files and industrial land acquisition demarcations with sharp focus",
+                f"{{char}} firmly presses an official ink stamp onto the approval documents, looking up with decisive clarity",
+                f"Government clerks and assistants in background arrange files and verify survey maps along the collectorate corridor",
+                f"{{char}} slides the signed file across the desk, delivering the final conclusion on the industrial roadmap with authoritative certainty",
+            ]
+            sfx_pool = [
+                "Paper File Thud + Sub Bass Hit",
+                "Pen Tap on Desk + Paper Rustle",
+                "Official Stamp Press + Sharp Echo",
+                "Corridor Murmurs + Ceiling Fan Whir",
+                "Desk Slide Whoosh + Decisive Impact Beat",
+            ]
+        elif has_hospital_or_medical:
+            vis_pool = [
+                f"{{char}} adjusts stethoscope around neck while reviewing a clinical patient chart file, speaking with clinical focus on {topic_subject}",
+                f"{{char}} points to medical prescription details and diagnostic report numbers with focused concern",
+                f"{{char}} consults medical monitors and medicinal inventory cabinets, emphasizing key healthcare updates",
+                f"Nurses and medical staff move swiftly along the hospital corridor in background",
+                f"{{char}} delivers the concluding health guidance, looking directly forward with reassuring bedside authority",
+            ]
+            sfx_pool = [
+                "Hospital Pager Beep + Ambience",
+                "Paper Prescription Rustle + Heart Monitor Pulse",
+                "Medicine Cabinet Clink + Soft Whoosh",
+                "Stethoscope Movement + Footstep Pacing",
+                "Gentle Reassuring Chime + Medical Fade",
             ]
         elif has_money_or_scam:
             vis_pool = [

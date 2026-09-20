@@ -10,6 +10,7 @@ Implements the canonical professional script structure:
 
 import re
 from typing import List, Dict, Any, Optional
+from core.script_analyzer import harmonize_setting_description, analyze_and_heal_script
 
 POLITICAL_NAMES_BLACKLIST = {
     "rahul", "modi", "narendra", "kejriwal", "gandhi", "amit shah", "amit",
@@ -97,9 +98,30 @@ def get_first_name(char_str: str) -> str:
     base = cleaned.split("/")[0].split("(")[0].strip()
     tokens = [t for t in base.split() if len(t) > 1 and not t.isdigit()]
     if tokens:
-        first = tokens[-1] if len(tokens) > 1 and tokens[0].lower() in ["dr", "mr", "ms", "advocate", "inspector", "sub-inspector", "seth", "master"] else tokens[0]
+        if len(tokens) > 1 and tokens[0].lower() in ["dr", "mr", "ms", "advocate", "inspector", "sub-inspector", "seth", "master"]:
+            first = tokens[-1]
+        elif len(tokens) > 1 and tokens[1].lower() == "ji":
+            first = f"{tokens[0]} {tokens[1]}"
+        else:
+            first = tokens[0]
         return first.strip()
     return "SPEAKER"
+
+
+def extract_sample_clothing_map(sample_text: str) -> Dict[str, str]:
+    """Extract character clothing descriptions from sample story/script if present."""
+    if not sample_text:
+        return {}
+    m_chars = re.search(r"CHARACTERS(?:\s*&\s*CLOTHING)?\s*:(.*?)(?:\[Time|\n\s*\n\s*\[|\Z)", sample_text, re.DOTALL | re.IGNORECASE)
+    if not m_chars:
+        return {}
+    res = {}
+    matches = re.findall(r"(?:[⚬•\-\*]|\d+\.)?\s*([A-Za-z\u0900-\u097F\s/()\-]+?)\s*:\s*([^\n\r]+)", m_chars.group(1))
+    for name, attire in matches:
+        first = get_first_name(name).upper()
+        if first and first not in ["FORMAT", "SCENE DETAIL", "AUDIO", "CAMERA", "TIME", "TEXT OVERLAY"]:
+            res[first] = attire.strip()
+    return res
 
 
 def get_character_attire(char_raw: str, tone: str = "Funny & Relatable") -> str:
@@ -121,24 +143,80 @@ def get_character_attire(char_raw: str, tone: str = "Funny & Relatable") -> str:
             return "Khaki police uniform with brass badge and name plate."
         if "corporator" in c_lower or "netaji" in c_lower or "पार्षद" in c_lower or "नेता" in c_lower:
             return "Crisp white kurta-pyjama with a colorful Nehru jacket."
-        if "clerk" in c_lower or "babu" in c_lower or "बाबू" in c_lower:
-            return "Pressed half-sleeve formal shirt with ballpoint pens in front pocket."
+        if "scientist" in c_lower or "isro" in c_lower or "वैज्ञानिक" in c_lower:
+            return "Crisp light-blue formal shirt with official project ID lanyard and security badge."
+        if "pilot" in c_lower or "captain" in c_lower or "विमानचालक" in c_lower:
+            return "Crisp white pilot uniform shirt with four gold shoulder epaulets and aviation necktie."
+        if "loco" in c_lower or "railway" in c_lower or "रेलवे" in c_lower:
+            return "Khaki railway service uniform with brass zonal badge and service cap."
+        if "coach" in c_lower or "player" in c_lower or "athlete" in c_lower or "खिलाड़ी" in c_lower:
+            return "Official athletic team sportswear and training track jacket."
+        if "bullion" in c_lower or "jeweller" in c_lower or "सर्राफा" in c_lower:
+            return "Fine silk kurta with tailored Nehru vest and gold watch chain."
+        if "builder" in c_lower or "hardhat" in c_lower or "साइट" in c_lower:
+            return "Crisp linen shirt with yellow project hardhat and site boots."
+        if "officer" in c_lower or "अधिकारी" in c_lower or "clerk" in c_lower or "babu" in c_lower or "बाबू" in c_lower:
+            return "Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard."
+        if "investor" in c_lower or "businessman" in c_lower or "उद्यमी" in c_lower or "landowner" in c_lower or "stakeholder" in c_lower:
+            return "Smart-casual collared shirt and trousers, holding a blue official document file folder."
         if "doctor" in c_lower or "चिकित्सक" in c_lower:
             return "Hospital lab coat over scrubs with stethoscope around neck."
         if "teacher" in c_lower or "मास्टर" in c_lower:
             return "Neat formal shirt and trousers with spectacles."
         if "vendor" in c_lower or "tapri" in c_lower or "दुकानदार" in c_lower:
             return "Casual cotton shirt with a tea vendor apron."
+        # Relational roles: Husband, Wife, Father, Son, Colleague, Neighbor
+        if "wife" in c_lower or "पत्नी" in c_lower or "गृहिणी" in c_lower or "homemaker" in c_lower:
+            return "Casual traditional printed cotton saree or simple kurti."
+        if "husband" in c_lower or "पति" in c_lower or "salaried" in c_lower:
+            return "Everyday collared casual shirt and trousers."
+        if "father" in c_lower or "पिता" in c_lower or "chacha" in c_lower or "बुजुर्ग" in c_lower:
+            return "Traditional cotton kurta-pyjama with reading spectacles."
+        if "son" in c_lower or "बेटा" in c_lower or "youth" in c_lower or "gen-z" in c_lower:
+            return "Modern casual hoodie or oversized t-shirt and denim jeans."
+        if "colleague" in c_lower or "कलीग" in c_lower or "coworker" in c_lower:
+            return "Smart-casual office attire with corporate RFID lanyard."
+        if "neighbor" in c_lower or "पड़ोसी" in c_lower:
+            return "Casual everyday neighborhood wear (kurta or polo shirt)."
         # Generic young creator / student / friend
-        if any(w in c_lower for w in ["priya", "ananya", "sneha", "meera", "sunita"]):
+        if any(w in c_lower for w in ["priya", "ananya", "sneha", "meera"]):
             return "Casual college-going attire (e.g., jeans and a simple kurti)."
         return "Everyday street casual wear (e.g., t-shirt and jeans)."
 
+
     # Non-comedy tones
+    if "scientist" in c_lower or "isro" in c_lower or "वैज्ञानिक" in c_lower:
+        return "Crisp light-blue formal shirt with official project ID lanyard and security badge."
+    if "pilot" in c_lower or "captain" in c_lower or "विमानचालक" in c_lower:
+        return "Crisp white pilot uniform shirt with four gold shoulder epaulets and aviation necktie."
+    if "loco" in c_lower or "railway" in c_lower or "रेलवे" in c_lower:
+        return "Khaki railway service uniform with brass zonal badge and service cap."
+    if "coach" in c_lower or "player" in c_lower or "athlete" in c_lower or "खिलाड़ी" in c_lower:
+        return "Official athletic team sportswear and training track jacket."
+    if "bullion" in c_lower or "jeweller" in c_lower or "सर्राफा" in c_lower:
+        return "Fine silk kurta with tailored Nehru vest and gold watch chain."
+    if "builder" in c_lower or "hardhat" in c_lower or "साइट" in c_lower:
+        return "Crisp linen shirt with yellow project hardhat and site boots."
+    if "officer" in c_lower or "अधिकारी" in c_lower or "clerk" in c_lower or "babu" in c_lower or "बाबू" in c_lower:
+        return "Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard."
+    if "investor" in c_lower or "businessman" in c_lower or "उद्यमी" in c_lower or "landowner" in c_lower or "stakeholder" in c_lower:
+        return "Smart-casual collared shirt and trousers, holding a blue official document file folder."
     if "court" in c_lower or "lawyer" in c_lower:
         return "Formal black legal attire with white neckband."
     if "police" in c_lower:
         return "Standard police service uniform."
+    if "wife" in c_lower or "पत्नी" in c_lower or "गृहिणी" in c_lower or "homemaker" in c_lower:
+        return "Casual traditional printed cotton saree or simple kurti."
+    if "husband" in c_lower or "पति" in c_lower:
+        return "Everyday collared casual shirt and trousers."
+    if "father" in c_lower or "पिता" in c_lower or "chacha" in c_lower or "बुजुर्ग" in c_lower:
+        return "Traditional cotton kurta-pyjama with reading spectacles."
+    if "son" in c_lower or "बेटा" in c_lower:
+        return "Modern casual hoodie or oversized t-shirt and denim jeans."
+    if "colleague" in c_lower or "कलीग" in c_lower or "coworker" in c_lower:
+        return "Smart-casual office attire with corporate RFID lanyard."
+    if "neighbor" in c_lower or "पड़ोसी" in c_lower:
+        return "Casual everyday neighborhood wear (kurta or polo shirt)."
     if "culture" in tone.lower() or "heritage" in tone.lower():
         return "Traditional Indian attire (kurta-pyjama or elegant saree)."
     if "sad" in tone.lower() or "lament" in tone.lower():
@@ -147,42 +225,8 @@ def get_character_attire(char_raw: str, tone: str = "Funny & Relatable") -> str:
 
 
 def derive_scene_detail(script) -> str:
-    """Extract a rich, authentic setting & atmosphere description for SCENE DETAIL."""
-    dur = getattr(script, "target_duration_sec", 15) or 15
-    is_fast = dur <= 10
-
-    s1_vis = script.scenes[0].visual_b_roll if script.scenes else ""
-    s1_lower = s1_vis.lower()
-
-    if any(k in s1_lower for k in ["court", "वकील", "judge", "कानून"]):
-        base = "High Court entrance steps and pillared corridors."
-        vibe = "Very fast-paced, high-energy legal buzz to fit the 10-second limit." if is_fast else "Busy legal buzz with advocates carrying files, police escorts, and waiting litigants."
-        return f"{base} {vibe}"
-    if any(k in s1_lower for k in ["tech park", "office", "wfo", "cyber", "corporate"]):
-        base = "Glass-facade IT tech park entrance and adjacent outdoor tea kiosk."
-        vibe = "Very fast-paced, high-energy vibe to fit the 10-second limit." if is_fast else "Corporate employees passing RFID turnstiles with lanyards in background."
-        return f"{base} {vibe}"
-    if any(k in s1_lower for k in ["police", "thana", "challan", "traffic"]):
-        base = "Bustling Indian urban traffic junction with barricades."
-        vibe = "Very fast-paced, high-energy street action to fit the 10-second limit." if is_fast else "Barricades, police patrol vehicle, and busy vehicular commotion."
-        return f"{base} {vibe}"
-    if any(k in s1_lower for k in ["village", "gao", "panchayat", "sarpanch"]):
-        base = "Village chopal under an ancient banyan tree."
-        vibe = "Rapid, animated village gathering to fit the 10-second limit." if is_fast else "Rustic charpai, mud-plastered boundary, and local farmers discussing community affairs."
-        return f"{base} {vibe}"
-    if any(k in s1_lower for k in ["hospital", "doctor", "ward"]):
-        base = "Government hospital casualty waiting area."
-        vibe = "High-energy, fast-paced emergency movement to fit the 10-second limit." if is_fast else "Stethoscopes, medicinal shelves, and patients in background corridor."
-        return f"{base} {vibe}"
-    if any(k in s1_lower for k in ["election", "rally", "netaji", "parshad"]):
-        base = "Party campaign office / neighborhood corner."
-        vibe = "High-voltage election banter and snappy energy to fit the 10-second limit." if is_fast else "Political buntings, wooden benches, and lively election banter."
-        return f"{base} {vibe}"
-
-    # Default classic relatable Indian street setting
-    if is_fast:
-        return "A bustling local Indian street chai tapri. Very fast-paced, high-energy vibe to fit the 10-second limit."
-    return "A bustling local Indian street chai tapri. Casual, everyday public space vibe with background customers, street noise, and boiling tea."
+    """Extract a rich, authentic setting & atmosphere description for SCENE DETAIL via harmonization."""
+    return harmonize_setting_description(script)
 
 
 def format_industry_screenplay(
@@ -202,6 +246,11 @@ def format_industry_screenplay(
     - Optional Text Overlay and Audio/SFX (included based on script/context or user preference)
     - Hindi dialogue in Devanagari
     """
+    # 0. SCRIPT ANALYSIS & HEALING PHASE (Dialogue target auditor & visual kinematics enhancement)
+    from agents.screenplay_coherence import screenplay_coherence_agent
+    script = analyze_and_heal_script(script)
+    script = screenplay_coherence_agent.align_screenplay_coherence(script)
+
     dur = getattr(script, "target_duration_sec", 15) or 15
     is_fast = dur <= 10
 
@@ -228,9 +277,15 @@ def format_industry_screenplay(
     if not raw_chars:
         raw_chars = [("ANANYA", "Ananya"), ("VIKRAM", "Vikram")]
 
+    sample_text = getattr(script, "sample_story_used", "") or ""
+    sample_clothing_map = extract_sample_clothing_map(sample_text)
+
     lines.append("CHARACTERS & CLOTHING:")
     for first_name, full_name in raw_chars:
-        attire = get_character_attire(full_name, script.angle)
+        if first_name in sample_clothing_map:
+            attire = sample_clothing_map[first_name]
+        else:
+            attire = get_character_attire(full_name, script.angle)
         lines.append(f"⚬\t{first_name}: {attire}")
     lines.append("")
 
@@ -268,10 +323,21 @@ def format_industry_screenplay(
             if idx == 0:
                 if clean_action_lower.startswith(char_upper.lower()):
                     rest = clean_action[len(char_upper):].strip()
-                    for vp, vi in [("slams", "slamming"), ("shoves", "shoving"), ("points", "pointing"), ("gestures", "gesturing"), ("drops", "dropping"), ("holds", "holding")]:
+                    for vp, vi in [
+                        ("slams", "slamming"), ("shoves", "shoving"), ("points", "pointing"),
+                        ("gestures", "gesturing"), ("drops", "dropping"), ("holds", "holding"),
+                        ("sets", "setting"), ("sips", "sipping"), ("takes", "taking"),
+                        ("unfolds", "unfolding"), ("taps", "tapping"), ("waves", "waving"),
+                        ("thrusts", "thrusting"), ("counts", "counting")
+                    ]:
                         if rest.startswith(vp):
                             rest = vi + rest[len(vp):]
                             break
+                        if " " in rest:
+                            adv, verb_rest = rest.split(" ", 1)
+                            if verb_rest.startswith(vp):
+                                rest = f"{adv} {vi}{verb_rest[len(vp):]}"
+                                break
                     camera_cue = f"Fast whip-pan to {char_upper.title()} {rest}" if rest else f"Fast whip-pan to {char_upper.title()}."
                 else:
                     camera_cue = f"Fast whip-pan to {char_upper.title()} {clean_action[0].lower() + clean_action[1:]}"
@@ -284,10 +350,21 @@ def format_industry_screenplay(
             else:
                 if clean_action_lower.startswith(char_upper.lower()):
                     rest = clean_action[len(char_upper):].strip()
-                    for vp, vi in [("slams", "slamming"), ("shoves", "shoving"), ("points", "pointing"), ("gestures", "gesturing"), ("drops", "dropping"), ("holds", "holding")]:
+                    for vp, vi in [
+                        ("slams", "slamming"), ("shoves", "shoving"), ("points", "pointing"),
+                        ("gestures", "gesturing"), ("drops", "dropping"), ("holds", "holding"),
+                        ("sets", "setting"), ("sips", "sipping"), ("takes", "taking"),
+                        ("unfolds", "unfolding"), ("taps", "tapping"), ("waves", "waving"),
+                        ("thrusts", "thrusting"), ("counts", "counting")
+                    ]:
                         if rest.startswith(vp):
                             rest = vi + rest[len(vp):]
                             break
+                        if " " in rest:
+                            adv, verb_rest = rest.split(" ", 1)
+                            if verb_rest.startswith(vp):
+                                rest = f"{adv} {vi}{verb_rest[len(vp):]}"
+                                break
                     camera_cue = f"Quick pan to {char_upper.title()} {rest}" if rest else f"Quick pan to {char_upper.title()}."
                 else:
                     camera_cue = f"Quick pan to {char_upper.title()} {clean_action[0].lower() + clean_action[1:]}"

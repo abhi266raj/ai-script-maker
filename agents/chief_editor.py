@@ -185,6 +185,14 @@ class ChiefEditorCoordinatorAgent:
                 sc_item.sample_story_used = sample_story.strip()
                 sc_notes.append("Sample story successfully incorporated with priority precedence.")
 
+            # 5. Common Sense & Physical Realism Acceptance Check
+            from core.script_analyzer import common_sense_validator
+            cs_valid, cs_issues, cs_feedback = common_sense_validator.audit_screenplay(sc_item)
+            if not cs_valid:
+                all_passed = False
+                sc_notes.extend(cs_issues)
+                retry_recommendations.extend([f"Script #{idx+1}: {iss}" for iss in cs_issues])
+
             sc_item.configuration_compliance = (len(sc_notes) == 0 or (len(sc_notes) == 1 and "successfully incorporated" in sc_notes[0]))
             sc_item.compliance_notes = sc_notes
             overall_notes.extend([f"Script #{idx+1}: {n}" for n in sc_notes])
@@ -682,12 +690,24 @@ class ChiefEditorCoordinatorAgent:
                     timeline_feedback=d["audit_feedback"],
                     video_verification=video_verif,
                     clarity_score=d["clarity"],
-                    music_vibe="Trending Reel Beat / Dynamic News",
+                    sample_story_used=active_sample_story,
                     retry_count=d["attempt"],
                     self_healing_notes=d["retry_notes"],
                     engine_used=engine_mode,
                 )
             )
+            from core.script_analyzer import common_sense_validator
+            sc_curr = scripts[-1]
+            cs_valid, cs_issues, cs_feedback = common_sense_validator.audit_screenplay(sc_curr)
+            cs_attempt = 0
+            while not cs_valid and cs_attempt < max_retries:
+                cs_attempt += 1
+                total_retries += 1
+                sc_curr, cs_valid, cs_feedback = common_sense_validator.heal_and_revalidate(sc_curr, cs_feedback)
+                sc_curr.self_healing_notes.append(
+                    f"🔄 Common Sense Validator: Self-healed setting/dialogue/kinematics on attempt {cs_attempt}/{max_retries}."
+                )
+            scripts[-1] = sc_curr
 
         agent_audits.append(
             AgentAuditItem(

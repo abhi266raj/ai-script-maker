@@ -162,6 +162,42 @@ class ScriptDialogue(str):
         return obj
 
 
+RELATIONSHIP_PAIRS = [
+    # Colleagues / Office Co-workers
+    ("👩 Priya (Senior Office Colleague / Colleague 1 - सीनियर कलीग)", "🧑 Rohan (Office Colleague / Colleague 2 - जूनियर कलीग)"),
+    # Close Friends / Tapri Buddies
+    ("👩 Ananya (College Friend 1 - कॉलेज दोस्त)", "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)"),
+    # Husband & Wife (पति-पत्नी)
+    ("👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)", "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)"),
+    # Father & Son (पिता-पुत्र)
+    ("👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)", "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)"),
+    # Mother & Son (माँ-बेटा)
+    ("👩 Meera (Caring Mother - ममतामयी माँ)", "🧑 Kabir (Career-Minded Son - महत्वाकांक्षी बेटा)"),
+    # Neighbors (पड़ोसी)
+    ("🧑 Verma Ji (Curious Neighbor - जिज्ञासु पड़ोसी)", "🧑 Gupta Ji (Opinionated Neighbor - रायचंद पड़ोसी)"),
+]
+
+RELATIONSHIP_TRIOS = [
+    # Family Trio: Father, Mother, Son
+    (
+        "👴 Sharma Ji (Traditional Father - पिता)",
+        "👩 Sunita (Pragmatic Mother - माँ)",
+        "🧑 Aarav (Gen-Z Son - बेटा)",
+    ),
+    # Office Colleagues Trio: Manager & 2 Team Members
+    (
+        "👔 Manager Mehra (Corporate Boss - मैनेजर)",
+        "👩 Priya (Senior Colleague - कलीग 1)",
+        "🧑 Rohan (Junior Colleague - कलीग 2)",
+    ),
+    # 3 Close Friends
+    (
+        "👩 Ananya (College Friend 1 - दोस्त 1)",
+        "🧑 Vikram (Street-smart Friend 2 - दोस्त 2)",
+        "🧑 Rohan (Witty Friend 3 - दोस्त 3)",
+    ),
+]
+
 DIVERSE_SOCIOECONOMIC_PAIRS = [
     # Rich & Working-Class Contrast
     ("👩 Priya (Rich Tech Founder / Friend 1 - अमीर टेक फाउंडर)", "🧑 Rohan (Working-Class Auto Driver / Friend 2 - मेहनती ऑटो चालक)"),
@@ -171,6 +207,8 @@ DIVERSE_SOCIOECONOMIC_PAIRS = [
     ("🏛️ Netaji Tiwari (Ward Corporator / Friend 1 - स्थानीय पार्षद)", "☕ Rohan (Street Chai Tapri Owner / Friend 2 - टपरी वाला)"),
     # Government Servant (Babu) & Young Citizen / Student
     ("👔 Sharma Ji (Government Clerk / Friend 1 - सरकारी बाबू)", "🧑 Rohan (UPSC Aspirant / Friend 2 - छात्र)"),
+    # SIR / Special Investment Region / Government Officer & Industrial Investor
+    ("👔 Sharma Ji (Government Administrative Officer / Friend 1 - वरिष्ठ अधिकारी)", "🧑 Rajesh (Industrial Investor / Friend 2 - उद्यमी / भूस्वामी)"),
     # Corporate Executive & Grassroots Citizen
     ("💼 Ananya (Corporate Banker / Friend 1 - कॉर्पोरेट एग्जीक्यूटिव)", "🧑 Kabir (Street-Smart Youth / Friend 2 - देसी युवा)"),
     # High Court Advocate & Small Trader
@@ -185,6 +223,8 @@ DIVERSE_SOCIOECONOMIC_PAIRS = [
     ("🌾 Sarpanch Harpal (Village Pradhan / Friend 1 - ग्राम प्रधान)", "🧑 Rohan (City-Returned Youth / Friend 2 - युवा)"),
     # Everyday Relatable Companions
     ("👩 Priya / Friend 1 (प्रिया - दोस्त 1)", "🧑 Rohan / Friend 2 (रोहन - दोस्त 2)"),
+    # Relationship Pairings (Colleagues, Friends, Husband-Wife, Father-Son, Neighbors)
+    *RELATIONSHIP_PAIRS,
 ]
 
 DIVERSE_SOCIOECONOMIC_TRIOS = [
@@ -213,7 +253,10 @@ DIVERSE_SOCIOECONOMIC_TRIOS = [
         "👔 Clerk Tripathi (Court Babu / Friend 2 - पेशकार बाबू)",
         "🧑 Kabir (Common Citizen / Friend 3 - आम नागरिक)",
     ),
+    # Relational Trios
+    *RELATIONSHIP_TRIOS,
 ]
+
 
 
 def select_script_grounded_solo(topic_or_script: str) -> str:
@@ -229,16 +272,38 @@ def select_script_grounded_solo(topic_or_script: str) -> str:
         return "😂 Desi Creator Mohan (Chai Tapri Owner - देसी क्रिएटर टपरी वाला)"
     if any(k in text for k in ["auto", "ऑटो", "रिक्शा", "cab", "driver"]):
         return "😂 Desi Creator Rohan (Outspoken Auto Driver / Creator - देसी क्रिएटर रोहन)"
+
+    # Dynamic Imagination from current data if topic is provided
+    if text.strip():
+        from agents.contextual_selector import contextual_selector
+        return contextual_selector.imagine_solo_from_data(topic_or_script)
     return "😂 Desi Creator Priya (Tech Professional / Creator - देसी क्रिएटर प्रिया)"
 
 
 def select_script_grounded_pair(topic_or_script: str) -> Tuple[str, str]:
-    """Select the best-fitting socioeconomic pair grounded in the script's topic domain."""
+    """Select the best-fitting socioeconomic pair or relationship pair grounded in the script's topic domain."""
     text = (topic_or_script or "").lower()
+
+    # 0. Interpersonal Relationships (Husband & Wife, Father & Son, Colleagues, Friends, Neighbors)
+    if any(k in text for k in ["husband", "wife", "patni", "pati", "marriage", "shaadi", "शादी", "पत्नी", "पति", "household", "ration", "gas", "cylinder", "महंगाई", "घरेलू", "सब्जी", "दाल"]):
+        return RELATIONSHIP_PAIRS[2]  # Sunita (Wife) & Rajesh (Husband)
+    if any(k in text for k in ["father", "son", "baap", "beta", "generation", "career", "study", "coaching", "डिग्री", "नौकरी", "पिता", "बेटा", "कोचिंग"]):
+        return RELATIONSHIP_PAIRS[3]  # Sharma Ji (Father) & Aarav (Son)
+    if any(k in text for k in ["colleague", "coworker", "appraisal", "cubicle", "कलीग", "सहकर्मी", "बॉस", "boss", "promotion"]):
+        return RELATIONSHIP_PAIRS[0]  # Priya (Senior Colleague) & Rohan (Junior Colleague)
+    if any(k in text for k in ["neighbor", "neighbour", "padosi", "पड़ोसी", "mohalla", "मोहल्ला", "society", "सोसाइटी", "colony", "कॉलोनी", "parking", "gossip"]):
+        return RELATIONSHIP_PAIRS[5]  # Verma Ji & Gupta Ji (Neighbors)
+    if any(k in text for k in ["friend", "dost", "yaar", "दोस्त", "यार", "tapri"]):
+        return RELATIONSHIP_PAIRS[1]  # Ananya & Vikram (Friends)
+
+    # 0.5 SIR / Special Investment Region / Dholera / Industrial Corridor / Government Administrative Office
+    if any(k in text for k in ["sir", "dholera", "investment region", "special investment", "industrial corridor", "collectorate", "secretariat", "mantralaya", "land acquisition", "land registry", "सरकारी दफ्तर", "कलेक्टर", "सचिवालय"]):
+        return ("👔 Sharma Ji (Government Administrative Officer - वरिष्ठ अधिकारी)", "🧑 Rajesh (Industrial Investor / Local Landowner - उद्यमी / नागरिक)")
 
     # 1. Court / Legal / Justice / Lawyer / High Court / Supreme Court / Bail
     if any(k in text for k in ["court", "कोर्ट", "कानून", "judge", "vakeel", "lawyer", "वकील", "मुकदमा", "justice", "फैसला", "पीठ", "bail", "बेल", "legal", "याचिका", "plea"]):
-        return DIVERSE_SOCIOECONOMIC_PAIRS[5]  # High Court Lawyer vs Kirana Trader
+        return DIVERSE_SOCIOECONOMIC_PAIRS[6]  # High Court Lawyer vs Kirana Trader
+
 
     # 2. Police / Law Enforcement / Traffic / Challan / FIR / Crime / Jail
     if any(k in text for k in ["police", "दरोगा", "थाना", "गिरफ्तार", "arrest", "fir", "ट्रैफिक", "traffic", "challan", "चालान", "crime", "जेल", "scam"]):
@@ -258,34 +323,56 @@ def select_script_grounded_pair(topic_or_script: str) -> Tuple[str, str]:
 
     # 6. Corporate Finance / Banking / Investment / Stock / Market
     if any(k in text for k in ["bank", "बैंक", "invest", "share", "शेयर", "crypto", "fund", "finance", "करोड़"]):
-        return DIVERSE_SOCIOECONOMIC_PAIRS[4]  # Corporate Banker vs Street-Smart Youth
+        return DIVERSE_SOCIOECONOMIC_PAIRS[5]  # Corporate Banker vs Street-Smart Youth
 
     # 7. Healthcare / Hospital / Doctor / Medical / Patient / Medicine / Clinic
     if any(k in text for k in ["hospital", "अस्पताल", "doctor", "डॉक्टर", "nurse", "medicine", "दवा", "मरीज", "patient", "health", "स्वास्थ्य", "बीमारी", "clinic"]):
-        return DIVERSE_SOCIOECONOMIC_PAIRS[6]  # Hospital Doctor vs Construction Worker
+        return DIVERSE_SOCIOECONOMIC_PAIRS[7]  # Hospital Doctor vs Construction Worker
 
     # 8. Education / School / Teacher / Master Ji / College / Student / Exam
     if any(k in text for k in ["school", "स्कूल", "college", "कॉलेज", "exam", "परीक्षा", "student", "छात्र", "teacher", "मास्टर", "university", "cbse"]):
-        return DIVERSE_SOCIOECONOMIC_PAIRS[7]  # School Teacher vs Vegetable Vendor
+        return DIVERSE_SOCIOECONOMIC_PAIRS[8]  # School Teacher vs Vegetable Vendor
 
     # 9. Real Estate / Property / Investor / Auto / Rickshaw
     if any(k in text for k in ["property", "जमीन", "मकान", "builder", "auto", "ऑटो", "rickshaw", "किराया"]):
-        return DIVERSE_SOCIOECONOMIC_PAIRS[8]  # Property Investor vs Auto Rickshaw Driver
+        return DIVERSE_SOCIOECONOMIC_PAIRS[9]  # Property Investor vs Auto Rickshaw Driver
 
     # 10. Rural / Village / Agriculture / Farmer / Sarpanch / Panchayat / Mandi
     if any(k in text for k in ["village", "गाँव", "गांव", "farmer", "किसान", "kheti", "खेती", "mandi", "मंडी", "panchayat", "sarpanch", "सरपंच", "प्रधान"]):
-        return DIVERSE_SOCIOECONOMIC_PAIRS[9]  # Village Pradhan vs City-Returned Youth
+        return DIVERSE_SOCIOECONOMIC_PAIRS[10]  # Village Pradhan vs City-Returned Youth
+
+    # Dynamic Imagination Fallback: If no predefined pair matches, imagine a brand new pair from current data!
+    if text.strip():
+        from agents.contextual_selector import contextual_selector
+        return contextual_selector.imagine_pair_from_data(topic_or_script)
 
     # Default fallback: random choice across all diverse pairs
     return random.choice(DIVERSE_SOCIOECONOMIC_PAIRS)
 
 
 def select_script_grounded_trio(topic_or_script: str) -> Tuple[str, str, str]:
-    """Select the best-fitting socioeconomic trio grounded in the script's topic domain."""
+    """Select the best-fitting socioeconomic or relationship trio grounded in the script's topic domain."""
     text = (topic_or_script or "").lower()
-    if any(k in text for k in ["election", "नेता", "netaji", "पार्षद", "corporator", "party", "सरकार", "chai", "चाय", "tapri"]):
+
+    # Relational trios
+    if any(k in text for k in ["family", "parivar", "परिवार", "father", "mother", "son", "माता", "पिता", "बेटा", "ghar"]):
+        return RELATIONSHIP_TRIOS[0]  # Family Trio: Father, Mother, Son
+    if any(k in text for k in ["office", "colleague", "boss", "manager", "सहकर्मी", "कलीग"]):
+        return RELATIONSHIP_TRIOS[1]  # Office Trio: Manager, Colleague 1, Colleague 2
+    if any(k in text for k in ["friend", "dost", "दोस्त", "यार", "tapri"]):
+        return RELATIONSHIP_TRIOS[2]  # Friends Trio: Ananya, Vikram, Rohan
+
+    # SIR / Government Planning Office Trio
+    if any(k in text for k in ["sir", "dholera", "investment region", "special investment", "industrial corridor", "collectorate", "secretariat"]):
+        return (
+            "👔 Sharma Ji (Government Administrative Officer - वरिष्ठ अधिकारी)",
+            "🧑 Rajesh (Industrial Investor / Citizen - उद्यमी)",
+            "👩 Priya (Land Planning Assistant - सहायक योजनाकार)"
+        )
+
+    if any(k in text for k in ["election", "नेता", "netaji", "पार्षद", "corporator", "party", "सरकार", "chai", "चाय"]):
         return DIVERSE_SOCIOECONOMIC_TRIOS[0]  # Netaji, Auto Driver, Chai Tapri Elder
-    if any(k in text for k in ["police", "दरोगा", "office", "tech", "corporate", "delivery", "राइडर"]):
+    if any(k in text for k in ["police", "दरोगा", "tech", "corporate", "delivery", "राइडर"]):
         return DIVERSE_SOCIOECONOMIC_TRIOS[1]  # Corporate VP, Delivery Rider, Inspector
     if any(k in text for k in ["babu", "बाबू", "clerk", "सरकारी", "citizen", "पेंशन", "छात्र"]):
         return DIVERSE_SOCIOECONOMIC_TRIOS[2]  # Government Clerk, Citizen, Elder
@@ -293,7 +380,248 @@ def select_script_grounded_trio(topic_or_script: str) -> Tuple[str, str, str]:
         return DIVERSE_SOCIOECONOMIC_TRIOS[3]  # Doctor, Med Rep, Amma
     if any(k in text for k in ["court", "कोर्ट", "वकील", "lawyer", "कानून", "जज"]):
         return DIVERSE_SOCIOECONOMIC_TRIOS[4]  # Advocate, Clerk Babu, Citizen
+
+    # Dynamic Imagination Fallback: If no predefined trio matches, imagine a brand new trio from current data!
+    if text.strip():
+        from agents.contextual_selector import contextual_selector
+        return contextual_selector.imagine_trio_from_data(topic_or_script)
+
     return random.choice(DIVERSE_SOCIOECONOMIC_TRIOS)
+
+
+def format_sample_personas(personas: List[str], character_count: int) -> List[str]:
+    """Ensure sample personas match requested character count with rich, sanitized tags."""
+    if not personas:
+        return []
+    if character_count == 1:
+        return [sanitize_persona_name(personas[0])]
+    if character_count == 2:
+        if len(personas) >= 2:
+            return [sanitize_persona_name(personas[0]), sanitize_persona_name(personas[1])]
+        first = personas[0]
+        f_lower = first.lower()
+        if "wife" in f_lower or "पत्नी" in f_lower or "homemaker" in f_lower:
+            partner = "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)"
+        elif "husband" in f_lower or "पति" in f_lower:
+            partner = "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)"
+        elif "father" in f_lower or "पिता" in f_lower:
+            partner = "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)"
+        elif "son" in f_lower or "बेटा" in f_lower:
+            partner = "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)"
+        elif "doctor" in f_lower or "डॉक्टर" in f_lower:
+            partner = "🧑 Ramesh (Patient - मरीज)"
+        elif "teacher" in f_lower or "मास्टर" in f_lower:
+            partner = "🧑 Aarav (Student - छात्र)"
+        elif "colleague" in f_lower or "कलीग" in f_lower:
+            partner = "🧑 Rohan (Office Colleague / Colleague 2 - जूनियर कलीग)"
+        else:
+            partner = "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)"
+        return [sanitize_persona_name(first), sanitize_persona_name(partner)]
+    if character_count >= 3:
+        res = [sanitize_persona_name(p) for p in personas[:character_count]]
+        while len(res) < character_count:
+            res.append(sanitize_persona_name(f"👤 Character {len(res)+1} (साक्षी / साथी)"))
+        return res
+    return [sanitize_persona_name(p) for p in personas]
+
+
+def format_speaker_names_to_personas(speaker_names: List[str], character_count: int) -> List[str]:
+    """Map raw speaker names extracted from sample script to rich, properly tagged personas."""
+    role_map = {
+        "wife": "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
+        "patni": "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
+        "पत्नी": "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
+        "husband": "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)",
+        "pati": "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)",
+        "पति": "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)",
+        "father": "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)",
+        "baap": "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)",
+        "pita": "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)",
+        "पिता": "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)",
+        "son": "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)",
+        "beta": "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)",
+        "बेटा": "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)",
+        "mother": "👩 Meera (Caring Mother - ममतामयी माँ)",
+        "maa": "👩 Meera (Caring Mother - ममतामयी माँ)",
+        "माँ": "👩 Meera (Caring Mother - ममतामयी माँ)",
+        "daughter": "👩 Ananya (College Daughter - समझदार बेटी)",
+        "beti": "👩 Ananya (College Daughter - समझदार बेटी)",
+        "बेटी": "👩 Ananya (College Daughter - समझदार बेटी)",
+        "colleague": "👩 Priya (Senior Office Colleague / Colleague 1 - सीनियर कलीग)",
+        "coworker": "👩 Priya (Senior Office Colleague / Colleague 1 - सीनियर कलीग)",
+        "कलीग": "👩 Priya (Senior Office Colleague / Colleague 1 - सीनियर कलीग)",
+        "doctor": "🩺 Dr. Rajesh (Hospital Doctor - वरिष्ठ चिकित्सक)",
+        "डॉक्टर": "🩺 Dr. Rajesh (Hospital Doctor - वरिष्ठ चिकित्सक)",
+        "patient": "🧑 Ramesh (Patient - मरीज)",
+        "मरीज": "🧑 Ramesh (Patient - मरीज)",
+        "teacher": "📚 Master Ji (School Teacher - सरकारी शिक्षक)",
+        "मास्टर": "📚 Master Ji (School Teacher - सरकारी शिक्षक)",
+        "शिक्षक": "📚 Master Ji (School Teacher - सरकारी शिक्षक)",
+        "student": "🧑 Aarav (Student - छात्र)",
+        "छात्र": "🧑 Aarav (Student - छात्र)",
+        "police": "👮 Sub-Inspector Sunita (Police Officer - पुलिस दरोगा)",
+        "दरोगा": "👮 Sub-Inspector Sunita (Police Officer - पुलिस दरोगा)",
+    }
+    personas = []
+    female_names = {"ananya", "priya", "sunita", "meera", "sneha", "pooja", "neha", "kavita", "shreya"}
+    for idx, raw_name in enumerate(speaker_names):
+        n_lower = raw_name.lower().strip()
+        if n_lower in role_map:
+            personas.append(role_map[n_lower])
+        else:
+            emoji = "👩" if any(f in n_lower for f in female_names) else "🧑"
+            personas.append(f"{emoji} {raw_name.strip().title()} (Character {idx+1})")
+    return format_sample_personas(personas, character_count)
+
+
+def extract_sample_story_personas(sample_story: str, character_count: int = 2) -> Optional[List[str]]:
+    """
+    Extract and construct authentic character personas directly from a sample story or sample script.
+    Follows sample story discrepancy precedence:
+    1. Direct 'CHARACTERS & CLOTHING:' or 'CHARACTERS:' blocks.
+    2. Explicit dialogue speaker headings (e.g. 'ANANYA: ...', 'VIKRAM: ...', 'WIFE: ...', 'HUSBAND: ...').
+    3. Interpersonal relationships explicitly mentioned in narrative prose:
+       (Husband & Wife, Father & Son, Mother & Son, Colleagues, Friends, Doctor & Patient, etc.).
+    """
+    if not sample_story or not sample_story.strip():
+        return None
+
+    raw_text = sample_story.strip()
+    lower_text = raw_text.lower()
+
+    # 1. Check for CHARACTERS & CLOTHING: or CHARACTERS: section
+    m_chars = re.search(r"CHARACTERS(?:\s*&\s*CLOTHING)?\s*:(.*?)(?:\[Time|\n\s*\n\s*\[|\Z)", raw_text, re.DOTALL | re.IGNORECASE)
+    if m_chars:
+        char_lines = re.findall(r"(?:[⚬•\-\*]|\d+\.)?\s*([A-Za-z\u0900-\u097F\s/()\-]+?)\s*:\s*([^\n\r]+)", m_chars.group(1))
+        extracted = []
+        female_names = {"ananya", "priya", "sunita", "meera", "sneha", "pooja", "neha", "kavita", "shreya", "wife", "mother", "daughter"}
+        for name, role in char_lines:
+            c_name = sanitize_persona_name(name.strip())
+            role_clean = role.strip()
+            if c_name and c_name.lower() not in ["format", "scene detail", "audio", "camera", "time", "text overlay"]:
+                emoji = "👩" if any(f in c_name.lower() or f in role_clean.lower() for f in female_names) else "🧑"
+                extracted.append(f"{emoji} {c_name.title()} ({role_clean})")
+        if extracted:
+            return format_sample_personas(extracted, character_count)
+
+    # 2. Check for explicit dialogue speaker cues (e.g., 'ANANYA: "..."', 'VIKRAM: "..."', 'Wife: "..."', 'पति: "..."')
+    RESERVED_HEADERS = {
+        "time", "camera", "camera focus & action", "audio/sfx", "audio", "sfx",
+        "text overlay", "text overlay (optional)", "visual", "action", "scene", "scene detail",
+        "characters & clothing", "format", "format requirement", "note", "hook", "angle", "title"
+    }
+    speaker_matches = re.findall(r"^(?:\[.*?\]\s*)?([A-Za-z\u0900-\u097F\s]{2,25})\s*:\s*[\"“']?([^\n\r]+)", raw_text, re.MULTILINE)
+    detected_speakers = []
+    seen = set()
+    for spk, line in speaker_matches:
+        spk_clean = spk.strip().title()
+        spk_lower = spk_clean.lower()
+        if spk_lower not in RESERVED_HEADERS and not any(h in spk_lower for h in ["camera", "audio", "overlay", "scene"]):
+            if spk_lower not in seen:
+                seen.add(spk_lower)
+                detected_speakers.append(spk_clean)
+
+    if detected_speakers:
+        return format_speaker_names_to_personas(detected_speakers, character_count)
+
+    # 3. Explicit relationship or role mentions in narrative prose
+    # A. Husband & Wife / पति-पत्नी
+    if any(k in lower_text for k in ["husband and wife", "husband & wife", "husband wife", "pati patni", "pati aur patni", "पति-पत्नी", "पति और पत्नी", "दंपति", "couple"]):
+        return format_sample_personas([
+            "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
+            "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)",
+            "👵 Amma (Elder Mother-in-Law - सास जी)"
+        ], character_count)
+
+    # B. Father & Son / पिता-पुत्र
+    if any(k in lower_text for k in ["father and son", "father & son", "father son", "pita aur beta", "पिता और बेटा", "पिता-पुत्र", "बाप-बेटा"]):
+        return format_sample_personas([
+            "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)",
+            "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)",
+            "👩 Sunita (Mother - माँ)"
+        ], character_count)
+
+    # C. Mother & Son / माँ-बेटा
+    if any(k in lower_text for k in ["mother and son", "mother & son", "mother son", "maa aur beta", "माँ और बेटा", "माँ-बेटा", "माता-पुत्र"]):
+        return format_sample_personas([
+            "👩 Meera (Caring Mother - ममतामयी माँ)",
+            "🧑 Kabir (Career-Minded Son - महत्वाकांक्षी बेटा)",
+            "👴 Chacha Ji (Elder Uncle - चाचा जी)"
+        ], character_count)
+
+    # D. Mother & Daughter / माँ-बेटी
+    if any(k in lower_text for k in ["mother and daughter", "mother & daughter", "mother daughter", "maa aur beti", "माँ और बेटी", "माँ-बेटी"]):
+        return format_sample_personas([
+            "👩 Meera (Caring Mother - ममतामयी माँ)",
+            "👩 Ananya (College Daughter - समझदार बेटी)",
+            "👵 Dadi (Grandmother - दादी)"
+        ], character_count)
+
+    # E. Colleagues / Coworkers / सहकर्मी / कलीग
+    if any(k in lower_text for k in ["colleague", "coworker", "office colleagues", "दो कलीग", "सहकर्मी", "कलीग"]):
+        return format_sample_personas([
+            "👩 Priya (Senior Office Colleague / Colleague 1 - सीनियर कलीग)",
+            "🧑 Rohan (Office Colleague / Colleague 2 - जूनियर कलीग)",
+            "👔 Manager Mehra (Corporate Boss - मैनेजर)"
+        ], character_count)
+
+    # F. Friends / Tapri Buddies / दोस्त
+    if any(k in lower_text for k in ["two friends", "friends", "दो दोस्त", "मित्र", "tapri buddies"]):
+        return format_sample_personas([
+            "👩 Ananya (College Friend 1 - कॉलेज दोस्त)",
+            "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)",
+            "🧑 Rohan (Witty Friend 3 - दोस्त 3)"
+        ], character_count)
+
+    # G. Doctor & Patient / डॉक्टर और मरीज
+    if any(k in lower_text for k in ["doctor and patient", "doctor patient", "doctor & patient", "डॉक्टर और मरीज", "डॉक्टर और पेशेंट"]):
+        return format_sample_personas([
+            "🩺 Dr. Rajesh (Hospital Doctor - वरिष्ठ चिकित्सक)",
+            "🧑 Ramesh (Patient - मरीज)",
+            "👩 Nurse Sneha (Staff Nurse - नर्स)"
+        ], character_count)
+
+    # H. Teacher & Student / शिक्षक और छात्र
+    if any(k in lower_text for k in ["teacher and student", "teacher student", "teacher & student", "मास्टर और छात्र", "शिक्षक और छात्र"]):
+        return format_sample_personas([
+            "📚 Master Ji (School Teacher - सरकारी शिक्षक)",
+            "🧑 Aarav (Student - छात्र)",
+            "👵 Amma (Parent - अभिभावक)"
+        ], character_count)
+
+    # I. Shopkeeper & Customer / दुकानदार और ग्राहक
+    if any(k in lower_text for k in ["shopkeeper and customer", "shopkeeper customer", "shopkeeper & customer", "दुकानदार और ग्राहक"]):
+        return format_sample_personas([
+            "🛒 Mohan (Local Shopkeeper - किराना दुकानदार)",
+            "🧑 Rajesh (Customer - ग्राहक)",
+            "🛵 Kabir (Delivery Guy - डिलीवरी राइडर)"
+        ], character_count)
+
+    # J. Lawyer & Client / वकील और मुवक्किल
+    if any(k in lower_text for k in ["lawyer and client", "lawyer client", "lawyer & client", "वकील और मुवक्किल"]):
+        return format_sample_personas([
+            "⚖️ Advocate Verma (Senior Lawyer - वरिष्ठ वकील)",
+            "🧑 Kabir (Client - मुवक्किल)",
+            "👔 Clerk Tripathi (Court Clerk - पेशकार)"
+        ], character_count)
+
+    # K. Neighbors / पड़ोसी
+    if any(k in lower_text for k in ["neighbor", "neighbour", "दो पड़ोसी", "पड़ोसी"]):
+        return format_sample_personas([
+            "🧑 Verma Ji (Curious Neighbor - पड़ोसी 1)",
+            "🧑 Gupta Ji (Opinionated Neighbor - पड़ोसी 2)",
+            "👵 Amma (Elder Neighbor - बुजुर्ग पड़ोसी)"
+        ], character_count)
+
+    # L. Police & Citizen / Driver / Suspect
+    if any(k in lower_text for k in ["police and citizen", "police and driver", "पुलिस और नागरिक", "पुलिस और ड्राइवर"]):
+        return format_sample_personas([
+            "👮 Sub-Inspector Sunita (Traffic Police - पुलिस दरोगा)",
+            "🛵 Rohan (Citizen / Delivery Partner - नागरिक)",
+            "🧑 Kabir (Eyewitness - प्रत्यक्षदर्शी)"
+        ], character_count)
+
+    return None
 
 
 def get_character_personas(
@@ -305,6 +633,12 @@ def get_character_personas(
     sample_story: Optional[str] = None,
 ) -> List[str]:
     """Generate rich, socioeconomically diverse character personas grounded in the script topic and representing India."""
+    # ⭐ HIGHEST PRECEDENCE: Check if sample story/script defines characters or relationships
+    if sample_story and sample_story.strip():
+        sample_personas = extract_sample_story_personas(sample_story.strip(), character_count)
+        if sample_personas:
+            return sample_personas
+
     import random
     combined = f"{tone} {angle}".lower()
     context_text = f"{topic_or_script} {sample_story or ''}"
@@ -312,11 +646,12 @@ def get_character_personas(
     is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "रोस्ट", "edgy", "relatable"])
     is_culture = any(w in combined for w in ["culture", "heritage", "pride", "गौरव", "धरोहर", "traditional", "wisdom"])
     style_lower = scene_style.lower()
+    is_argument = style_lower == "argument" or any(w in combined for w in ["argument", "बहस", "तकरार", "clash"])
 
     if character_count <= 1:
         if is_sad or style_lower == "lament":
             return ["💔 Grieving Citizen Meera (भावुक सूत्रधार मीरा)"]
-        elif is_funny or style_lower == "dialogue":
+        elif is_funny or style_lower in ["dialogue", "argument"]:
             chosen_solo = select_script_grounded_solo(context_text)
             return [sanitize_persona_name(chosen_solo)]
         elif is_culture:
@@ -342,14 +677,24 @@ def get_character_personas(
                 sanitize_persona_name("🗣️ Speaker A - Sunita (पक्ष - सुनीता)"),
                 sanitize_persona_name("👥 Speaker B - Vikrant (विपक्ष - विक्रांत)")
             ]
+        elif style_lower == "argument" or is_argument:
+            chosen_pair = select_script_grounded_pair(context_text)
+            return [sanitize_persona_name(chosen_pair[0]), sanitize_persona_name(chosen_pair[1])]
         elif is_culture:
             return [
                 sanitize_persona_name("🪔 Senior Scholar Shastri Ji (गुरु / शास्त्री जी)"),
                 sanitize_persona_name("👩 Curious Youth Meera (जिज्ञासु युवा मीरा)")
             ]
-        else:
+        elif is_funny or style_lower == "dialogue":
             # Contextual script-grounded selection of diverse Indian socioeconomic pairings
-            # representing rich, poor, police, clerk, corporator, doctor, etc.
+            if context_text.strip():
+                chosen_pair = select_script_grounded_pair(context_text)
+                return [sanitize_persona_name(chosen_pair[0]), sanitize_persona_name(chosen_pair[1])]
+            return [
+                sanitize_persona_name("👩 Priya / Friend 1 (प्रिया - दोस्त 1)"),
+                sanitize_persona_name("🧑 Rohan / Friend 2 (रोहन - दोस्त 2)")
+            ]
+        else:
             chosen_pair = select_script_grounded_pair(context_text)
             return [sanitize_persona_name(chosen_pair[0]), sanitize_persona_name(chosen_pair[1])]
 
@@ -372,6 +717,10 @@ def get_character_personas(
             sanitize_persona_name("🗣️ Speaker A - Vikrant (पक्ष - विक्रांत)"),
             sanitize_persona_name("👥 Speaker B - Fatima (विपक्ष - फातिमा)"),
         ]
+    elif style_lower == "argument" or is_argument:
+        chosen_trio = select_script_grounded_trio(context_text)
+        return [sanitize_persona_name(chosen_trio[0]), sanitize_persona_name(chosen_trio[1]), sanitize_persona_name(chosen_trio[2])]
+
     else:
         # Contextual script-grounded selection of diverse socioeconomic trios
         chosen_trio = select_script_grounded_trio(context_text)
@@ -446,6 +795,13 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
             f"🪔 TONE DIRECTIVE ({tone}):\n"
             f"- Celebrate timeless Indian heritage, deep cultural pride, and respectful desi swag with authentic idioms."
         )
+    elif any(w in combined for w in ["argument", "बहस", "तकरार", "clash"]):
+        tone_guidance = (
+            f"⚔️ TONE DIRECTIVE ({tone}):\n"
+            f"- High-voltage heated argument & verbal clash! Characters passionately disagree, trade sharp witty counter-punches,\n"
+            f"- Emotional friction and defensive comebacks grounded in realistic relationship stakes (colleagues, friends, husband-wife, father-son).\n"
+            f"- Build up escalating tension and conclude with an unexpected reality check or punchline!"
+        )
     else:
         tone_guidance = f"🎙️ TONE DIRECTIVE ({tone}):\n- Embody the spirit of {tone} with authentic spoken Hindi."
 
@@ -456,10 +812,11 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
             "💔 SCENE STYLE DIRECTIVE: LAMENT / EULOGY:\n"
             "- A deeply moving tribute and expression of shared sorrow, offering mutual solace and poignant remembrance across scenes."
         )
-    elif style_lower == "dialogue" and character_count > 1:
+    elif style_lower in ["dialogue", "argument"] and character_count > 1:
+        style_label = "ARGUMENT (HEATED CLASH)" if style_lower == "argument" else "DIALOGUE"
         style_guidance = (
-            f"👥 SCENE STYLE DIRECTIVE: DIALOGUE ({character_count} Characters):\n"
-            f"- This is an active in-universe conversation between {character_count} people!\n"
+            f"👥 SCENE STYLE DIRECTIVE: {style_label} ({character_count} Characters):\n"
+            f"- This is an active in-universe conversation/argument between {character_count} people!\n"
             f"- Characters must speak back-and-forth across the scenes, reacting to each other's words, bantering, questioning, and dropping punchlines.\n"
             f"- STRICT FORBIDDEN RULE: NO social media commenting, NO CTA, NO asking viewers to comment ('कमेंट करें', 'लाइक करें', 'कमेंट में बताओ'). Characters are having a real conversation with each other in their world—they DO NOT talk about comments!\n"
             f"- Each scene must have a designated character speaking their exact line."
@@ -474,6 +831,7 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
             "⚔️ SCENE STYLE DIRECTIVE: DEBATE:\n"
             "- Two opposing viewpoints clash with witty counter-points, lively banter, and engaging arguments."
         )
+
     elif style_lower == "speech":
         style_guidance = (
             "📢 SCENE STYLE DIRECTIVE: SPEECH:\n"
