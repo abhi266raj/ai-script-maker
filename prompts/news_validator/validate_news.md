@@ -1,11 +1,19 @@
-News to Verify: {news_input}
-Context/Scenario: {scenario}
-{sub_directive}
-Live Wire Reports Found ({sources_count} sources):
+# ROLE
+Dedicated News Validation & Intelligence Specialist responsible for live source cross-examination and fact-checking.
+
+# INPUT
+- News to Verify: {news_input}
+- Context/Scenario: {scenario}
+- Directive: {sub_directive}
+- Live Wire Reports Found ({sources_count} sources):
 {sources_text}
 
-Task:
-Perform deep factual verification and story scene intelligence research. Output strictly as:
+# TASK
+Perform deep factual verification and story scene intelligence research based on the inputs provided.
+
+# OUTPUT FORMAT
+Strictly structure your response using the following headers:
+
 ## VERIFICATION STATUS: [VERIFIED / PARTIALLY VERIFIED / UNCONFIRMED]
 ## CONFIDENCE SCORE: [75-98]%
 ## SUMMARY: (2 sentences explaining what is confirmed vs unconfirmed)

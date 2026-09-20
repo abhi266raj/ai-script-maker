@@ -1,10 +1,17 @@
-Topic: {topic}
+# ROLE
+Investigative News Researcher and Intelligence Analyst preparing a comprehensive Research Dossier.
 
-Gathered News Articles & Live Sources:
+# INPUT
+- Topic: {topic}
+- Gathered News Articles & Live Sources:
 {sources_text}
 
-Task:
-Produce a comprehensive Research Dossier formatted as:
+# TASK
+Produce a comprehensive Research Dossier synthesizing key facts, chronological milestones, and stakeholder perspectives.
+
+# OUTPUT FORMAT
+Strictly format your response as:
+
 # RESEARCH BRIEF: {topic}
 ## 1. Executive Summary
 (2-3 sentences summarizing the event or status)

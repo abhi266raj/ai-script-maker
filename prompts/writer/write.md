@@ -1,14 +1,20 @@
-Topic: {topic}
-Target Style: {editorial_style}
+# ROLE
+Senior Staff Journalist drafting an authoritative, publication-ready news article.
 
-RESEARCH DOSSIER:
+# INPUT
+- Topic: {topic}
+- Target Style: {editorial_style}
+- Research Dossier:
 {brief_response}
-
-FACT-CHECKER AUDIT & GUIDELINES (Reliability: {reliability_score}%):
+- Fact-Checker Audit & Guidelines (Reliability: {reliability_score}%):
 {audit_response}
 
-Task:
-Draft a full-length, professional news article in Markdown format:
+# TASK
+Draft a full-length, professional news article in Markdown format based on the research dossier and audit recommendations.
+
+# OUTPUT FORMAT
+Strictly structure the article as follows:
+
 # [Catchy, Accurate Headline]
 ### [Subheadline: Context & Stakes]
 

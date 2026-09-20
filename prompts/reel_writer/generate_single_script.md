@@ -1,18 +1,23 @@
-Target Duration: Exactly {target_seconds} Seconds
-Target Spoken Word Budget: {words_budget_str} (Keep narration strictly within this word limit)
-Recommended Structure: {breakdown}
-Angle: {angle_name} ({angle_desc})
-Tone/Scenario: {scenario}
-News Item: {news_input}
+# ROLE
+Short-Form Video Producer and Reel Scriptwriter producing a complete, formatted 9:16 vertical script.
 
-Verified Facts to Base Script On:
+# INPUT
+- Target Duration: Exactly {target_seconds} Seconds
+- Target Spoken Word Budget: {words_budget_str} (Keep narration strictly within this limit)
+- Recommended Structure: {breakdown}
+- Angle: {angle_name} ({angle_desc})
+- Tone/Scenario: {scenario}
+- News Item: {news_input}
+- Verified Facts:
 {verified_facts}
 
-Instructions:
+# TASK
 1. Write spoken-word Hindi narration in Devanagari matching {words_budget_str}.
 2. Provide an ultra-catchy 0-3s Hook.
 3. Provide scene breakdowns matching the {target_seconds}s timeline.
-4. Output format:
+
+# OUTPUT FORMAT
+Strictly structure output as:
 
 9:16 VERTICAL | ~{target_seconds} SECONDS
 

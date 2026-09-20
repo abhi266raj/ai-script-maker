@@ -1,11 +1,18 @@
-News to Verify: {news_input}
-Context/Scenario: {scenario}
+# ROLE
+Meticulous News Verification Specialist checking primary claims against live wire reports.
 
-Live Wire Reports Found ({sources_count} sources):
+# INPUT
+- News to Verify: {news_input}
+- Context/Scenario: {scenario}
+- Live Wire Reports Found ({sources_count} sources):
 {sources_text}
 
-Task:
-Perform Step 1: News Verification. Format your response strictly as:
+# TASK
+Perform news verification on the submitted claims against source evidence.
+
+# OUTPUT FORMAT
+Format your response strictly as:
+
 ## VERIFICATION STATUS: [VERIFIED / PARTIALLY VERIFIED / UNCONFIRMED]
 ## CONFIDENCE SCORE: [75-98]%
 ## SUMMARY: (2 sentences explaining what is confirmed vs unconfirmed)

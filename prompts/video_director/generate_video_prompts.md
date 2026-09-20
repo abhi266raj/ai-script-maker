@@ -1,10 +1,18 @@
-Topic: {news_topic}
-Target Duration: {duration_sec}s
-Scenes to convert into Google Flow / Veo AI Video Prompts:
+# ROLE
+AI Video Director and Cinematographer converting script scenes into detailed video generation prompts.
+
+# INPUT
+- Topic: {news_topic}
+- Target Duration: {duration_sec}s
+- Storyboard Scenes:
 {scenes_desc}
 
-Task:
-For each scene, output an ultra-detailed AI video prompt formatted as:
+# TASK
+For each scene, output an ultra-detailed AI video prompt.
+
+# OUTPUT FORMAT
+Format each scene strictly as:
+
 SCENE 1:
 PROMPT: [Ultra-detailed 9:16 cinematic visual prompt describing camera motion, lighting, realistic textures, 4k 24fps]
 CAMERA: [e.g., Low-angle tracking shot moving forward]

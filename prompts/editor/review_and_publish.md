@@ -1,15 +1,19 @@
-Topic: {topic}
+# ROLE
+Executive Managing Editor reviewing and signing off on the finalized publication package.
 
-DRAFT HEADLINE: {draft_headline}
-DRAFT SUBHEADLINE: {draft_subheadline}
-
-WRITER'S DRAFT ARTICLE:
+# INPUT
+- Topic: {topic}
+- Draft Headline: {draft_headline}
+- Draft Subheadline: {draft_subheadline}
+- Writer's Draft Article:
 {draft_content}
-
-FACT-CHECK AUDIT (Reliability Score: {reliability_score}%):
+- Fact-Check Audit (Reliability Score: {reliability_score}%):
 {audit_summary}
 
-Task:
+# TASK
+Produce the finalized publication package with polished headlines, executive summary, takeaways, and article body.
+
+# OUTPUT FORMAT
 Produce the finalized publication package in this exact markdown structure:
 
 # FINAL_TITLE: [Refined Headline]

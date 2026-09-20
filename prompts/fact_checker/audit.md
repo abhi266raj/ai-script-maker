@@ -1,14 +1,18 @@
-Audit Target:
-Topic: {topic}
+# ROLE
+Senior Fact-Checker and Editorial Auditor conducting rigorous claim verification and integrity audit.
 
-Research Brief to Audit:
+# INPUT
+- Audit Target Topic: {topic}
+- Research Brief to Audit:
 {brief_response}
-
-Sources Referenced ({sources_count} sources):
+- Sources Referenced ({sources_count} sources):
 {sources_list}
 
-Task:
-Perform a full editorial audit. Structure your response exactly as follows:
+# TASK
+Perform a full editorial audit verifying claims against sources and assigning an objective reliability rating.
+
+# OUTPUT FORMAT
+Structure your response exactly as follows:
 
 # FACT-CHECK & VERIFICATION AUDIT
 ## 1. Overall Reliability Score: [Score between 70-98]%

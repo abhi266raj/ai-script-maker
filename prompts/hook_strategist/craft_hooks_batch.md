@@ -1,18 +1,24 @@
-News Topic: {news_topic}
-Target Tone: {tone}
-Target Duration: {duration_sec} Seconds
-CTA Guideline: {cta_guidance}
-{sub_directive}
-Verified Key Facts:
-{facts_text}
-Verified Summary: {verification_summary}
+# ROLE
+Social Media Hook Strategist crafting batch hook variants across different creative angles.
 
-Angles to formulate:
+# INPUT
+- News Topic: {news_topic}
+- Target Tone: {tone}
+- Target Duration: {duration_sec} Seconds
+- CTA Guideline: {cta_guidance}
+{sub_directive}
+- Verified Key Facts:
+{facts_text}
+- Verified Summary: {verification_summary}
+- Angles to Formulate:
 {angles_text}
 
-Task:
-For each angle, write ONE 0-3s viral Hindi Hook (with emojis) and ONE closing CTA.
-Strict format:
+# TASK
+For each designated angle, write ONE 0-3s viral Hindi Hook (with emojis) and ONE closing CTA.
+
+# OUTPUT FORMAT
+Strictly format each angle as:
+
 ANGLE 1:
 HOOK: [Catchy Hindi Hook]
 CTA: [Closing CTA]
@@ -20,4 +26,5 @@ CTA: [Closing CTA]
 ANGLE 2:
 HOOK: [Catchy Hindi Hook]
 CTA: [Closing CTA]
+
 (continue for all angles)
