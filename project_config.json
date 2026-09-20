@@ -4,28 +4,40 @@
   "description": "Autonomous multi-agent system transforming breaking news into viral, fact-checked Hindi reels with Google Flow / Veo 9:16 prompts",
   "default_language": "Hindi (Devanagari)",
   "interface_language": "English",
-  "default_engine": "fm_only",
-  "default_duration": 10,
+  "default_engine": "grok_only",
+  "default_duration": 15,
   "default_batch_count": 1,
-  "default_tone": "\ud83d\ude02 Relatable Comedy & Sarcasm (\u0926\u0947\u0938\u0940 \u0939\u094d\u092f\u0942\u092e\u0930)",
-  "news_category": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance",
+  "local_llm_support": {
+    "status": "work_in_progress",
+    "supported_ui_engine": "fm_only",
+    "generic_servers": ["ollama", "llama.cpp", "lmstudio"],
+    "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
+  },
+  "default_tone": "\ud83e\ude94 Traditional Heritage & Wisdom (\u0938\u093e\u0902\u0938\u094d\u0915\u0943\u0924\u093f\u0915 \u0927\u0930\u094b\u0939\u0930)",
+  "news_category": "\ud83d\udcc8 Business & Economy",
   "engines": {
     "hybrid": {
       "key": "first_local_then_agy",
-      "display_name": "Hybrid (First Local FM, then Antigravity AGY Fallback)",
-      "description": "Attempts fast on-device Apple FM first, with seamless cloud AGY fallback"
+      "display_name": "Local First Then Antigravity",
+      "description": "Attempts on-device Apple FM first, then uses Antigravity as fallback"
     },
     "agy_only": {
       "key": "agy_only",
-      "display_name": "Antigravity (AGY) Only (Verified & High Capacity)",
+      "display_name": "Antigravity Only (Verified & High Capacity)",
       "path": "/opt/homebrew/bin/agy",
-      "description": "Cloud reasoning engine with web search and comprehensive Hindi fluency"
+      "description": "Antigravity cloud reasoning with web search and comprehensive Hindi fluency"
+    },
+    "grok_only": {
+      "key": "grok_only",
+      "display_name": "Grok Only (Verified)",
+      "path": "/opt/homebrew/bin/grok",
+      "description": "Grok one-shot generation with verified login/model access; no silent fallback"
     },
     "fm_only": {
       "key": "fm_only",
-      "display_name": "Local Apple FM Only (On-Device with Auto-Recovery)",
+      "display_name": "Local Apple FM Only (Strict On-Device)",
       "path": "/usr/bin/fm",
-      "description": "Runs private on-device model with automatic zero-crash recovery"
+      "description": "Uses only the private on-device model; shows an error if it is unavailable"
     }
   },
   "durations": {
@@ -214,15 +226,15 @@
     "port": 8501,
     "health_endpoint": "http://127.0.0.1:8501/_stcore/health"
   },
-  "max_retries": 5,
-  "batch_count": 2,
-  "selected_script_index": 1,
-  "default_angle": "Sarcastic & Edgy",
-  "character_count": 2,
-  "scene_style": "Debate",
+  "max_retries": 3,
+  "batch_count": 1,
+  "selected_script_index": 0,
+  "default_angle": "Funny & Relatable",
+  "character_count": 3,
+  "scene_style": "Dialogue",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
   "source_mode": "\ud83d\udce1 Live News",
-  "selected_headline": "Parliament passes landmark governance bill"
+  "selected_headline": "Google\u2019s Gemini is the latest AI model to hack other companies"
 }

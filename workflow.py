@@ -2,6 +2,7 @@
 
 from typing import Generator, Dict, Any, Optional
 from core.models import ReelBatchResult
+from core.dual_engine import dual_engine
 from agents.chief_editor import chief_editor_coordinator
 
 
@@ -25,6 +26,10 @@ class ReelWorkflow:
         **kwargs,
     ) -> Generator[Dict[str, Any], None, ReelBatchResult]:
         """Execute the multi-agent pipeline."""
+        # Validate the user's selected model before fetching news or starting
+        # any agent work. This keeps failures fast and prevents fallback or
+        # synthetic output from being presented as a completed script.
+        dual_engine.validate_mode(engine_mode)
         return chief_editor_coordinator.orchestrate_reel_pipeline(
             news_input=news_input,
             scenario=scenario,

@@ -6,7 +6,7 @@ from core.dual_engine import dual_engine
 
 
 class BaseAgent:
-    """Base class for autonomous newsroom agents powered by Dual Engine (FM + AGY)."""
+    """Base class for autonomous newsroom agents powered by Dual Engine (FM + Antigravity)."""
 
     def __init__(self, name: str, role: str, icon: str, instructions: str):
         self.name = name
@@ -29,7 +29,7 @@ class BaseAgent:
             engine_mode: 'first_local_then_agy', 'fm_only', or 'agy_only'
         """
         if status_callback:
-            status_callback(self.name, f"⚡ {self.icon} {self.name} is thinking (Local FM → AGY)...")
+            status_callback(self.name, f"⚡ {self.icon} {self.name} is thinking (Local FM → Antigravity)...")
 
         start_time = time.time()
         response, engine_used = dual_engine.generate(

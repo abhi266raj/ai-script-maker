@@ -4,6 +4,7 @@ import re
 from typing import Optional, Callable, List
 from agents.base import BaseAgent
 from core.models import NewsVerificationReport, NewsArticle
+from core.dual_engine import ModelGenerationError
 from tools.news_fetcher import news_fetcher
 
 VALIDATOR_INSTRUCTIONS = """You are a dedicated News Validation & Intelligence Specialist.
@@ -72,6 +73,8 @@ Perform deep factual verification and story scene intelligence research. Output 
         raw_output = ""
         try:
             raw_output = self.execute(prompt, status_callback=status_callback, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
         except Exception:
             raw_output = ""
 
@@ -193,4 +196,3 @@ Perform deep factual verification and story scene intelligence research. Output 
 
 
 news_validator = NewsValidationAgent()
-

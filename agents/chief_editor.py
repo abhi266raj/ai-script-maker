@@ -21,6 +21,7 @@ from agents.video_prompt_engineer import video_prompt_engineer
 from agents.video_quality_gate import video_quality_gate
 from agents.reel_writer import REEL_ANGLES
 from core.metrics import get_duration_budget
+from core.dual_engine import ModelGenerationError
 
 
 class ChiefEditorCoordinatorAgent:
@@ -292,6 +293,8 @@ class ChiefEditorCoordinatorAgent:
             verification: NewsVerificationReport = news_validator.validate_news(
                 news_input, scenario, sub_instruction=sub_instructions["news_validator"], engine_mode=engine_mode
             )
+        except ModelGenerationError:
+            raise
         except Exception as e:
             stage1_failures += 1
             stage1_errors.append(f"Network / RSS parsing notice: {str(e)[:90]}")
@@ -323,6 +326,8 @@ class ChiefEditorCoordinatorAgent:
                     news_input + " official confirmed news updates", scenario, engine_mode=engine_mode
                 )
                 stage1_resolution = "Refined query with official wire terms; confidence restored."
+            except ModelGenerationError:
+                raise
             except Exception as e2:
                 stage1_errors.append(f"Refinement exception: {str(e2)[:80]}")
 
@@ -387,6 +392,8 @@ class ChiefEditorCoordinatorAgent:
                 sub_instruction=sub_instructions["hook_strategist"],
                 engine_mode=engine_mode,
             )
+        except ModelGenerationError:
+            raise
         except Exception as e:
             stage2_failures += 1
             stage2_errors.append(f"Batch formulation error: {str(e)[:80]}")
@@ -470,6 +477,8 @@ class ChiefEditorCoordinatorAgent:
                 engine_mode=engine_mode,
                 num_scenes=explicit_frames,
             )
+        except ModelGenerationError:
+            raise
         except Exception as e:
             stage3_failures += 1
             stage3_errors.append(f"Dialogue generation error: {str(e)[:80]}")

@@ -11,7 +11,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.config import load_config, save_config, PROJECT_CONFIG_FILE, STUDIO_CONFIG_FILE
-from core.dual_engine import dual_engine
+from core.dual_engine import dual_engine, ModelGenerationError
 from tools.news_fetcher import news_fetcher
 from workflow import reel_workflow
 
@@ -33,6 +33,7 @@ def test_1_configuration_files():
     assert "first_local_then_agy" in pcfg["engines"]["hybrid"]["key"]
     assert "agy_only" in pcfg["engines"]["agy_only"]["key"]
     assert "fm_only" in pcfg["engines"]["fm_only"]["key"]
+    assert "grok_only" in pcfg["engines"]["grok_only"]["key"]
 
     cfg = load_config()
     assert "default_engine" in cfg
@@ -42,8 +43,8 @@ def test_1_configuration_files():
     print("✅ Config files verified with complete schema and synchronization.")
 
 
-def test_2_engine_modes_and_auto_recovery():
-    print("\n--- Test 2: Dual Engine Modes & Auto-Recovery ---")
+def test_2_engine_modes_and_strict_selection():
+    print("\n--- Test 2: Dual Engine Modes & Strict Selection ---")
     diag = dual_engine.check_status()
     print(f"Engine status diagnostic: fm={diag['fm']['available']}, agy={diag['agy']['available']}")
     assert diag["agy"]["available"] is True, "Antigravity AGY must be available"
@@ -53,10 +54,19 @@ def test_2_engine_modes_and_auto_recovery():
     assert "OK" in out_hybrid.upper() or "HYBRID" in out_hybrid.upper()
     print(f"✅ Mode 1 (Hybrid): Returned via '{eng_hybrid}'")
 
-    # Test Mode 2: FM Only (Ensuring Auto-Recovery without crash)
-    out_fm, eng_fm = dual_engine.generate("Respond with: FM_OK", mode="fm_only")
-    assert "OK" in out_fm.upper() or "FM" in out_fm.upper()
-    print(f"✅ Mode 2 (Local FM / Auto-Recovery): Returned via '{eng_fm}' (Zero crash guaranteed)")
+    # Test Mode 2: FM Only must never silently switch to AGY.
+    if diag["fm"]["available"]:
+        out_fm, eng_fm = dual_engine.generate("Respond with: FM_OK", mode="fm_only")
+        assert "OK" in out_fm.upper() or "FM" in out_fm.upper()
+        print(f"✅ Mode 2 (Strict Local FM): Returned via '{eng_fm}'")
+    else:
+        try:
+            dual_engine.generate("Respond with: FM_OK", mode="fm_only")
+        except ModelGenerationError as exc:
+            assert "No script was generated" in str(exc)
+            print("✅ Mode 2 (Strict Local FM): Correctly failed without cloud fallback")
+        else:
+            raise AssertionError("fm_only must fail when Local FM is unavailable")
 
     # Test Mode 3: AGY Only
     out_agy, eng_agy = dual_engine.generate("Respond with: AGY_OK", mode="agy_only")
@@ -152,7 +162,7 @@ if __name__ == "__main__":
     print("🚀 STARTING AUTOMATED VALIDATION SUITE...")
     try:
         test_1_configuration_files()
-        test_2_engine_modes_and_auto_recovery()
+        test_2_engine_modes_and_strict_selection()
         test_3_real_wire_news()
         test_5_dialogue_pacing_and_asymmetry_verification()
         test_4_multi_agent_pipeline_execution()

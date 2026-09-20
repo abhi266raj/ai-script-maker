@@ -4,6 +4,7 @@ import re
 from typing import Tuple, List, Optional
 from agents.base import BaseAgent
 from core.models import NewsVerificationReport
+from core.dual_engine import ModelGenerationError
 
 HOOK_STRATEGIST_INSTRUCTIONS = """You are an expert Social Media Hook Strategist & Audience Retention Specialist.
 Your sole responsibility in the pipeline is crafting viral, scroll-stopping 0-3 second Hook lines in Hindi.
@@ -59,6 +60,8 @@ CTA: [Engaging Hindi Call to Action]"""
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
         except Exception:
             raw_output = ""
 
@@ -119,6 +122,8 @@ CTA: [Closing CTA]
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
         except Exception:
             raw_output = ""
 

@@ -4,7 +4,7 @@
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Streamlit](https://img.shields.io/badge/UI-Streamlit-FF4B4B.svg)](https://streamlit.io/)
 [![Architecture](https://img.shields.io/badge/Architecture-Multi--Agent-success.svg)]()
-[![Inference](https://img.shields.io/badge/Dual--Engine-Apple%20FM%20%7C%20Antigravity-orange.svg)]()
+[![Inference](https://img.shields.io/badge/Inference-Apple%20FM%20%7C%20Grok%20%7C%20Antigravity-orange.svg)]()
 [![Screenplay](https://img.shields.io/badge/Format-9%3A16%20Industry%20Standard-purple.svg)]()
 [![Tests](https://img.shields.io/badge/Tests-17%20Passed%20100%25-brightgreen.svg)]()
 
@@ -26,7 +26,7 @@ Equipped with a collaborative team of specialized AI sub-agents, autonomous self
 - 🔮 **Dynamic Imagination Engine:** Synthesizes custom domains, specialized personas, and domain wardrobes for unlisted or emerging topics (*ISRO Space Missions, Aviation, Railways, Bullion, Renewable Energy, Real Estate, Defence*).
 - 🎯 **Screenplay Coherence Sub-Agent:** Physically locks actor kinematics and camera focus to objects mentioned in dialogue (*sipping cutting chai, unfolding morning newspapers, waving billing receipts, thrusting smartphone screens, counting currency, slamming coaching textbooks, pressing official ink stamps*).
 - ⚖️ **Common Sense Realism Validator:** Audits screenplay realism for setting-character mismatches, marital vocative errors (*e.g. calling male friends "सुनती हो"*), and occupational prop ergonomics (*tea vendor handling phone with wiping cloth and strainer*), triggering automatic self-healing retries.
-- ⚡ **Dual-Engine AI Inference Bridge:** High-speed private on-device inference via **Apple Foundation Models (`fm`)** with automatic zero-crash failover to **Antigravity (`agy`)** cloud reasoning.
+- ⚡ **Dual-Engine AI Inference Bridge:** High-speed private on-device inference via **Apple Foundation Models (`fm`)**, with an explicit hybrid mode for optional **Antigravity (`agy`)** fallback.
 - ⏱️ **Pacing & Word Count Calibration:** Mathematical word-budget enforcement across 10s, 15s, 20s, 30s, 45s, and 60s timelines at natural Indian speech delivery rates (~2.3 words/sec).
 - 🪓 **Strict Ban on Social Media Meta:** dialogue strictly contains in-universe character conversation, purging all meta calls (*"comment below", "like and share", "subscribe"*).
 
@@ -163,22 +163,25 @@ AI Script Maker operates on an autonomous dual-engine architecture that **priori
    - Ultra-low latency (~2-5s per generation), no API keys, no rate limits.
    - Automatically detected on macOS 15+ (Sequoia) with Apple Silicon.
 
-2. **🦙 Use Any Local LLM (Ollama, llama.cpp, LM Studio, etc.):**
-   - The inference layer is abstracted in [`core/dual_engine.py`](core/dual_engine.py) via the `DualEngine` class.
-   - To use **Ollama**, **llama.cpp**, **LM Studio**, or any other local LLM server:
-     1. Modify the `_try_local()` method in `DualEngine` to call your local model endpoint (e.g., `http://localhost:11434/api/generate` for Ollama).
-     2. Or replace the subprocess call to `/usr/bin/fm` with your own CLI command.
-   - Recommended local models: **Llama 3.1 8B**, **Mistral 7B**, **Gemma 2 9B**, **Phi-3 Mini** — all run well on consumer hardware.
+2. **🦙 Generic Local LLM support (Work in Progress):**
+   - Ollama, llama.cpp, LM Studio, and other local servers are not yet a supported selectable engine in the UI.
+   - The integration point is [`core/dual_engine.py`](core/dual_engine.py); provider-specific request handling, context management, health checks, streaming, and failure reporting still need to be completed before this is production-ready.
+   - Do not assume that selecting **On-device** uses one of these generic local servers: it strictly uses Apple Foundation Models through `/usr/bin/fm`.
 
 ### Fallback: Cloud Reasoning
 
 3. **⚡ Antigravity (`agy`) — Cloud Fallback:**
    - Cloud reasoning and deep factual synthesis via `agy`.
-   - Automatically activates **only when** the local LLM is unavailable, restricted, or encounters an error.
+   - Activates only when the user selects Local First Then Antigravity mode and local inference is unavailable, restricted, or encounters an error. Strict On-device and Antigravity selections never switch models.
    - Used for complex multi-agent decompositions when local models lack capacity.
 
+4. **🧠 Grok — Cloud Model:**
+   - Uses the installed Grok CLI with a fresh one-shot request for every generation.
+   - Login/model access is checked before generation; rate limits, quota, authentication, and service errors are shown as real failures.
+   - Grok is strict: it does not silently fall back to Apple FM or Antigravity.
+
 ### 🛡️ Autonomous Zero-Crash Failover
-   - If local execution is restricted or throttled, the pipeline seamlessly recovers via the cloud engine without dropping state or interrupting user workflows.
+   - If the selected model is unavailable or fails, generation stops quickly and the UI reports the failure. No synthetic or stale script is shown as a successful result.
    - The system tracks local model availability and skips it on subsequent calls if it's consistently failing, preventing repeated timeouts.
 
 ---

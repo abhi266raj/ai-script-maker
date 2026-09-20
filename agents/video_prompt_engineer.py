@@ -4,6 +4,7 @@ import re
 from typing import List, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, SceneItem
+from core.dual_engine import ModelGenerationError
 
 
 def clean_prompt_text(text: str) -> str:
@@ -90,6 +91,8 @@ MOTION: [e.g., High dynamic movement]
         raw_output = ""
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
         except Exception:
             raw_output = ""
 
@@ -237,4 +240,3 @@ MOTION: [e.g., High dynamic movement]
 
 
 video_prompt_engineer = AIVideoPromptAgent()
-

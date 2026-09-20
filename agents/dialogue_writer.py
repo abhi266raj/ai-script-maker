@@ -7,6 +7,7 @@ from typing import Optional, List, Dict, Any, Tuple
 from agents.base import BaseAgent
 from core.models import NewsVerificationReport
 from core.metrics import get_duration_budget, count_words
+from core.dual_engine import ModelGenerationError
 
 logger = logging.getLogger(__name__)
 
@@ -935,6 +936,8 @@ Task: Write the spoken Devanagari Hindi dialogue. Keep total words <= {budget['m
             cleaned = clean_hindi_dialogue(raw_output)
             final_text = smart_trim_dialogue(cleaned, budget["max_words"], budget["recommended_words"], cta)
             return final_text or f"{hook} {news_input}. {cta}"
+        except ModelGenerationError:
+            raise
         except Exception:
             fallback = f"{hook} {news_input}. {cta}"
             return smart_trim_dialogue(fallback, budget["max_words"], budget["recommended_words"], cta)
@@ -1146,6 +1149,8 @@ SCRIPT 1:
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
         except Exception as e:
             logger.warning(f"Dialogue generation execution failed ({e}), initiating intelligent Hindi fallback")
             raw_output = ""

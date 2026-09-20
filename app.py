@@ -506,6 +506,8 @@ st.markdown(
 
 if "batch_result" not in st.session_state:
     st.session_state.batch_result = None
+if "generation_error" not in st.session_state:
+    st.session_state.generation_error = None
 if "chosen_engine_mode" not in st.session_state:
     st.session_state.chosen_engine_mode = app_cfg.get("default_engine", "first_local_then_agy")
 if "chosen_duration" not in st.session_state:
@@ -783,7 +785,12 @@ with col_settings:
                 st.rerun()
 
         with st.container(border=True):
-            engine_options = {"Hybrid": "first_local_then_agy", "AGY": "agy_only", "On-device": "fm_only"}
+            engine_options = {
+                "Local First Then Antigravity": "first_local_then_agy",
+                "Antigravity": "agy_only",
+                "Grok": "grok_only",
+                "On-device": "fm_only",
+            }
             def cfg_row(label, widget):
                 left, right = st.columns([2.5, 5.5])
                 with left:
@@ -890,6 +897,10 @@ with col_settings:
 
         if launch_btn and st.session_state.get("active_story_input", "").strip():
             st.session_state.run_requested = True
+            # Never leave an older script visible while a new request is
+            # running or after the new request fails.
+            st.session_state.batch_result = None
+            st.session_state.generation_error = None
             st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
             st.session_state.run_scenario = instruction_text.strip()
             st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
@@ -931,13 +942,47 @@ with col_output:
                     status_text.caption(f"{step['agent']}")
                     if step.get("completed"):
                         st.session_state.batch_result = step["data"]["batch_result"]
+                        st.session_state.generation_error = None
                         st.session_state.selected_script_idx = 0
                         save_config("selected_script_index", 0)
                         progress_bar.progress(1.0)
                         status_box.update(label="Ready", state="complete", expanded=False)
             except Exception as e:
+                st.session_state.batch_result = None
+                st.session_state.selected_script_idx = 0
+                st.session_state.generation_error = {
+                    "message": str(e),
+                    "engine_mode": st.session_state.get("chosen_engine_mode", ""),
+                    "partial_output": getattr(e, "partial_output", "") or "",
+                }
                 status_box.update(label="Failed", state="error")
-                st.error(str(e))
+
+    if st.session_state.get("generation_error"):
+        failure = st.session_state.generation_error
+        engine_labels = {
+            "fm_only": "On-device Apple Foundation Model",
+            "agy_only": "Antigravity",
+            "grok_only": "Grok",
+            "first_local_then_agy": "Local First Then Antigravity",
+        }
+        st.error("Script generation failed")
+        st.write(f"Selected model: **{engine_labels.get(failure['engine_mode'], failure['engine_mode'])}**")
+        st.warning(failure["message"])
+        if failure.get("partial_output"):
+            st.markdown("#### Partial model output")
+            st.text_area(
+                "Output received before failure",
+                value=failure["partial_output"],
+                height=180,
+                disabled=True,
+                label_visibility="collapsed",
+            )
+        st.caption("No script was generated. Resolve the model issue and try again.")
+        if st.button("Try again", key="retry_failed_generation", use_container_width=True):
+            st.session_state.generation_error = None
+            st.session_state.batch_result = None
+            st.session_state.run_requested = True
+            st.rerun()
 
     if st.session_state.get("batch_result"):
         res = st.session_state.batch_result

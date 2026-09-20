@@ -4,6 +4,7 @@ import re
 from typing import List, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, VideoPassVerification
+from core.dual_engine import ModelGenerationError
 
 QUALITY_GATE_INSTRUCTIONS = """You are a Quality Gate Auditor for Generative AI Video Systems.
 Your sole task is verifying whether visual prompts are physically feasible, temporally coherent, and policy-compliant.
@@ -49,6 +50,8 @@ FEEDBACK: (1-2 sentences on why it passed or what needs correction)"""
         raw_output = ""
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
         except Exception:
             raw_output = ""
 

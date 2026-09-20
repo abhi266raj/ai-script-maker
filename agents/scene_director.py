@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from agents.base import BaseAgent
 from core.models import SceneItem
 from core.metrics import get_duration_budget
+from core.dual_engine import ModelGenerationError
 
 def clean_beat_action(text: str) -> str:
     """Strip camera framing and background setting preamble from running beat action."""
@@ -197,6 +198,8 @@ SFX: [Sound effect, e.g. Street Ambience + Whoosh]
         raw_output = ""
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
         except Exception:
             raw_output = ""
 
@@ -586,4 +589,3 @@ SFX: [Sound effect, e.g. Street Ambience + Whoosh]
 
 
 scene_director = SceneVisualsDirectorAgent()
-
