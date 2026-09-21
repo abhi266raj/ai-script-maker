@@ -13,6 +13,7 @@ from core.models import (
     PipelineAuditReport,
 )
 from agents.news_validator import news_validator
+from agents.contextual_selector import contextual_selector
 from agents.hook_strategist import hook_strategist
 from agents.dialogue_writer import dialogue_writer, get_character_personas, clean_hindi_dialogue, strip_commenting_and_cta
 from agents.timing_auditor import timing_auditor
@@ -81,6 +82,14 @@ class ChiefEditorCoordinatorAgent:
                 f"- Task: Cross-reference live wire search feeds. Extract confirmed facts, entities, and figures.\n"
                 f"- Filter: Discard unverified viral gossip or clickbait rumors.\n"
                 f"- Target Outcome: Provide verified factual foundation for {scene_style.lower()} screenplay."
+            ),
+            "contextual_selector": (
+                f"Scene & Character Selector Sub-Instruction (Dynamic Subagent):\n"
+                f"- Story Domain: {news_topic}\n"
+                f"- Format: {target_seconds}s vertical reel ({scene_style} style, {character_count} character(s)).\n"
+                f"- Creative Tone: {tone} | Angle: {angle or 'High-retention viral perspective'}.\n"
+                f"- Task: Detect the authentic real-world domain and select dynamic physical location/venue, personas, authentic wardrobes, props, and ambient SFX.\n"
+                f"- Rule: Institutional topics MUST be placed in authentic institutional venues (government offices, hospitals, courts, IT tech parks, space centers). Never default to a chai tapri unless explicitly topical.{sample_clause}"
             ),
             "hook_strategist": (
                 f"Hook & Angle Sub-Instruction (Agent 2):\n"

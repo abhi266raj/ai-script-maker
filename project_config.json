@@ -5,7 +5,7 @@
   "default_language": "Hindi (Devanagari)",
   "interface_language": "English",
   "default_engine": "agy_only",
-  "default_duration": 20,
+  "default_duration": 10,
   "default_batch_count": 1,
   "local_llm_support": {
     "status": "work_in_progress",
@@ -18,7 +18,7 @@
     "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
   },
   "default_tone": "\ud83d\ude02 Relatable Comedy & Sarcasm (\u0926\u0947\u0938\u0940 \u0939\u094d\u092f\u0942\u092e\u0930)",
-  "news_category": "\ud83c\udf0d World News",
+  "news_category": "\ud83d\udcbb Technology & AI",
   "engines": {
     "hybrid": {
       "key": "first_local_then_agy",
@@ -246,11 +246,11 @@
   "batch_count": 1,
   "selected_script_index": 0,
   "default_angle": "Sarcastic & Edgy",
-  "character_count": 3,
+  "character_count": 2,
   "scene_style": "Dialogue",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
-  "source_mode": "\u270f\ufe0f Manual Topic",
-  "selected_headline": "Ajit Doval Predicts India's Economy Will Hit $38 Trillion by 2047"
+  "source_mode": "\ud83d\udd25 Trending Topics",
+  "selected_headline": "Beyond ISRO: Meet 5 Indian Space Startups Making Global Headlines in 2026"
 }

@@ -20,7 +20,8 @@ from agents.scene_catalog import (
     get_creative_angle_catalog,
     get_domain_catalog,
 )
-from core.prompt_loader import load_prompt
+from core.prompt_loader import load_prompt, render_prompt
+from core.dual_engine import ModelGenerationError
 
 CONTEXTUAL_SELECTOR_INSTRUCTIONS = load_prompt("contextual_selector/contextual_selector.md")
 
@@ -34,6 +35,105 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
             instructions=CONTEXTUAL_SELECTOR_INSTRUCTIONS,
             prompt_file="contextual_selector/contextual_selector.md",
         )
+
+    def execute_selection(
+        self,
+        news_topic: str,
+        scenario: str = "",
+        sample_story: Optional[str] = None,
+        character_count: int = 2,
+        duration_sec: int = 15,
+        tone: str = "",
+        scene_style: str = "Dialogue",
+        angle: str = "",
+        verified_facts: Optional[List[str]] = None,
+        sub_instruction: Optional[str] = None,
+        engine_mode: str = "first_local_then_agy",
+    ) -> Dict[str, Any]:
+        """
+        Execute dynamic LLM-driven character casting and physical venue selection,
+        with seamless fallback to the domain-grounded rules engine.
+        """
+        facts_text = "\n".join([f"- {f}" for f in (verified_facts or [])[:4]]) if verified_facts else f"- {news_topic}"
+        sub_directive = f"\nChief Editor Casting Directive:\n{sub_instruction}\n" if sub_instruction else ""
+
+        prompt = render_prompt(
+            "contextual_selector/contextual_selector.md",
+            news_topic=news_topic,
+            scenario=scenario or f"{scene_style} scene with {character_count} characters",
+            tone=tone or "Funny & Relatable",
+            scene_style=scene_style,
+            character_count=character_count,
+            duration_sec=duration_sec,
+            verified_facts=facts_text,
+            sub_directive=sub_directive,
+        )
+
+        llm_output = ""
+        try:
+            llm_output = self.execute(prompt, engine_mode=engine_mode)
+        except ModelGenerationError:
+            raise
+        except Exception:
+            llm_output = ""
+
+        parsed = self._parse_selector_output(llm_output, character_count)
+        if parsed and parsed.get("setting") and parsed.get("personas") and len(parsed["personas"]) >= character_count:
+            return parsed
+
+        # Fallback to domain-grounded rule synthesis
+        return self.select_scene_and_characters(
+            news_topic=news_topic,
+            sample_story=sample_story,
+            character_count=character_count,
+            duration_sec=duration_sec,
+            tone=tone,
+            angle=angle,
+        )
+
+    def _parse_selector_output(self, raw_text: str, character_count: int) -> Optional[Dict[str, Any]]:
+        """Parse structured LLM output from contextual_selector.md format."""
+        if not raw_text or not raw_text.strip():
+            return None
+
+        domain = ""
+        setting = ""
+        personas: List[str] = []
+        wardrobes: Dict[str, str] = {}
+        props: List[str] = []
+        sfx = ""
+
+        for line in raw_text.splitlines():
+            l = line.strip()
+            if not l:
+                continue
+            if re.match(r"^-\s*DOMAIN\s*:\s*", l, re.IGNORECASE) or re.match(r"^DOMAIN\s*:\s*", l, re.IGNORECASE):
+                domain = re.sub(r"^(?:-\s*)?DOMAIN\s*:\s*", "", l, flags=re.IGNORECASE).strip()
+            elif re.match(r"^-\s*SETTING\s*:\s*", l, re.IGNORECASE) or re.match(r"^SETTING\s*:\s*", l, re.IGNORECASE):
+                setting = re.sub(r"^(?:-\s*)?SETTING\s*:\s*", "", l, flags=re.IGNORECASE).strip()
+            elif re.match(r"^-\s*PERSONAS\s*:\s*", l, re.IGNORECASE) or re.match(r"^PERSONAS\s*:\s*", l, re.IGNORECASE):
+                p_text = re.sub(r"^(?:-\s*)?PERSONAS\s*:\s*", "", l, flags=re.IGNORECASE).strip()
+                # Could be comma-separated or bracketed
+                p_items = [p.strip(" []\"'") for p in re.split(r",\s*(?=[A-Z\u0900-\u097F\U00010000-\U0010ffff])", p_text) if p.strip()]
+                if p_items:
+                    personas.extend(p_items)
+            elif re.match(r"^-\s*PROPS\s*:\s*", l, re.IGNORECASE) or re.match(r"^PROPS\s*:\s*", l, re.IGNORECASE):
+                pr_text = re.sub(r"^(?:-\s*)?PROPS\s*:\s*", "", l, flags=re.IGNORECASE).strip()
+                props = [pr.strip(" []\"'") for pr in pr_text.split(",") if pr.strip()]
+            elif re.match(r"^-\s*SFX\s*:\s*", l, re.IGNORECASE) or re.match(r"^SFX\s*:\s*", l, re.IGNORECASE):
+                sfx = re.sub(r"^(?:-\s*)?SFX\s*:\s*", "", l, flags=re.IGNORECASE).strip()
+
+        if setting and personas:
+            return {
+                "domain": domain or "dynamic_scene",
+                "setting": setting,
+                "setting_detail": setting,
+                "personas": personas[:character_count] if len(personas) >= character_count else personas,
+                "wardrobes": wardrobes,
+                "props": props or ["key story object"],
+                "sfx": sfx or "Atmospheric Room Tone + Dynamic Ambience",
+            }
+        return None
 
     def get_scene_style_setups(self, scene_style: str) -> List[Dict[str, Any]]:
         """Retrieve all curated setups for a Scene Style (min 6)."""
