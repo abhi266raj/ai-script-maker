@@ -6,6 +6,8 @@ import logging
 import os
 import re
 import json
+import threading
+import time
 from typing import Optional, Tuple, Dict, Any
 
 logger = logging.getLogger("DualEngine")
@@ -31,6 +33,8 @@ GROK_FAILURE_MARKERS = (
     "too many requests",
     "quota",
     "429",
+    "resource exhausted",
+    "resource-exhausted",
     "unauthorized",
     "authentication",
     "sign in",
@@ -47,6 +51,24 @@ GROK_MODES = {
     "grok_medium": "medium",
     "grok_high": "high",
 }
+GROK_RATE_LIMIT_MARKERS = (
+    "rate limit",
+    "rate_limit",
+    "rate limit exceeded",
+    "too many requests",
+    "quota",
+    "429",
+    "usage limit",
+    "free grok build",
+    "reached your",
+    "try again later",
+    "resource exhausted",
+    "resource-exhausted",
+)
+# Team grok-4.6 quota is 2 requests/second. One CLI invoke can count as more
+# than one billed request, so keep a process-wide gap well above 0.5s.
+_GROK_CALL_LOCK = threading.Lock()
+_GROK_LAST_CALL = 0.0
 
 
 def _compact_local_text(text: Optional[str], limit: int) -> Optional[str]:
@@ -161,13 +183,16 @@ def _classify_agy_error(details: str) -> str:
     return details
 
 
+def _is_grok_rate_limit(details: str) -> bool:
+    """True when Grok/CLI output indicates a transient quota or 429."""
+    lower = (details or "").lower()
+    return any(marker in lower for marker in GROK_RATE_LIMIT_MARKERS)
+
+
 def _classify_grok_error(details: str) -> str:
     """Keep Grok's provider/CLI error while identifying common failure types."""
     lower = details.lower()
-    if any(marker in lower for marker in (
-        "rate limit", "rate_limit", "too many requests", "quota", "429",
-        "usage limit", "free grok build", "reached your", "try again later",
-    )):
+    if _is_grok_rate_limit(details):
         return f"Grok rate-limit/quota error: {details}"
     if any(marker in lower for marker in ("unauthorized", "authentication", "sign in", "login")):
         return f"Grok authentication error: {details}"
@@ -250,6 +275,8 @@ class DualEngine:
         self._grok_verified: Optional[bool] = None
         self._grok_effort = "low"
         self._cached_status: Optional[Dict[str, Any]] = None
+        self._grok_min_interval = float(os.environ.get("GROK_MIN_INTERVAL_SECONDS", "1.2"))
+        self._grok_max_retries = int(os.environ.get("GROK_RATE_LIMIT_RETRIES", "6"))
 
     def check_status(self, force: bool = False, check_fm: bool = True) -> Dict[str, Any]:
         """Check availability and active operational status of both Local FM and Antigravity AGY."""
@@ -344,7 +371,14 @@ class DualEngine:
             output = probe.stdout.strip()
             err = probe.stderr.strip()
             details = err or output or "No status details returned"
-            if probe.returncode != 0:
+            if _is_grok_rate_limit(details):
+                # A quota hit on `grok models` must not block generation; the
+                # real request retries with backoff.
+                status["grok"]["available"] = True
+                status["grok"]["message"] = (
+                    "Grok CLI found; status probe hit a rate limit and will retry on generation"
+                )
+            elif probe.returncode != 0:
                 status["grok"]["available"] = False
                 status["grok"]["message"] = (
                     f"Grok status failed (exit {probe.returncode}): "
@@ -427,7 +461,11 @@ class DualEngine:
         if mode == "agy_only" and status["agy"]["available"]:
             status = self._probe_agy_service(status)
         if mode in GROK_MODES and status["grok"]["available"]:
-            status = self._probe_grok_service(status)
+            # Do not call `grok models` here. That probe plus the first
+            # generation hits the 2 req/s team cap (actual/limit 2/2).
+            status["grok"]["message"] = (
+                "Grok CLI found; login is verified on the first generation request"
+            )
         if mode == "fm_only" and not status["fm"]["available"]:
             raise ModelGenerationError(
                 f"On-device Apple Foundation Model is not available: {status['fm']['message']}. "
@@ -546,7 +584,19 @@ class DualEngine:
             raise RuntimeError("Antigravity returned empty response")
         return output
 
-    def run_grok(self, prompt: str, instructions: Optional[str] = None, timeout: int = REMOTE_MODEL_TIMEOUT_SECONDS) -> str:
+    def _wait_for_grok_slot(self) -> None:
+        """Keep every Grok CLI call in this process under the 2 req/s team cap."""
+        global _GROK_LAST_CALL
+        elapsed = time.monotonic() - _GROK_LAST_CALL
+        wait = self._grok_min_interval - elapsed
+        if wait > 0:
+            time.sleep(wait)
+
+    def _mark_grok_call(self) -> None:
+        global _GROK_LAST_CALL
+        _GROK_LAST_CALL = time.monotonic()
+
+    def _run_grok_once(self, prompt: str, instructions: Optional[str], timeout: int) -> str:
         """Run one fresh Grok CLI request; never resumes a prior conversation."""
         full_prompt = prompt
         if instructions:
@@ -598,6 +648,36 @@ class DualEngine:
         if not output:
             raise RuntimeError("Grok returned empty response")
         return output
+
+    def run_grok(self, prompt: str, instructions: Optional[str] = None, timeout: int = REMOTE_MODEL_TIMEOUT_SECONDS) -> str:
+        """Run Grok with request spacing and exponential backoff on 429/quota errors."""
+        last_error: Optional[Exception] = None
+        with _GROK_CALL_LOCK:
+            for attempt in range(self._grok_max_retries + 1):
+                self._wait_for_grok_slot()
+                try:
+                    result = self._run_grok_once(prompt, instructions, timeout)
+                    self._mark_grok_call()
+                    return result
+                except ModelGenerationError:
+                    self._mark_grok_call()
+                    raise
+                except Exception as e:
+                    self._mark_grok_call()
+                    last_error = e
+                    if not _is_grok_rate_limit(str(e)) or attempt >= self._grok_max_retries:
+                        raise
+                    # 2 req/s window needs at least ~2s before the next try.
+                    backoff = min(60.0, max(2.0, (2 ** attempt) * 2.0))
+                    logger.warning(
+                        "Grok rate limit on attempt %s/%s; waiting %.1fs before retry: %s",
+                        attempt + 1,
+                        self._grok_max_retries + 1,
+                        backoff,
+                        e,
+                    )
+                    time.sleep(backoff)
+        raise last_error or RuntimeError("Grok rate-limit retries exhausted")
 
     def generate(
         self,
