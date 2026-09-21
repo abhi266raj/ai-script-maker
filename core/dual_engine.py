@@ -42,6 +42,36 @@ GROK_FAILURE_MARKERS = (
     "capacity",
     "service unavailable",
 )
+CODEX_FAILURE_MARKERS = (
+    "rate limit",
+    "rate_limit",
+    "rate limit exceeded",
+    "too many requests",
+    "quota",
+    "429",
+    "resource exhausted",
+    "resource-exhausted",
+    "insufficient_quota",
+    "unauthorized",
+    "authentication",
+    "sign in",
+    "login",
+    "capacity",
+    "service unavailable",
+)
+CODEX_RATE_LIMIT_MARKERS = (
+    "rate limit",
+    "rate_limit",
+    "rate limit exceeded",
+    "too many requests",
+    "quota",
+    "429",
+    "insufficient_quota",
+    "usage limit",
+    "try again later",
+    "resource exhausted",
+    "resource-exhausted",
+)
 LOCAL_MODEL_TIMEOUT_SECONDS = 240
 REMOTE_MODEL_TIMEOUT_SECONDS = 120
 LOCAL_CONTEXT_CHAR_LIMIT = 12000
@@ -50,6 +80,9 @@ GROK_MODES = {
     "grok_low": "low",
     "grok_medium": "medium",
     "grok_high": "high",
+}
+CODEX_MODES = {
+    "codex_only": "codex",
 }
 GROK_RATE_LIMIT_MARKERS = (
     "rate limit",
@@ -69,6 +102,9 @@ GROK_RATE_LIMIT_MARKERS = (
 # than one billed request, so keep a process-wide gap well above 0.5s.
 _GROK_CALL_LOCK = threading.Lock()
 _GROK_LAST_CALL = 0.0
+_CODEX_CALL_LOCK = threading.Lock()
+_CODEX_LAST_CALL = 0.0
+
 
 
 def _compact_local_text(text: Optional[str], limit: int) -> Optional[str]:
@@ -243,6 +279,67 @@ def _extract_grok_stream_text(raw: str) -> str:
     return "".join(text_parts).strip() or final_result.strip()
 
 
+def _is_codex_rate_limit(details: str) -> bool:
+    """True when Codex/CLI output indicates a transient quota or 429."""
+    lower = (details or "").lower()
+    return any(marker in lower for marker in CODEX_RATE_LIMIT_MARKERS)
+
+
+def _classify_codex_error(details: str) -> str:
+    """Keep Codex provider/CLI error while identifying common failure types."""
+    lower = details.lower()
+    if _is_codex_rate_limit(details):
+        return f"Codex rate-limit/quota error: {details}"
+    if any(marker in lower for marker in ("unauthorized", "authentication", "sign in", "login")):
+        return f"Codex authentication error: {details}"
+    if any(marker in lower for marker in ("service unavailable", "capacity")):
+        return f"Codex service-capacity error: {details}"
+    return details
+
+
+def _extract_codex_error(raw: str) -> str:
+    """Extract concise provider errors from Codex's streaming JSON output."""
+    errors = []
+    for line in (raw or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if event.get("type") == "error":
+            message = event.get("message") or event.get("error")
+            if message:
+                errors.append(str(message))
+        item = event.get("item", {})
+        if isinstance(item, dict) and item.get("type") == "error":
+            message = item.get("message") or item.get("text")
+            if message:
+                errors.append(str(message))
+    return "\n".join(dict.fromkeys(errors)).strip()
+
+
+def _extract_codex_stream_text(raw: str) -> str:
+    """Extract assistant text from Codex streaming JSON without exposing system metadata."""
+    text_parts = []
+    for line in (raw or "").splitlines():
+        try:
+            event = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        # Codex JSON lines format emits item.completed with agent_message
+        if event.get("type") == "item.completed":
+            item = event.get("item", {})
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                text = item.get("text") or ""
+                if text:
+                    text_parts.append(text)
+        elif event.get("type") == "response.output_item.done":
+            item = event.get("item", {})
+            for content_block in item.get("content", []):
+                if content_block.get("type") == "text":
+                    text_parts.append(content_block.get("text", ""))
+    return "\n\n".join(text_parts).strip()
+
+
 class ModelGenerationError(RuntimeError):
     """Raised when the selected inference engine cannot generate a response."""
 
@@ -266,20 +363,25 @@ class DualEngine:
         fm_bin: Optional[str] = None,
         agy_bin: Optional[str] = None,
         grok_bin: Optional[str] = None,
+        codex_bin: Optional[str] = None,
     ):
         self.fm_bin = fm_bin or shutil.which("fm") or "/usr/bin/fm"
         self.agy_bin = agy_bin or shutil.which("agy") or "/opt/homebrew/bin/agy"
         self.grok_bin = grok_bin or shutil.which("grok") or "/opt/homebrew/bin/grok"
+        self.codex_bin = codex_bin or shutil.which("codex") or "/opt/homebrew/bin/codex"
         self._fm_restricted: Optional[bool] = None
         self._agy_verified: Optional[bool] = None
         self._grok_verified: Optional[bool] = None
+        self._codex_verified: Optional[bool] = None
         self._grok_effort = "low"
         self._cached_status: Optional[Dict[str, Any]] = None
         self._grok_min_interval = float(os.environ.get("GROK_MIN_INTERVAL_SECONDS", "1.2"))
         self._grok_max_retries = int(os.environ.get("GROK_RATE_LIMIT_RETRIES", "6"))
+        self._codex_min_interval = float(os.environ.get("CODEX_MIN_INTERVAL_SECONDS", "1.0"))
+        self._codex_max_retries = int(os.environ.get("CODEX_RATE_LIMIT_RETRIES", "5"))
 
     def check_status(self, force: bool = False, check_fm: bool = True) -> Dict[str, Any]:
-        """Check availability and active operational status of both Local FM and Antigravity AGY."""
+        """Check availability and active operational status of Local FM, Antigravity AGY, Grok, and Codex."""
         if force:
             # A model may become available after a transient service failure.
             # Re-probe it on an explicit preflight instead of retaining a stale
@@ -287,6 +389,7 @@ class DualEngine:
             self._fm_restricted = None
             self._agy_verified = None
             self._grok_verified = None
+            self._codex_verified = None
 
         if not force and self._cached_status is not None:
             return self._cached_status
@@ -295,6 +398,7 @@ class DualEngine:
             "fm": {"available": False, "message": "Not found", "path": self.fm_bin, "restricted": False},
             "agy": {"available": False, "message": "Not found", "path": self.agy_bin},
             "grok": {"available": False, "message": "Not found", "path": self.grok_bin},
+            "codex": {"available": False, "message": "Not found", "path": self.codex_bin},
         }
 
         # Check Antigravity AGY first
@@ -311,6 +415,13 @@ class DualEngine:
             status["grok"]["path"] = self.grok_bin
             status["grok"]["message"] = "Grok CLI found; login and model access are checked before generation"
             self._grok_verified = True
+
+        # Check the Codex CLI
+        if shutil.which(self.codex_bin) or os.path.exists(self.codex_bin):
+            status["codex"]["available"] = True
+            status["codex"]["path"] = self.codex_bin
+            status["codex"]["message"] = "Codex CLI found; login and access are verified before generation"
+            self._codex_verified = True
 
         # Check Local Apple FM
         if check_fm and (shutil.which(self.fm_bin) or os.path.exists(self.fm_bin)):
@@ -454,10 +565,10 @@ class DualEngine:
 
     def validate_mode(self, mode: str) -> Dict[str, Any]:
         """Fail fast when the user-selected model is not ready."""
-        if mode not in {"first_local_then_agy", "fm_only", "agy_only", *GROK_MODES}:
+        if mode not in {"first_local_then_agy", "fm_only", "agy_only", *GROK_MODES, *CODEX_MODES}:
             raise ValueError(f"Unknown engine mode: {mode}")
 
-        status = self.check_status(force=True, check_fm=mode not in {"agy_only", *GROK_MODES})
+        status = self.check_status(force=True, check_fm=mode not in {"agy_only", *GROK_MODES, *CODEX_MODES})
         if mode == "agy_only" and status["agy"]["available"]:
             status = self._probe_agy_service(status)
         if mode in GROK_MODES and status["grok"]["available"]:
@@ -465,6 +576,10 @@ class DualEngine:
             # generation hits the 2 req/s team cap (actual/limit 2/2).
             status["grok"]["message"] = (
                 "Grok CLI found; login is verified on the first generation request"
+            )
+        if mode in CODEX_MODES and status["codex"]["available"]:
+            status["codex"]["message"] = (
+                "Codex CLI found; login and model access are verified on the first generation request"
             )
         if mode == "fm_only" and not status["fm"]["available"]:
             raise ModelGenerationError(
@@ -481,6 +596,11 @@ class DualEngine:
             raise ModelGenerationError(
                 f"Grok model is not available: {status['grok']['message']}. "
                 "Please sign in to Grok and try again. No script was generated."
+            )
+        if mode in CODEX_MODES and not status["codex"]["available"]:
+            raise ModelGenerationError(
+                f"Codex model is not available: {status['codex']['message']}. "
+                "Please sign in to Codex and try again. No script was generated."
             )
         if mode == "first_local_then_agy" and not (
             status["fm"]["available"] or status["agy"]["available"]
@@ -679,6 +799,100 @@ class DualEngine:
                     time.sleep(backoff)
         raise last_error or RuntimeError("Grok rate-limit retries exhausted")
 
+    def _wait_for_codex_slot(self) -> None:
+        """Keep Codex CLI requests paced."""
+        global _CODEX_LAST_CALL
+        elapsed = time.monotonic() - _CODEX_LAST_CALL
+        wait = self._codex_min_interval - elapsed
+        if wait > 0:
+            time.sleep(wait)
+
+    def _mark_codex_call(self) -> None:
+        global _CODEX_LAST_CALL
+        _CODEX_LAST_CALL = time.monotonic()
+
+    def _run_codex_once(self, prompt: str, instructions: Optional[str], timeout: int) -> str:
+        """Run one fresh non-interactive Codex request."""
+        full_prompt = prompt
+        if instructions:
+            full_prompt = f"System Instructions:\n{instructions}\n\nTask:\n{prompt}"
+
+        cmd = [
+            self.codex_bin,
+            "exec",
+            "--ephemeral",
+            "--sandbox",
+            "read-only",
+            "--json",
+            full_prompt,
+        ]
+        try:
+            res = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=timeout,
+                stdin=subprocess.DEVNULL,
+            )
+        except subprocess.TimeoutExpired as e:
+            partial = _extract_codex_stream_text(e.stdout or "")
+            if isinstance(partial, bytes):
+                partial = partial.decode("utf-8", errors="replace")
+            raise ModelGenerationError(
+                f"Codex timed out after {timeout} seconds.",
+                partial_output=partial,
+            ) from e
+
+        raw_stdout = res.stdout.strip()
+        err = res.stderr.strip()
+        output = _extract_codex_stream_text(raw_stdout)
+        provider_error = _extract_codex_error(raw_stdout)
+        combined = f"{err}\n{provider_error or raw_stdout}".strip()
+
+        if res.returncode != 0:
+            details = combined or "No error details returned"
+            raise RuntimeError(f"Codex error (exit {res.returncode}): {_classify_codex_error(details)}")
+        if any(marker in err.lower() for marker in CODEX_FAILURE_MARKERS):
+            raise RuntimeError(f"Codex service/model error: {_classify_codex_error(combined)}")
+        if not output:
+            # Fallback to checking if stdout has text if not found in JSON events
+            lines = [l for l in raw_stdout.splitlines() if not l.startswith("{")]
+            fallback_text = "\n".join(lines).strip()
+            if fallback_text:
+                output = fallback_text
+            else:
+                raise RuntimeError("Codex returned empty response")
+        return output
+
+    def run_codex(self, prompt: str, instructions: Optional[str] = None, timeout: int = REMOTE_MODEL_TIMEOUT_SECONDS) -> str:
+        """Run Codex with request spacing and retry on rate limits."""
+        last_error: Optional[Exception] = None
+        with _CODEX_CALL_LOCK:
+            for attempt in range(self._codex_max_retries + 1):
+                self._wait_for_codex_slot()
+                try:
+                    result = self._run_codex_once(prompt, instructions, timeout)
+                    self._mark_codex_call()
+                    return result
+                except ModelGenerationError:
+                    self._mark_codex_call()
+                    raise
+                except Exception as e:
+                    self._mark_codex_call()
+                    last_error = e
+                    if not _is_codex_rate_limit(str(e)) or attempt >= self._codex_max_retries:
+                        raise
+                    backoff = min(60.0, max(2.0, (2 ** attempt) * 2.0))
+                    logger.warning(
+                        "Codex rate limit on attempt %s/%s; waiting %.1fs before retry: %s",
+                        attempt + 1,
+                        self._codex_max_retries + 1,
+                        backoff,
+                        e,
+                    )
+                    time.sleep(backoff)
+        raise last_error or RuntimeError("Codex rate-limit retries exhausted")
+
     def generate(
         self,
         prompt: str,
@@ -694,12 +908,13 @@ class DualEngine:
         - Mode 'agy_only': Strictly uses Antigravity (agy) and raises a model error on failure.
         - Modes 'grok_low', 'grok_medium', and 'grok_high': Strictly use Grok
           with the selected reasoning effort and raise a model error on failure.
+        - Mode 'codex_only': Strictly uses OpenAI Codex and raises a model error on failure.
 
         Returns:
             (response_text, engine_used_description)
         """
         # Ensure status is checked so _fm_restricted is set without wasting 8s on every call
-        if mode not in {"agy_only", *GROK_MODES} and self._fm_restricted is None:
+        if mode not in {"agy_only", *GROK_MODES, *CODEX_MODES} and self._fm_restricted is None:
             self.check_status()
 
         if mode == "first_local_then_agy":
@@ -778,11 +993,20 @@ class DualEngine:
                 raise ModelGenerationError(
                     f"Grok model failed: {e}. Please try again when the model is ready. No script was generated."
                 ) from e
-            except Exception as e:
-                logger.error(f"Antigravity inference failed: {e}")
+
+        elif mode in CODEX_MODES:
+            try:
+                output = self.run_codex(prompt, instructions, timeout=min(timeout, REMOTE_MODEL_TIMEOUT_SECONDS))
+                return output, "💻 Codex"
+            except ModelGenerationError as e:
                 raise ModelGenerationError(
-                    f"Antigravity model failed: {e}. "
-                    "Please try again when the model is ready. No script was generated."
+                    f"Codex model failed: {e}. Please try again when the model is ready. No script was generated.",
+                    partial_output=e.partial_output,
+                ) from e
+            except Exception as e:
+                logger.error(f"Codex inference failed: {e}")
+                raise ModelGenerationError(
+                    f"Codex model failed: {e}. Please try again when the model is ready. No script was generated."
                 ) from e
 
         else:

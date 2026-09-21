@@ -54,6 +54,12 @@
       "display_name": "Local Apple FM Only (Strict On-Device)",
       "path": "/usr/bin/fm",
       "description": "Uses only the private on-device model; shows an error if it is unavailable"
+    },
+    "codex_only": {
+      "key": "codex_only",
+      "display_name": "Codex Only (Verified)",
+      "path": "/opt/homebrew/bin/codex",
+      "description": "OpenAI Codex CLI execution with verified access; no silent fallback"
     }
   },
   "durations": {
