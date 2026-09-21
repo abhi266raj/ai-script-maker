@@ -36,6 +36,7 @@ def test_1_configuration_files():
     assert "grok_low" in pcfg["engines"]["grok_low"]["key"]
     assert "grok_medium" in pcfg["engines"]["grok_medium"]["key"]
     assert "grok_high" in pcfg["engines"]["grok_high"]["key"]
+    assert "codex_only" in pcfg["engines"]["codex_only"]["key"]
 
     cfg = load_config()
     assert "default_engine" in cfg

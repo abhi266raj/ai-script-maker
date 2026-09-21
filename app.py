@@ -788,6 +788,7 @@ with col_settings:
             engine_options = {
                 "Local First Then Antigravity": "first_local_then_agy",
                 "Antigravity": "agy_only",
+                "Codex": "codex_only",
                 "Grok Low": "grok_low",
                 "Grok Medium": "grok_medium",
                 "Grok High": "grok_high",
@@ -964,6 +965,7 @@ with col_output:
         engine_labels = {
             "fm_only": "On-device Apple Foundation Model",
             "agy_only": "Antigravity",
+            "codex_only": "Codex",
             "grok_low": "Grok Low",
             "grok_medium": "Grok Medium",
             "grok_high": "Grok High",
