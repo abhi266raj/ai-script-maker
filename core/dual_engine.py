@@ -120,16 +120,27 @@ _EXTRA_SEARCH_PATHS = [
 ]
 
 
-def _get_subprocess_env() -> Dict[str, str]:
-    """Return environment dict with an augmented PATH so tools like node/codex succeed."""
-    env = dict(os.environ)
-    current_path = env.get("PATH", "")
+def _augment_process_path() -> None:
+    """Ensure os.environ['PATH'] contains standard and Homebrew directories."""
+    current_path = os.environ.get("PATH", "")
     dirs = [d for d in current_path.split(os.pathsep) if d]
+    changed = False
     for p in _EXTRA_SEARCH_PATHS:
         if p not in dirs and os.path.isdir(p):
             dirs.append(p)
-    env["PATH"] = os.pathsep.join(dirs)
-    return env
+            changed = True
+    if changed:
+        os.environ["PATH"] = os.pathsep.join(dirs)
+
+
+# Ensure os.environ is augmented immediately upon module import
+_augment_process_path()
+
+
+def _get_subprocess_env() -> Dict[str, str]:
+    """Return environment dict with an augmented PATH so tools like node/codex succeed."""
+    _augment_process_path()
+    return dict(os.environ)
 
 
 def _resolve_binary(binary_name: str, fallback_path: str) -> str:
