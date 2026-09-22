@@ -105,6 +105,42 @@ _GROK_LAST_CALL = 0.0
 _CODEX_CALL_LOCK = threading.Lock()
 _CODEX_LAST_CALL = 0.0
 
+# Fallback path directories commonly used on macOS (Homebrew on Apple Silicon/Intel,
+# system paths, and standard locations). Ensures node, agy, grok, codex, etc. work
+# even when launched from a minimal .app environment.
+_EXTRA_SEARCH_PATHS = [
+    "/opt/homebrew/bin",
+    "/opt/homebrew/sbin",
+    "/usr/local/bin",
+    "/usr/bin",
+    "/bin",
+    "/usr/sbin",
+    "/sbin",
+    os.path.expanduser("~/.gemini/antigravity-cli/bin"),
+]
+
+
+def _get_subprocess_env() -> Dict[str, str]:
+    """Return environment dict with an augmented PATH so tools like node/codex succeed."""
+    env = dict(os.environ)
+    current_path = env.get("PATH", "")
+    dirs = [d for d in current_path.split(os.pathsep) if d]
+    for p in _EXTRA_SEARCH_PATHS:
+        if p not in dirs and os.path.isdir(p):
+            dirs.append(p)
+    env["PATH"] = os.pathsep.join(dirs)
+    return env
+
+
+def _resolve_binary(binary_name: str, fallback_path: str) -> str:
+    """Find binary respecting system and standard Homebrew/CLI paths."""
+    resolved = shutil.which(binary_name, path=os.pathsep.join(_EXTRA_SEARCH_PATHS + [os.environ.get("PATH", "")]))
+    if resolved:
+        return resolved
+    if os.path.exists(fallback_path):
+        return fallback_path
+    return fallback_path
+
 
 
 def _compact_local_text(text: Optional[str], limit: int) -> Optional[str]:
@@ -365,10 +401,10 @@ class DualEngine:
         grok_bin: Optional[str] = None,
         codex_bin: Optional[str] = None,
     ):
-        self.fm_bin = fm_bin or shutil.which("fm") or "/usr/bin/fm"
-        self.agy_bin = agy_bin or shutil.which("agy") or "/opt/homebrew/bin/agy"
-        self.grok_bin = grok_bin or shutil.which("grok") or "/opt/homebrew/bin/grok"
-        self.codex_bin = codex_bin or shutil.which("codex") or "/opt/homebrew/bin/codex"
+        self.fm_bin = fm_bin or _resolve_binary("fm", "/usr/bin/fm")
+        self.agy_bin = agy_bin or _resolve_binary("agy", "/opt/homebrew/bin/agy")
+        self.grok_bin = grok_bin or _resolve_binary("grok", "/opt/homebrew/bin/grok")
+        self.codex_bin = codex_bin or _resolve_binary("codex", "/opt/homebrew/bin/codex")
         self._fm_restricted: Optional[bool] = None
         self._agy_verified: Optional[bool] = None
         self._grok_verified: Optional[bool] = None
@@ -402,7 +438,8 @@ class DualEngine:
         }
 
         # Check Antigravity AGY first
-        if shutil.which(self.agy_bin) or os.path.exists(self.agy_bin):
+        search_path = os.pathsep.join(_EXTRA_SEARCH_PATHS + [os.environ.get("PATH", "")])
+        if shutil.which(self.agy_bin, path=search_path) or os.path.exists(self.agy_bin):
             status["agy"]["available"] = True
             status["agy"]["path"] = self.agy_bin
             status["agy"]["message"] = "Antigravity CLI found; service and quota are checked before generation"
@@ -410,21 +447,21 @@ class DualEngine:
 
         # Check the Grok CLI. Authentication/model access is validated by
         # `grok models` only when Grok is selected, keeping other modes fast.
-        if shutil.which(self.grok_bin) or os.path.exists(self.grok_bin):
+        if shutil.which(self.grok_bin, path=search_path) or os.path.exists(self.grok_bin):
             status["grok"]["available"] = True
             status["grok"]["path"] = self.grok_bin
             status["grok"]["message"] = "Grok CLI found; login and model access are checked before generation"
             self._grok_verified = True
 
         # Check the Codex CLI
-        if shutil.which(self.codex_bin) or os.path.exists(self.codex_bin):
+        if shutil.which(self.codex_bin, path=search_path) or os.path.exists(self.codex_bin):
             status["codex"]["available"] = True
             status["codex"]["path"] = self.codex_bin
             status["codex"]["message"] = "Codex CLI found; login and access are verified before generation"
             self._codex_verified = True
 
         # Check Local Apple FM
-        if check_fm and (shutil.which(self.fm_bin) or os.path.exists(self.fm_bin)):
+        if check_fm and (shutil.which(self.fm_bin, path=search_path) or os.path.exists(self.fm_bin)):
             status["fm"]["path"] = self.fm_bin
             if self._fm_restricted is True:
                 status["fm"]["available"] = False
@@ -440,6 +477,7 @@ class DualEngine:
                         text=True,
                         timeout=8.0,
                         stdin=subprocess.DEVNULL,
+                        env=_get_subprocess_env(),
                     )
                     output = probe.stdout.strip()
                     err_msg = probe.stderr.strip()
@@ -478,6 +516,7 @@ class DualEngine:
                 text=True,
                 timeout=15.0,
                 stdin=subprocess.DEVNULL,
+                env=_get_subprocess_env(),
             )
             output = probe.stdout.strip()
             err = probe.stderr.strip()
@@ -528,6 +567,7 @@ class DualEngine:
                 text=True,
                 timeout=12.0,
                 stdin=subprocess.DEVNULL,
+                env=_get_subprocess_env(),
             )
             output = probe.stdout.strip()
             err = probe.stderr.strip()
@@ -629,6 +669,7 @@ class DualEngine:
                 text=True,
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
+                env=_get_subprocess_env(),
             )
         except subprocess.TimeoutExpired as e:
             partial = e.stdout or ""
@@ -670,6 +711,7 @@ class DualEngine:
                 text=True,
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
+                env=_get_subprocess_env(),
             )
         except subprocess.TimeoutExpired as e:
             partial = e.stdout or ""
@@ -745,6 +787,7 @@ class DualEngine:
                 text=True,
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
+                env=_get_subprocess_env(),
             )
         except subprocess.TimeoutExpired as e:
             partial = _extract_grok_stream_text(e.stdout or "")
@@ -833,6 +876,7 @@ class DualEngine:
                 text=True,
                 timeout=timeout,
                 stdin=subprocess.DEVNULL,
+                env=_get_subprocess_env(),
             )
         except subprocess.TimeoutExpired as e:
             partial = _extract_codex_stream_text(e.stdout or "")

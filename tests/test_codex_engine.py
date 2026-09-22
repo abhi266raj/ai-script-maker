@@ -59,6 +59,28 @@ class CodexEngineTests(unittest.TestCase):
         self.assertEqual(out, "HELLO_FROM_CODEX")
         self.assertIn("Codex", desc)
 
+    def test_subprocess_env_includes_homebrew_paths(self):
+        from core.dual_engine import _get_subprocess_env
+        with patch.dict("os.environ", {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, clear=True):
+            env = _get_subprocess_env()
+            path_val = env.get("PATH", "")
+            self.assertIn("/opt/homebrew/bin", path_val)
+            self.assertIn("/usr/bin", path_val)
+
+    def test_codex_run_passes_augmented_env_to_subprocess(self):
+        engine = DualEngine(codex_bin="/opt/homebrew/bin/codex")
+        with patch.dict("os.environ", {"PATH": "/usr/bin:/bin"}, clear=True):
+            with patch("core.dual_engine.subprocess.run") as mock_run:
+                mock_run.return_value.returncode = 0
+                mock_run.return_value.stdout = '{"type":"item.completed","item":{"type":"agent_message","text":"RESULT"}}\n'
+                mock_run.return_value.stderr = ""
+                res = engine._run_codex_once("hello", None, 30)
+                self.assertEqual(res, "RESULT")
+                self.assertTrue(mock_run.called)
+                _, kwargs = mock_run.call_args
+                self.assertIn("env", kwargs)
+                self.assertIn("/opt/homebrew/bin", kwargs["env"]["PATH"])
+
 
 if __name__ == "__main__":
     unittest.main()
