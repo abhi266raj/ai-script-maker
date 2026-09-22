@@ -1,5 +1,4 @@
-"""Codex execution, rate-limit backoff, and parsing unit tests."""
-
+import os
 import unittest
 from unittest.mock import patch
 
@@ -66,6 +65,12 @@ class CodexEngineTests(unittest.TestCase):
             path_val = env.get("PATH", "")
             self.assertIn("/opt/homebrew/bin", path_val)
             self.assertIn("/usr/bin", path_val)
+
+    def test_augment_process_path_modifies_os_environ(self):
+        from core.dual_engine import _augment_process_path
+        with patch.dict("os.environ", {"PATH": "/usr/bin:/bin:/usr/sbin:/sbin"}, clear=True):
+            _augment_process_path()
+            self.assertIn("/opt/homebrew/bin", os.environ.get("PATH", ""))
 
     def test_codex_run_passes_augmented_env_to_subprocess(self):
         engine = DualEngine(codex_bin="/opt/homebrew/bin/codex")
