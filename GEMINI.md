@@ -19,6 +19,7 @@
   # Create and switch to a new feature branch
   git checkout -b feature/<descriptive-feature-name>
   ```
+- **DO NOT run unit tests automatically upon branching from `main` unless explicitly requested by the user.** Save test runs for feature verification and merging.
 - Naming conventions for branches:
   - `feature/<feature-name>` for new capabilities, prompts, or agents.
   - `fix/<bug-name>` for bug fixes and patches.
@@ -27,7 +28,7 @@
 ### 3. DEVELOPMENT & TESTING IN FEATURE BRANCH
 - All edits, file creations, and iterations must take place within the active feature branch.
 - Commits are made exclusively on the feature branch.
-- Before considering the feature complete, run and verify the test suite:
+- Before considering the feature complete and preparing to merge, run and verify the test suite:
   ```bash
   .venv/bin/python3 -m unittest discover tests
   ```
