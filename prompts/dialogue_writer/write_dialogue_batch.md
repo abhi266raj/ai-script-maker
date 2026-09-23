@@ -27,13 +27,14 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
 {items_desc}
 
 # CORE RULES & GUIDELINES
-1. THE STORY MUST MAKE COMPLETE LOGICAL SENSE:
+1. THE STORY MUST MAKE COMPLETE LOGICAL SENSE & COVER ALL IMPORTANT NEWS POINTS:
    - Anyone watching this reel must immediately understand WHAT happened, WHO is involved, and WHERE it took place.
-   - Do NOT talk in vague riddles. Name the actual topic, key people, and places clearly in natural Hindi.
+   - Do NOT talk in vague riddles. Name the actual topic, key verified facts, figures, and places clearly in natural Hindi.
+   - FOR FUNNY / COMIC / SATIRICAL SCRIPTS: Weave humor DIRECTLY out of the real news points! Exaggerate relatable reactions, compare absurd everyday realities (e.g. rent vs groceries, bureaucratic quirks, jugaad), but ensure every core fact from the news is clearly delivered.
 2. CONVERSATIONAL CONTINUITY & FLOW:
    - Characters must talk DIRECTLY to each other with natural back-and-forth cadence.
    - Beat 2 MUST directly answer, counter, or react to what was said in Beat 1!
-   - The final beat MUST deliver a logical resolution, witty punchline, or satisfying takeaway that ties the entire story together.
+   - The final beat MUST deliver a logical resolution, witty punchline, or satisfying takeaway that ties the entire story and core facts together.
    - NEVER make disconnected jokes or non-sequitur remarks. Humor or drama MUST come from actual news facts!
    - NEVER use meaningless generic filler lines.
 3. NATURAL SPOKEN CADENCE:
