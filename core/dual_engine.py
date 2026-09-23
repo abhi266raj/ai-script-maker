@@ -326,8 +326,22 @@ def _extract_grok_stream_text(raw: str) -> str:
     return "".join(text_parts).strip() or final_result.strip()
 
 
+def _is_codex_hard_quota(details: str) -> bool:
+    """True when Codex error indicates permanent account/monthly quota exhaustion rather than a short transient rate limit."""
+    lower = (details or "").lower()
+    return any(marker in lower for marker in (
+        "hit your usage limit",
+        "try again at",
+        "free trial of plus",
+        "insufficient_quota",
+        "upgrade your plan",
+    ))
+
+
 def _is_codex_rate_limit(details: str) -> bool:
     """True when Codex/CLI output indicates a transient quota or 429."""
+    if _is_codex_hard_quota(details):
+        return False
     lower = (details or "").lower()
     return any(marker in lower for marker in CODEX_RATE_LIMIT_MARKERS)
 
@@ -935,6 +949,11 @@ class DualEngine:
                 except Exception as e:
                     self._mark_codex_call()
                     last_error = e
+                    if _is_codex_hard_quota(str(e)):
+                        raise ModelGenerationError(
+                            f"Codex quota limit reached: {e}. "
+                            "Please try again when your quota resets, or switch engine to Antigravity."
+                        ) from e
                     if not _is_codex_rate_limit(str(e)) or attempt >= self._codex_max_retries:
                         raise
                     backoff = min(60.0, max(2.0, (2 ** attempt) * 2.0))

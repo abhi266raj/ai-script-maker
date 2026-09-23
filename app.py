@@ -2,7 +2,10 @@
 
 import re
 import streamlit as st
+import sys
 import importlib
+if "core.dual_engine" in sys.modules:
+    importlib.reload(sys.modules["core.dual_engine"])
 from core.dual_engine import dual_engine
 from core.metrics import get_duration_budget
 from core.prompt_matrix import build_tailored_instruction
