@@ -133,49 +133,20 @@ class NewsValidationAgent(BaseAgent):
         if not facts:
             facts = [f"Core news claim examined: {news_input[:80]}..."]
 
-        # Intelligent Fallback Extraction for Physical Props, Locations, and Actions
-        combined_text = f"{news_input} {scenario}".lower()
-        if not props:
-            if any(k in combined_text for k in ["qr", "कोड", "स्कैन", "scan", "poster", "पोस्टर"]):
-                props = ["Posters on brick wall", "High-contrast printed QR Code", "Smartphone with camera viewfinder", "Cutting chai glass"]
-            elif any(k in combined_text for k in ["court", "सुप्रीम कोर्ट", "जज", "कानून", "police"]):
-                props = ["Official case brief file", "Red wax seal stamp", "Supreme court pillars", "Microphones and press cameras"]
-            elif any(k in combined_text for k in ["करोड़", "scam", "बैंक", "रुपये", "money", "tax"]):
-                props = ["Digital market stock tickers", "Financial audit reports", "Tablet showing bank transaction ledger"]
-            elif any(k in combined_text for k in ["ai", "tech", "robot", "apple", "google", "app"]):
-                props = ["Modern smartphone interface", "Glowing server racks", "AI neural graph visualization"]
-            elif any(k in combined_text for k in ["ट्रेन", "रेलवे", "मेट्रो", "road", "traffic"]):
-                props = ["High-speed modern train platform", "Digital passenger display", "Smartphone transit ticket"]
-            else:
-                props = ["Physical newspaper headline", "Smartphone news app", "Microphone on location"]
+        # Strip verification-process narration from the summary: only usable
+        # facts belong in the output (e.g. "remain insufficiently verified
+        # from the supplied excerpts").
+        summary = re.sub(r"[^.]*insufficiently verified[^.]*\.\s*", "", summary, flags=re.IGNORECASE)
+        summary = re.sub(r"[^.]*supplied excerpts[^.]*\.\s*", "", summary, flags=re.IGNORECASE)
+        summary = re.sub(r"[^.]*based on the (?:provided|supplied) sources[^.]*\.\s*", "", summary, flags=re.IGNORECASE)
+        summary = re.sub(r"\s{2,}", " ", summary).strip()
 
-        if not locations:
-            if any(k in combined_text for k in ["इंदौर", "indore"]):
-                locations = ["Indore street market near Rajwada", "Roadside chai tapri"]
-            elif any(k in combined_text for k in ["delhi", "दिल्ली"]):
-                locations = ["Central Delhi Rajpath area", "Supreme Court steps"]
-            elif any(k in combined_text for k in ["mumbai", "मुंबई"]):
-                locations = ["Bustling Mumbai street", "Marine Drive waterfront"]
-            elif any(k in combined_text for k in ["court", "अदालत"]):
-                locations = ["High Court forecourt", "Judicial chambers"]
-            else:
-                locations = ["Vibrant Indian urban street setting", "Roadside tea stall"]
-
-        if not actions:
-            if any(k in combined_text for k in ["qr", "कोड", "स्कैन", "scan"]):
-                actions = ["Aiming smartphone camera at QR code on wall", "Phone screen scan beep & video popup", "Crowds gathered scanning with phones"]
-            elif any(k in combined_text for k in ["court", "कानून"]):
-                actions = ["Advocate presenting sealed petition", "Inspecting legal documents under lamp", "Delivering verdict on courthouse steps"]
-            elif any(k in combined_text for k in ["करोड़", "money", "scam"]):
-                actions = ["Reviewing transaction graphs on tablet", "Pointing out irregularities on monitor", "Street reaction to price drop"]
-            else:
-                actions = ["Creator gesturing toward headline", "Over-the-shoulder phone screen reaction", "Duo sharing witty wrap-up"]
+        # No invented fallbacks for props/locations/actions: Stage 1 reports only
+        # what is real. Empty lists are fine — creative invention belongs to Stage 2
+        # and downstream consumers already guard empty lists.
 
         if not conflict:
-            if any(k in combined_text for k in ["qr", "पोहा", "poha", "poster"]):
-                conflict = "Controversial political posters plastered across the city with a QR code generating viral street curiosity and rumors of free food."
-            else:
-                conflict = f"Viral controversy surrounding {news_input[:70]}."
+            conflict = f"Viral controversy surrounding {news_input[:70]}."
 
         return NewsVerificationReport(
             is_verified=is_verified,

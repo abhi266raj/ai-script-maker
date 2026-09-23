@@ -14,7 +14,7 @@ class CharacterFinaliserAgent(BaseAgent):
     """
     Lead Character & Scene Finalisation Strategist.
     Analyzes Stage 1 news dossier and produces a rich 2X pool of grounded characters
-    and 2X pool of grounded scene locations for downstream selection.
+    and 2 freshly imagined scene locations for this story (never a generic pool).
     """
     def __init__(self):
         super().__init__(
@@ -160,16 +160,17 @@ class CharacterFinaliserAgent(BaseAgent):
         feedback: Optional[str] = None,
     ) -> Tuple[List[CharacterProfile], List[SceneSettingOption]]:
         """
-        Stage 2: Finalize 2X character profiles and 2X scene setting options.
-        Focuses strictly on grounded imagination of characters and locations.
+        Stage 2: Finalize 2X character profiles and 2 freshly imagined scene locations.
+        Locations are imagined new for each story from the verified news — never
+        picked from a generic pool, never a default tea stall.
         """
         from agents.dialogue_writer import get_character_personas
         from core.screenplay_formatter import get_character_attire
         import json
 
-        # Request 2X characters and 2X scene options
+        # Request 2X characters; exactly 2 imagined scene locations per story.
         target_char_count = max(2, character_count * 2)
-        target_scene_count = max(2, num_scenes * 2)
+        target_scene_count = 2
 
         facts_text = "\n".join([f"- {f}" for f in (verification.verified_facts if verification else [])[:4]])
         props_text = ", ".join(verification.physical_props) if (verification and verification.physical_props) else ""
@@ -220,30 +221,55 @@ class CharacterFinaliserAgent(BaseAgent):
         except Exception:
             raw_output = ""
 
+        # --- Robust parsing: normalize common model formatting quirks first ---
+        norm_output = raw_output or ""
+        # Models often emit markdown bold/italics (e.g. **Name:**) — strip them.
+        norm_output = norm_output.replace("**", "").replace("__", "")
+        # Strip markdown heading markers at line starts ("### CHARACTER 1:" -> "CHARACTER 1:")
+        norm_output = re.sub(r"(?m)^\s*#{1,6}\s*", "", norm_output)
+
+        # Split the output into a characters region and a scenes region so that a
+        # "scene 2" mention inside a character description can never corrupt parsing.
+        scenes_header = re.search(r"(?im)^\s*SCENES\b.*$", norm_output)
+        if scenes_header:
+            chars_region = norm_output[:scenes_header.start()]
+            scenes_region = norm_output[scenes_header.end():]
+        else:
+            chars_region, scenes_region = norm_output, norm_output
+
+        def _clean_field_line(line: str) -> str:
+            """Remove list/emphasis markers so '• **Name:** X' parses like 'Name: X'."""
+            ls = line.strip()
+            ls = re.sub(r"^[\s>*•\-–—]+", "", ls)  # bullets / quote markers
+            ls = re.sub(r"^\d+[.)]\s*", "", ls)     # '1.' / '1)' prefixes
+            return ls.strip("*_`").strip()
+
+        def _field_value(ls: str) -> str:
+            return ls.split(":", 1)[-1].strip("[] \"'*").strip()
+
         # Parse Characters
         characters: List[CharacterProfile] = []
-        char_blocks = re.split(r"CHARACTER\s*\d+\s*:", raw_output, flags=re.IGNORECASE)
+        char_blocks = re.split(r"CHARACTER\s*\d+\s*[:\-–—]", chars_region, flags=re.IGNORECASE)
         if len(char_blocks) > 1:
             for b in char_blocks[1:]:
-                # Stop parsing if we hit SCENES
-                body = re.split(r"(?:SCENES|SCENE\s*\d+\s*:)", b, flags=re.IGNORECASE)[0]
                 name = ""
                 job = ""
                 attire = ""
                 emotion = ""
                 rel = ""
-                for line in body.split("\n"):
-                    ls = line.strip()
-                    if ls.lower().startswith("name:"):
-                        name = ls.split(":", 1)[-1].strip("[] \"'*")
-                    elif ls.lower().startswith("job:") or ls.lower().startswith("role:"):
-                        job = ls.split(":", 1)[-1].strip("[] \"'*")
-                    elif ls.lower().startswith("attire:") or ls.lower().startswith("clothing:"):
-                        attire = ls.split(":", 1)[-1].strip("[] \"'*")
-                    elif ls.lower().startswith("emotion:") or ls.lower().startswith("stance:"):
-                        emotion = ls.split(":", 1)[-1].strip("[] \"'*")
-                    elif ls.lower().startswith("relationship:"):
-                        rel = ls.split(":", 1)[-1].strip("[] \"'*")
+                for line in b.split("\n"):
+                    ls = _clean_field_line(line)
+                    low = ls.lower()
+                    if low.startswith("name:"):
+                        name = _field_value(ls)
+                    elif low.startswith("job:") or low.startswith("role:"):
+                        job = _field_value(ls)
+                    elif low.startswith("attire:") or low.startswith("clothing:") or low.startswith("appearance:"):
+                        attire = _field_value(ls)
+                    elif low.startswith("emotion:") or low.startswith("stance:") or low.startswith("attitude:"):
+                        emotion = _field_value(ls)
+                    elif low.startswith("relationship:") or low.startswith("relation:") or low.startswith("dynamic:"):
+                        rel = _field_value(ls)
                 if name:
                     characters.append(CharacterProfile(
                         name=name,
@@ -255,7 +281,7 @@ class CharacterFinaliserAgent(BaseAgent):
 
         # Parse Scene Locations
         scenes: List[SceneSettingOption] = []
-        scene_blocks = re.split(r"SCENE\s*(\d+)\s*:", raw_output, flags=re.IGNORECASE)
+        scene_blocks = re.split(r"SCENE\s*(\d+)\s*[:\-–—]", scenes_region, flags=re.IGNORECASE)
         if len(scene_blocks) > 1:
             for i in range(1, len(scene_blocks), 2):
                 s_num = int(scene_blocks[i])
@@ -265,16 +291,17 @@ class CharacterFinaliserAgent(BaseAgent):
                 light = ""
                 props_list: List[str] = []
                 for line in s_body.split("\n"):
-                    ls = line.strip()
-                    if ls.lower().startswith("location:"):
-                        loc_name = ls.split(":", 1)[-1].strip("[] \"'*")
-                    elif ls.lower().startswith("atmosphere:") or ls.lower().startswith("setting:"):
-                        atmos = ls.split(":", 1)[-1].strip("[] \"'*")
-                    elif ls.lower().startswith("lighting:") or ls.lower().startswith("mood:"):
-                        light = ls.split(":", 1)[-1].strip("[] \"'*")
-                    elif ls.lower().startswith("props:"):
-                        props_raw = ls.split(":", 1)[-1].strip("[] \"'*")
-                        props_list = [p.strip() for p in props_raw.split(",") if p.strip()]
+                    ls = _clean_field_line(line)
+                    low = ls.lower()
+                    if low.startswith("location:"):
+                        loc_name = _field_value(ls)
+                    elif low.startswith("atmosphere:") or low.startswith("setting:"):
+                        atmos = _field_value(ls)
+                    elif low.startswith("lighting:") or low.startswith("mood:"):
+                        light = _field_value(ls)
+                    elif low.startswith("props:"):
+                        props_raw = _field_value(ls)
+                        props_list = [p.strip(" *") for p in props_raw.split(",") if p.strip(" *")]
 
                 if loc_name or atmos:
                     scenes.append(SceneSettingOption(
@@ -311,26 +338,77 @@ class CharacterFinaliserAgent(BaseAgent):
                     ))
                     existing_names.add(clean_p.lower())
 
-        # Fallback scene options if LLM returned insufficient scenes
+        # Fallback scene options if LLM returned insufficient scenes.
+        # News-grounded: verified locations from the news first, then shuffled
+        # neutral generic templates as a last resort. No tea-stall/tapri default
+        # may ever appear here — locations must be imagined per story.
         if len(scenes) < target_scene_count:
-            known_locs = (verification.key_locations if verification and verification.key_locations else [])
-            if not known_locs:
-                known_locs = [
-                    "Bustling roadside street food stall / tea tapri",
-                    "Modern executive corner office overlooking city skyline",
-                    "Cozy living room with news playing on television",
-                    "Government administrative office corridor with notice board"
-                ]
-            while len(scenes) < target_scene_count:
-                idx = len(scenes) + 1
-                base_loc = known_locs[(idx - 1) % len(known_locs)]
+            import random as _scene_random
+
+            ver_locs = [
+                l.strip() for l in (verification.key_locations if verification and verification.key_locations else [])
+                if l and l.strip()
+            ]
+            ver_props = list(verification.physical_props) if verification and verification.physical_props else []
+            seen_locs = {s.location_name.strip().lower() for s in scenes}
+            fallback_queue: List[Tuple[str, str, str, List[str]]] = []
+
+            def _queue_scene(loc: str, atmos: str, light: str, props: List[str]) -> None:
+                key = loc.strip().lower()
+                if not key or key in seen_locs:
+                    return
+                seen_locs.add(key)
+                fallback_queue.append((loc.strip(), atmos, light, props))
+
+            # 1) Highest preference: real locations verified from the news itself
+            _lighting_cycle = [
+                "Cinematic natural lighting with high dynamic contrast",
+                "Warm practical lighting with soft shadows",
+                "Bright daylight with vibrant colors",
+            ]
+            for j, loc in enumerate(ver_locs):
+                _queue_scene(
+                    loc,
+                    f"Authentic {tone} news setting \u2014 real location from this story",
+                    _lighting_cycle[j % len(_lighting_cycle)],
+                    ver_props[:3] or ["Key story props"],
+                )
+
+            # 2) Last resort: neutral generic templates, shuffled every generation.
+            # Deliberately NO tea stall / tapri template — it kept becoming the default.
+            generic_templates = [
+                ("Modern executive corner office overlooking city skyline",
+                 "Sharp professional interior", "Clean daylight through glass",
+                 ["Laptop", "Documents", "Phone"]),
+                ("Cozy living room with news playing on television",
+                 "Relaxed home discussion vibe", "Soft warm indoor light",
+                 ["Television", "Newspaper", "Tea cups"]),
+                ("Government administrative office corridor with notice board",
+                 "Bureaucratic hustle", "Cool fluorescent mixed with daylight",
+                 ["Files", "Notice board", "Stamp pad"]),
+                ("Busy local market lane with vendors and shoppers",
+                 "Crowded bazaar buzz", "Bright midday sun with shade patches",
+                 ["Baskets", "Weighing scale", "Shopping bags"]),
+                ("Neighbourhood park bench at golden hour",
+                 "Easy evening adda atmosphere", "Golden hour glow",
+                 ["Bench", "Newspaper", "Water bottle"]),
+            ]
+            _scene_random.shuffle(generic_templates)
+            for loc, atmos, light, props in generic_templates:
+                _queue_scene(loc, f"{atmos} \u2014 {tone} treatment", light, props)
+
+            idx = len(scenes) + 1
+            for loc, atmos, light, props in fallback_queue:
+                if len(scenes) >= target_scene_count:
+                    break
                 scenes.append(SceneSettingOption(
                     scene_option_number=idx,
-                    location_name=f"{base_loc} (Option {idx})",
-                    atmosphere=f"Vibrant and realistic ambient setting for {tone}",
-                    lighting_mood="Cinematic natural lighting with high dynamic contrast",
-                    props=verification.physical_props[:3] if verification and verification.physical_props else ["Key story props"],
+                    location_name=loc,
+                    atmosphere=atmos,
+                    lighting_mood=light,
+                    props=props,
                 ))
+                idx += 1
 
         return characters, scenes
 

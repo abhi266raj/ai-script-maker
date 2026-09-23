@@ -107,7 +107,14 @@ def render_prompt(prompt_path: str, default_template: Optional[str] = None, **kw
         The formatted prompt string ready for agent execution.
     """
     template = load_prompt(prompt_path, default=default_template)
-    return _safe_formatter.format(template, **kwargs)
+    rendered = _safe_formatter.format(template, **kwargs)
+    # Capture the exact input prompt when a step is being recorded (UI transparency).
+    try:
+        from core.prompt_recorder import record
+        record(prompt_path, rendered)
+    except Exception:
+        pass
+    return rendered
 
 
 def clear_prompt_cache() -> None:

@@ -249,15 +249,15 @@
     "port": 8501,
     "health_endpoint": "http://127.0.0.1:8501/_stcore/health"
   },
-  "max_retries": 5,
+  "max_retries": 3,
   "batch_count": 1,
   "selected_script_index": 0,
   "default_angle": "Funny & Relatable",
   "character_count": 3,
-  "scene_style": "Dialogue",
+  "scene_style": "Interview",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
   "source_mode": "\ud83d\udce1 Live News",
-  "selected_headline": "FSSAI starts penal action against Amazon, Swiggy, BigBasket, others"
+  "selected_headline": "Ola Electric to consider rights issue as it looks to raise fresh capital"
 }

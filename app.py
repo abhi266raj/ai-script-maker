@@ -1,6 +1,7 @@
 """Hindi Reel Studio — compact Apple-style master-detail UI."""
 
 import re
+import copy
 import streamlit as st
 import sys
 from core.dual_engine import dual_engine
@@ -30,6 +31,23 @@ ENGINE_OPTIONS = {
     "On-device": "fm_only",
 }
 ENGINE_NAMES_REV = {v: k for k, v in ENGINE_OPTIONS.items()}
+
+# Merged story source: manual topic entry plus every news feed (replaces the
+# old separate Source + Category dropdowns, which overlapped in behaviour).
+MANUAL_TOPIC_SOURCE = "✏️ Manual Topic"
+DEFAULT_STORY_SOURCE = "🇮🇳 India Top Stories & Breaking"
+STORY_SOURCES = [
+    MANUAL_TOPIC_SOURCE,
+    "🔥 India Trending & Viral",
+    DEFAULT_STORY_SOURCE,
+    "😂 Desi Quirky, Jugaad & Funny India",
+    "🏛️ Indian Politics, Elections & Governance",
+    "🪔 Indian Culture, Heritage & Festivals",
+    "🚀 India Tech, Space (ISRO) & Startups",
+    "💻 Technology & AI",
+    "🌍 World News",
+    "📈 Business & Economy",
+]
 
 
 def sanitize_visual_prompt(text: str) -> str:
@@ -526,14 +544,20 @@ if "chosen_batch_count" not in st.session_state:
     st.session_state.chosen_batch_count = app_cfg.get("batch_count", 1)
 if "chosen_max_retries" not in st.session_state:
     st.session_state.chosen_max_retries = app_cfg.get("max_retries", 5)
-if "chosen_news_cat" not in st.session_state:
-    st.session_state.chosen_news_cat = app_cfg.get("news_category", "🇮🇳 India Top Stories & Breaking")
+if "chosen_story_source" not in st.session_state:
+    # Merged Source + Category: migrate legacy separate settings once.
+    _legacy_cat = app_cfg.get("news_category", "")
+    _legacy_mode = app_cfg.get("source_mode", "")
+    if _legacy_mode == "✏️ Manual Topic":
+        st.session_state.chosen_story_source = MANUAL_TOPIC_SOURCE
+    elif _legacy_cat in STORY_SOURCES:
+        st.session_state.chosen_story_source = _legacy_cat
+    else:
+        st.session_state.chosen_story_source = app_cfg.get("story_source", DEFAULT_STORY_SOURCE)
 if "selected_script_idx" not in st.session_state:
     st.session_state.selected_script_idx = app_cfg.get("selected_script_index", 0)
 if "live_news_articles" not in st.session_state:
     st.session_state.live_news_articles = []
-if "chosen_source_mode" not in st.session_state:
-    st.session_state.chosen_source_mode = app_cfg.get("source_mode", "📡 Live News")
 if "selected_headline_title" not in st.session_state:
     st.session_state.selected_headline_title = app_cfg.get("selected_headline", "")
 if "active_story_input" not in st.session_state:
@@ -587,58 +611,24 @@ with col_settings:
         with story_refresh:
             refresh_news = st.button("Refresh", help="Refresh headlines", use_container_width=True, key="refresh_news")
         with st.container(border=True):
-            source_modes = ["📡 Live News", "🔥 Trending Topics", "✏️ Manual Topic"]
             src_lbl, src_dd = st.columns([2.5, 5.5])
             with src_lbl:
                 st.markdown('<div class="cfg-label">Source</div>', unsafe_allow_html=True)
             with src_dd:
+                _src_idx = STORY_SOURCES.index(st.session_state.chosen_story_source) if st.session_state.chosen_story_source in STORY_SOURCES else STORY_SOURCES.index(DEFAULT_STORY_SOURCE)
                 selected_source = st.selectbox(
-                    "Source Mode",
-                    source_modes,
-                    index=source_modes.index(st.session_state.chosen_source_mode) if st.session_state.chosen_source_mode in source_modes else 0,
+                    "Story Source",
+                    STORY_SOURCES,
+                    index=_src_idx,
                     label_visibility="collapsed",
-                    key="source_mode_dropdown",
+                    key="story_source_dropdown",
                 )
-                if selected_source != st.session_state.chosen_source_mode:
-                    st.session_state.chosen_source_mode = selected_source
-                    save_config("source_mode", selected_source)
-            is_feed_mode = selected_source in ("📡 Live News", "🔥 Trending Topics")
-
-            if is_feed_mode:
-                feed_categories = [
-                    "🇮🇳 India Top Stories & Breaking",
-                    "😂 Desi Quirky, Jugaad & Funny India",
-                    "🏛️ Indian Politics, Elections & Governance",
-                    "🪔 Indian Culture, Heritage & Festivals",
-                    "🚀 India Tech, Space (ISRO) & Startups",
-                    "💻 Technology & AI",
-                    "🌍 World News",
-                    "📈 Business & Economy",
-                ]
-                if selected_source == "🔥 Trending Topics":
-                    feed_categories = ["🔥 India Trending & Viral"] + feed_categories
-
-                curr_cat = st.session_state.get("chosen_news_cat", "🇮🇳 India Top Stories & Breaking")
-                cat_idx = 0
-                for idx, c in enumerate(feed_categories):
-                    if c == curr_cat or curr_cat in c or c.split()[-1] in curr_cat:
-                        cat_idx = idx
-                        break
-
-                cat_lbl, cat_dd = st.columns([2.5, 5.5])
-                with cat_lbl:
-                    st.markdown('<div class="cfg-label">Category</div>', unsafe_allow_html=True)
-                with cat_dd:
-                    selected_news_cat = st.selectbox(
-                        "News Category",
-                        feed_categories,
-                        index=cat_idx,
-                        label_visibility="collapsed",
-                        key="news_topic_dropdown",
-                    )
-                if selected_news_cat != st.session_state.get("chosen_news_cat"):
-                    st.session_state.chosen_news_cat = selected_news_cat
-                    save_config("news_category", selected_news_cat)
+                if selected_source != st.session_state.chosen_story_source:
+                    st.session_state.chosen_story_source = selected_source
+                    save_config("story_source", selected_source)
+            is_feed_mode = selected_source != MANUAL_TOPIC_SOURCE
+            # The headline fetcher dispatch below keys off this name.
+            selected_news_cat = selected_source
 
             if is_feed_mode and (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat):
                 with st.spinner("Loading headlines…"):
@@ -754,7 +744,7 @@ with col_settings:
                 "Varanasi Dev Deepawali: Millions of earthen lamps illuminate the sacred Ganga Ghats as worldwide pilgrims celebrate ancient festival of light.",
             )
             topic_key = f"topic_input_{st.session_state.get('headline_rev', 0)}"
-            if selected_source == "✏️ Manual Topic":
+            if selected_source == MANUAL_TOPIC_SOURCE:
                 news_input = st.text_input(
                     "Title",
                     value=default_story,
@@ -803,8 +793,7 @@ with col_settings:
                 for key, value in {
                     "chosen_engine_mode": reset_cfg["default_engine"], "chosen_duration": reset_cfg["default_duration"],
                     "chosen_tone": reset_cfg["default_tone"], "chosen_batch_count": reset_cfg["batch_count"],
-                    "chosen_max_retries": reset_cfg["max_retries"], "chosen_news_cat": reset_cfg["news_category"],
-                    "chosen_source_mode": reset_cfg.get("source_mode", "📡 Live News"),
+                    "chosen_max_retries": reset_cfg["max_retries"], "chosen_story_source": DEFAULT_STORY_SOURCE,
                     "selected_headline_title": reset_cfg.get("selected_headline", ""),
                     "selected_script_idx": reset_cfg["selected_script_index"],
                     "chosen_angle": reset_cfg.get("default_angle", "Funny & Relatable"), "chosen_character_count": reset_cfg.get("character_count", 3),
@@ -965,8 +954,7 @@ with col_settings:
                     st.session_state.run_scenario = instruction_text.strip()
                     st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
                     save_config("selected_headline", st.session_state.run_topic)
-                    save_config("news_category", st.session_state.chosen_news_cat)
-                    save_config("source_mode", st.session_state.chosen_source_mode)
+                    save_config("story_source", st.session_state.chosen_story_source)
                     save_config("max_retries", st.session_state.chosen_max_retries)
                     st.rerun()
             else:
@@ -1000,12 +988,176 @@ with col_settings:
                 st.session_state.run_scenario = instruction_text.strip()
                 st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
                 save_config("selected_headline", st.session_state.run_topic)
-                save_config("news_category", st.session_state.chosen_news_cat)
-                save_config("source_mode", st.session_state.chosen_source_mode)
+                save_config("story_source", st.session_state.chosen_story_source)
                 save_config("max_retries", st.session_state.chosen_max_retries)
                 st.rerun()
 
     settings_panel()
+
+
+def _render_step_output(step_num, step_state, key_prefix=""):
+    """Render the full finalized output of a completed step (steps 1-4).
+
+    Reused by the main step view and by the previous-steps history, so going
+    back (or reviewing history) always shows the complete finalized output.
+    """
+    if step_num == 1:
+        st.markdown("### 🔍 Step 1: Fact Validation & Story Dossier")
+        verif = step_state.get("verification")
+        if verif:
+            c_vf1, c_vf2 = st.columns([1, 1])
+            with c_vf1:
+                st.markdown(f"**Verification:** {'🟢 Confirmed' if verif.is_verified else '🟡 Warning'} ({verif.confidence_score}% Confidence)")
+            with c_vf2:
+                st.markdown(f"**Target Format:** {step_state['target_seconds']}s • {step_state['scene_style']}")
+            topic_headline = getattr(verif, "headline", None) or step_state.get("news_input", "")
+            if topic_headline:
+                st.markdown(f"**Headline / Topic:** {topic_headline}")
+            if getattr(verif, "verification_summary", None):
+                st.caption(f"**Verification Summary:** {verif.verification_summary}")
+            if verif.verified_facts:
+                st.markdown("**Confirmed Wire Facts:**")
+                for f in verif.verified_facts[:4]:
+                    st.markdown(f"- {f}")
+            if verif.physical_props:
+                st.markdown(f"**Physical Props:** {', '.join(verif.physical_props)}")
+            if verif.key_locations:
+                st.markdown(f"**Key Locations:** {', '.join(verif.key_locations)}")
+            if verif.core_conflict_or_irony:
+                st.markdown(f"**Core Conflict / Irony:** {verif.core_conflict_or_irony}")
+
+        if step_state.get("sub_instructions"):
+            with st.expander("👑 Generated Sub-Instructions for Upcoming Agents"):
+                for ag, sub in step_state["sub_instructions"].items():
+                    st.markdown(f"**{ag.replace('_', ' ').title()}:**")
+                    st.caption(sub)
+
+    elif step_num == 2:
+        st.markdown("### 🎭 Step 2: Character & Scene Finalisation")
+        chars = step_state.get("finalized_characters", [])
+        avail_chars = step_state.get("available_characters", chars)
+        scenes = step_state.get("finalized_scenes", [])
+        avail_scenes = step_state.get("available_scenes", scenes)
+
+        col_c, col_s = st.columns(2)
+        with col_c:
+            st.markdown(f"**👥 Characters Generated ({len(avail_chars)} Options - 2X Pool):**")
+            for c_idx, ch in enumerate(avail_chars, 1):
+                is_primary = "⭐ Primary" if c_idx <= len(chars) else "💡 Alternative"
+                st.markdown(f"• **{ch.name}** (`{ch.role_or_job}`) — *{is_primary}*")
+                if ch.attire:
+                    st.caption(f"👗 Attire: {ch.attire}")
+                if ch.emotional_stance:
+                    st.caption(f"💥 Stance: {ch.emotional_stance}")
+                if ch.relationship_dynamic:
+                    st.caption(f"🤝 Dynamic: {ch.relationship_dynamic}")
+
+        with col_s:
+            st.markdown(f"**📍 Scene Locations Imagined ({len(avail_scenes)} for this story):**")
+            for s_idx, sc in enumerate(avail_scenes, 1):
+                is_primary = "⭐ Primary" if s_idx <= len(scenes) else "💡 Alternative"
+                st.markdown(f"• **Option {sc.scene_option_number}: {sc.location_name}** — *{is_primary}*")
+                if sc.atmosphere:
+                    st.caption(f"🌆 Atmosphere: {sc.atmosphere}")
+                if sc.lighting_mood:
+                    st.caption(f"💡 Lighting: {sc.lighting_mood}")
+                if sc.props:
+                    st.caption(f"📦 Props: {', '.join(sc.props)}")
+
+    elif step_num == 3:
+        st.markdown("### ✍️ Step 3: Spoken Hindi Dialogue & Timing Calibration")
+        _used_chars_3 = step_state.get("finalized_characters") or []
+        _used_scenes_3 = step_state.get("finalized_scenes") or []
+        if _used_chars_3 or _used_scenes_3:
+            with st.expander("🎭 Characters & 📍 Scenes from Step 2 driving this dialogue", expanded=False):
+                if _used_chars_3:
+                    st.markdown("**Characters in use:**")
+                    for _ch3 in _used_chars_3:
+                        st.markdown(f"• **{_ch3.name}** (`{_ch3.role_or_job}`)")
+                if _used_scenes_3:
+                    st.markdown("**Scene locations in use:**")
+                    for _sc3 in _used_scenes_3:
+                        st.markdown(f"• **{_sc3.location_name}**")
+        dialogues = step_state.get("script_dialogues", [])
+        _timing_rows = []
+        for d_idx, d in enumerate(dialogues, 1):
+            if d.get("scene_lines"):
+                for sl in d["scene_lines"]:
+                    _ts = sl.get('timestamp', '')
+                    _ts_txt = f" [{_ts}]" if _ts else ""
+                    st.markdown(f"**BEAT {sl.get('scene_number', '')}**{_ts_txt} — **{sl.get('character', 'Character')}:** “{sl.get('dialogue', '')}”")
+                    if sl.get('action'):
+                        st.caption(f"🎬 {sl.get('action')}")
+                    if sl.get('sfx'):
+                        st.caption(f"🔊 {sl.get('sfx')}")
+                    if sl.get('overlay'):
+                        st.caption(f"🔖 Overlay: {sl.get('overlay')}")
+            else:
+                st.markdown(f"“{d.get('narration', '')}”")
+            if d.get("retry_notes"):
+                for rn in d["retry_notes"]:
+                    st.caption(rn)
+            # Internal telemetry: kept OUT of the script output, one click away.
+            _p_badge = "🟢 In Duration Budget" if not d.get("is_over_budget") else "🔴 Over Budget"
+            _timing_rows.append(
+                f"Script {d_idx}: {d.get('w_cnt', '?')} spoken words "
+                f"(recommended ~{d.get('recommended_words', '?')}w, max {d.get('max_words', '?')}w) • {_p_badge}"
+            )
+        if any(d.get("is_over_budget") for d in dialogues):
+            st.caption("⚠️ A script exceeded the duration word budget — see timing details.")
+        if _timing_rows:
+            with st.expander("⏱️ Timing telemetry (internal details)", expanded=False):
+                for _row in _timing_rows:
+                    st.caption(_row)
+
+    elif step_num == 4:
+        st.markdown("### 🎬 Step 4: Scene Storyboards & 9:16 Video Prompts")
+        _used_chars_4 = step_state.get("finalized_characters") or []
+        _used_scenes_4 = step_state.get("finalized_scenes") or []
+        if _used_chars_4 or _used_scenes_4:
+            with st.expander("🎭 Characters & 📍 Scenes from Step 2 driving this storyboard", expanded=False):
+                if _used_chars_4:
+                    st.markdown("**Characters in use:**")
+                    for _ch4 in _used_chars_4:
+                        st.markdown(f"• **{_ch4.name}** (`{_ch4.role_or_job}`)")
+                if _used_scenes_4:
+                    st.markdown("**Scene locations in use:**")
+                    for _sc4 in _used_scenes_4:
+                        st.markdown(f"• **{_sc4.location_name}**")
+        scripts = step_state.get("scripts", [])
+        if scripts:
+            s0 = scripts[0]
+            v_verif = getattr(s0, "video_verification", None)
+            if v_verif:
+                st.caption(f"Feasibility Score: {v_verif.feasibility_score}% • Continuity: {v_verif.temporal_consistency}")
+            for sc in s0.scenes:
+                st.markdown(f"**BEAT {sc.scene_number}** [{sc.timestamp}] — **{sc.character}**")
+                st.markdown(f"**🎬 Action:** {clean_beat_action(sc.visual_b_roll)}")
+                if sc.on_screen_text:
+                    st.caption(f"🔖 Overlay: {sc.on_screen_text}")
+                if sc.audio_sfx:
+                    st.caption(f"🔊 SFX: {sc.audio_sfx}")
+                if sc.video_prompt:
+                    st.text_area("Veo 9:16 Cinematic Prompt", value=sc.video_prompt.visual_prompt_ai, height=65, disabled=True, key=f"{key_prefix}step4_vp_view_{sc.scene_number}")
+
+
+def _render_input_prompts(step_state, key_prefix=""):
+    """Show the exact input prompt(s) sent to the AI for a completed step."""
+    prompts = step_state.get("input_prompts") or []
+    if not prompts:
+        return
+    with st.expander(f"🔍 View Input Prompt sent to AI ({len(prompts)})", expanded=False):
+        for _pi, _p in enumerate(prompts, 1):
+            _tmpl = _p.get("template", "")
+            _ptxt = _p.get("prompt", "")
+            _label = f"📝 Prompt {_pi}: {_tmpl}" if _tmpl else f"📝 Prompt {_pi}"
+            with st.expander(_label, expanded=(len(prompts) == 1)):
+                _nlines = _ptxt.count("\n") + 1
+                _h = max(140, min(560, 40 + _nlines * 15))
+                st.text_area(
+                    "Input prompt", value=_ptxt, height=_h, disabled=True,
+                    key=f"{key_prefix}input_prompt_{_pi}", label_visibility="collapsed",
+                )
 
 with col_output:
     st.markdown('<div class="ios-section-label">Preview</div>', unsafe_allow_html=True)
@@ -1142,13 +1294,24 @@ with col_output:
             )
         if st.session_state.get("stepwise_active"):
             err_step = failure.get("step", st.session_state.get("stepwise_current_step", 1))
-            st.caption(f"Failure occurred during Step {err_step}. You can change the model and retry.")
-            c_retry, c_abort = st.columns([1, 1])
+            st.caption(f"Failure occurred during Step {err_step}. You can change the model and retry, or go back to the previous stage.")
+            if err_step > 1:
+                c_retry, c_back, c_abort = st.columns([1, 1, 1])
+            else:
+                c_retry, c_abort = st.columns([1, 1])
+                c_back = None
             with c_retry:
                 if st.button(f"🔄 Retry Step {err_step}", key="retry_stepwise_step", type="primary", use_container_width=True):
                     st.session_state.generation_error = None
                     st.session_state.stepwise_run_requested = True
                     st.rerun()
+            if c_back is not None:
+                with c_back:
+                    if st.button(f"⬅️ Back to Step {err_step - 1}", key="back_stepwise_step", use_container_width=True):
+                        st.session_state.generation_error = None
+                        st.session_state.stepwise_run_requested = False
+                        st.session_state.stepwise_current_step = err_step - 1
+                        st.rerun()
             with c_abort:
                 if st.button("❌ Exit Step-Wise", key="cancel_stepwise_err", use_container_width=True):
                     st.session_state.generation_error = None
@@ -1167,8 +1330,23 @@ with col_output:
         "2. Character Finalisation",
         "3. Spoken Dialogue",
         "4. Storyboard & Video",
-        "5. Editorial Sign-Off",
+        "5. Integration & Validation",
     ]
+
+    def _stepwise_go_back(target_step: int):
+        """Go back to a completed step for fine-tuning (works on success too).
+        Restores the state snapshot taken right after that step, drops later
+        snapshots, and clears the final result so downstream stages re-run."""
+        comp = st.session_state.get("stepwise_completed_steps", {})
+        snap = comp.get(target_step)
+        if snap is not None:
+            st.session_state.stepwise_state = copy.deepcopy(snap)
+        for k in [k for k in list(comp.keys()) if k > target_step]:
+            comp.pop(k, None)
+        st.session_state.batch_result = None
+        st.session_state.generation_error = None
+        st.session_state.stepwise_run_requested = False
+        st.session_state.stepwise_current_step = target_step
 
     if st.session_state.get("stepwise_active") and not st.session_state.get("batch_result") and not st.session_state.get("generation_error"):
         step_state = st.session_state.get("stepwise_state")
@@ -1189,103 +1367,8 @@ with col_output:
 
         if step_state:
             with st.container(border=True):
-                if curr_step == 1:
-                    st.markdown("### 🔍 Step 1: Fact Validation & Story Dossier")
-                    verif = step_state.get("verification")
-                    if verif:
-                        c_vf1, c_vf2 = st.columns([1, 1])
-                        with c_vf1:
-                            st.markdown(f"**Verification:** {'🟢 Confirmed' if verif.is_verified else '🟡 Warning'} ({verif.confidence_score}% Confidence)")
-                        with c_vf2:
-                            st.markdown(f"**Target Format:** {step_state['target_seconds']}s • {step_state['scene_style']}")
-                        topic_headline = getattr(verif, "headline", None) or step_state.get("news_input", "")
-                        if topic_headline:
-                            st.markdown(f"**Headline / Topic:** {topic_headline}")
-                        if getattr(verif, "verification_summary", None):
-                            st.caption(f"**Verification Summary:** {verif.verification_summary}")
-                        if verif.verified_facts:
-                            st.markdown("**Confirmed Wire Facts:**")
-                            for f in verif.verified_facts[:4]:
-                                st.markdown(f"- {f}")
-                        if verif.physical_props:
-                            st.markdown(f"**Physical Props:** {', '.join(verif.physical_props)}")
-                        if verif.key_locations:
-                            st.markdown(f"**Key Locations:** {', '.join(verif.key_locations)}")
-                        if verif.core_conflict_or_irony:
-                            st.markdown(f"**Core Conflict / Irony:** {verif.core_conflict_or_irony}")
-
-                    if step_state.get("sub_instructions"):
-                        with st.expander("👑 Generated Sub-Instructions for Upcoming Agents"):
-                            for ag, sub in step_state["sub_instructions"].items():
-                                st.markdown(f"**{ag.replace('_', ' ').title()}:**")
-                                st.caption(sub)
-
-                elif curr_step == 2:
-                    st.markdown("### 🎭 Step 2: Character & Scene Finalisation")
-                    chars = step_state.get("finalized_characters", [])
-                    avail_chars = step_state.get("available_characters", chars)
-                    scenes = step_state.get("finalized_scenes", [])
-                    avail_scenes = step_state.get("available_scenes", scenes)
-
-                    col_c, col_s = st.columns(2)
-                    with col_c:
-                        st.markdown(f"**👥 Characters Generated ({len(avail_chars)} Options - 2X Pool):**")
-                        for c_idx, ch in enumerate(avail_chars, 1):
-                            is_primary = "⭐ Primary" if c_idx <= len(chars) else "💡 Alternative"
-                            st.markdown(f"• **{ch.name}** (`{ch.role_or_job}`) — *{is_primary}*")
-                            if ch.attire:
-                                st.caption(f"👗 Attire: {ch.attire}")
-                            if ch.emotional_stance:
-                                st.caption(f"💥 Stance: {ch.emotional_stance}")
-                            if ch.relationship_dynamic:
-                                st.caption(f"🤝 Dynamic: {ch.relationship_dynamic}")
-
-                    with col_s:
-                        st.markdown(f"**📍 Scene Locations Generated ({len(avail_scenes)} Options - 2X Pool):**")
-                        for s_idx, sc in enumerate(avail_scenes, 1):
-                            is_primary = "⭐ Primary" if s_idx <= len(scenes) else "💡 Alternative"
-                            st.markdown(f"• **Option {sc.scene_option_number}: {sc.location_name}** — *{is_primary}*")
-                            if sc.atmosphere:
-                                st.caption(f"🌆 Atmosphere: {sc.atmosphere}")
-                            if sc.lighting_mood:
-                                st.caption(f"💡 Lighting: {sc.lighting_mood}")
-                            if sc.props:
-                                st.caption(f"📦 Props: {', '.join(sc.props)}")
-
-                elif curr_step == 3:
-                    st.markdown("### ✍️ Step 3: Spoken Hindi Dialogue & Timing Calibration")
-                    dialogues = step_state.get("script_dialogues", [])
-                    for d in dialogues:
-                        p_badge = "🟢 In Duration Budget" if not d.get("is_over_budget") else "🔴 Over Budget"
-                        st.markdown(f"**Spoken Words:** {d['w_cnt']} words (Recommended ~{d['recommended_words']}w, Max {d['max_words']}w) • **{p_badge}**")
-                        if d.get("scene_lines"):
-                            for sl in d["scene_lines"]:
-                                st.markdown(f"• **{sl.get('character', 'Character')}:** “{sl.get('dialogue', '')}”")
-                        else:
-                            st.markdown(f"“{d.get('narration', '')}”")
-                        if d.get("retry_notes"):
-                            for rn in d["retry_notes"]:
-                                st.caption(rn)
-
-                elif curr_step == 4:
-                    st.markdown("### 🎬 Step 4: Scene Storyboards & 9:16 Video Prompts")
-                    scripts = step_state.get("scripts", [])
-                    if scripts:
-                        s0 = scripts[0]
-                        v_verif = getattr(s0, "video_verification", None)
-                        if v_verif:
-                            st.caption(f"Feasibility Score: {v_verif.feasibility_score}% • Continuity: {v_verif.temporal_consistency}")
-                        for sc in s0.scenes:
-                            st.markdown(f"**BEAT {sc.scene_number}** [{sc.timestamp}] — **{sc.character}**")
-                            st.markdown(f"**🎬 Action:** {clean_beat_action(sc.visual_b_roll)}")
-                            if sc.dialogue:
-                                st.markdown(f"**💬 Spoken:** “{sc.dialogue}”")
-                            if sc.on_screen_text:
-                                st.caption(f"Overlay: {sc.on_screen_text}")
-                            if sc.audio_sfx:
-                                st.caption(f"SFX: {sc.audio_sfx}")
-                            if sc.video_prompt:
-                                st.text_area("Veo 9:16 Cinematic Prompt", value=sc.video_prompt.visual_prompt_ai, height=65, disabled=True, key=f"step4_vp_view_{sc.scene_number}")
+                _render_step_output(curr_step, step_state, key_prefix="main_")
+                _render_input_prompts(step_state, key_prefix="mainp_")
 
             if curr_step > 1:
                 with st.expander(f"📜 View Previous Completed Steps (1 to {curr_step - 1})"):
@@ -1293,17 +1376,9 @@ with col_output:
                     for s_num in range(1, curr_step):
                         past_st = comp_steps.get(s_num)
                         if past_st:
-                            st.markdown(f"**Step {s_num}:** {step_names[s_num - 1]}")
-                            if s_num == 1 and past_st.get("verification"):
-                                st.caption(f"Facts verified: {len(past_st['verification'].verified_facts)} facts (Confidence: {past_st['verification'].confidence_score}%)")
-                            elif s_num == 2 and past_st.get("available_characters"):
-                                n_c = len(past_st.get("available_characters", []))
-                                n_s = len(past_st.get("available_scenes", []))
-                                st.caption(f"2X Pool Finalised: {n_c} character options • {n_s} scene location options")
-                            elif s_num == 3 and past_st.get("script_dialogues"):
-                                st.caption(f"Dialogue words: {past_st['script_dialogues'][0]['w_cnt']}w")
-                            elif s_num == 4 and past_st.get("scripts"):
-                                st.caption(f"Scenes directed: {len(past_st['scripts'][0].scenes)} scenes with AI prompts")
+                            with st.expander(f"Step {s_num}: {step_names[s_num - 1]} — full output", expanded=False):
+                                _render_step_output(s_num, past_st, key_prefix=f"hist{s_num}_")
+                                _render_input_prompts(past_st, key_prefix=f"histp{s_num}_")
 
             st.markdown('<div class="ios-section-label" style="margin-top:14px;">Next Action &amp; Refinements</div>', unsafe_allow_html=True)
             with st.container(border=True):
@@ -1349,12 +1424,19 @@ with col_output:
                         height=75,
                     )
 
-                c_proceed, c_rerun = st.columns([1.3, 1])
+                if curr_step > 1:
+                    c_back, c_proceed, c_rerun = st.columns([1, 1.3, 1])
+                    with c_back:
+                        if st.button(f"⬅️ Back to Step {curr_step - 1}", use_container_width=True, key=f"back_btn_{curr_step}"):
+                            _stepwise_go_back(curr_step - 1)
+                            st.rerun()
+                else:
+                    c_proceed, c_rerun = st.columns([1.3, 1])
                 with c_proceed:
                     if curr_step < 4:
                         proceed_label = f"Proceed to Step {curr_step + 1} ➡️"
                     else:
-                        proceed_label = "Finalize & Sign Off (Step 5) 🏁"
+                        proceed_label = "Integrate & Validate (Step 5) 🏁"
 
                     if st.button(proceed_label, type="primary", use_container_width=True, key=f"proceed_btn_{curr_step}"):
                         st.session_state.stepwise_step_model = chosen_step_engine
@@ -1376,6 +1458,13 @@ with col_output:
         res = st.session_state.batch_result
         if st.session_state.get("stepwise_active"):
             st.success("🎉 Step-Wise Reel Completed! All 5 stages verified and signed off by Chief Editor.")
+            st.caption("Want to fine-tune an earlier stage? Go back — later stages will re-run on the refined output.")
+            b_cols = st.columns(4)
+            for _bi in range(4):
+                with b_cols[_bi]:
+                    if st.button(f"⬅️ Step {_bi + 1}", key=f"back_done_{_bi + 1}", use_container_width=True):
+                        _stepwise_go_back(_bi + 1)
+                        st.rerun()
             with st.expander("🪜 Review Step-by-Step Outputs (Steps 1 to 4)"):
                 comp = st.session_state.get("stepwise_completed_steps", {})
                 step_names_history = [
@@ -1387,18 +1476,9 @@ with col_output:
                 for s_num in [1, 2, 3, 4]:
                     past_st = comp.get(s_num)
                     if past_st:
-                        st.markdown(f"**Step {s_num}: {step_names_history[s_num - 1]}**")
-                        if s_num == 1 and past_st.get("verification"):
-                            verif_obj = past_st['verification']
-                            v_hl = getattr(verif_obj, "headline", None) or past_st.get("news_input", "")
-                            st.caption(f"Verified: {v_hl} (Confidence: {verif_obj.confidence_score}%)")
-                        elif s_num == 2 and past_st.get("hooks_and_ctas"):
-                            for h, c in past_st["hooks_and_ctas"]:
-                                st.caption(f"Hook: {h} | CTA: {c}")
-                        elif s_num == 3 and past_st.get("script_dialogues"):
-                            st.caption(f"Dialogue words: {past_st['script_dialogues'][0]['w_cnt']}w")
-                        elif s_num == 4 and past_st.get("scripts"):
-                            st.caption(f"Scenes directed: {len(past_st['scripts'][0].scenes)} scenes with AI prompts")
+                        with st.expander(f"Step {s_num}: {step_names_history[s_num - 1]} — full output", expanded=False):
+                            _render_step_output(s_num, past_st, key_prefix=f"done{s_num}_")
+                            _render_input_prompts(past_st, key_prefix=f"donep{s_num}_")
         if len(res.scripts) > 1:
             sel_id = st.radio(
                 "Version",
@@ -1430,33 +1510,8 @@ with col_output:
         gate_ok = curr_script.video_verification.passed
 
 
-        ctx = extract_scene_context(curr_script)
-        scene_desc_html = (
-            f'<div style="background:#f2f2f7;border-radius:10px;padding:12px 16px;margin-bottom:12px;border:1px solid #d2d2d7;">'
-            f'<div style="font-size:0.75rem;font-weight:700;color:#0071e3;text-transform:uppercase;letter-spacing:0.04em;">🎬 Scene Description (Single Continuous Shot)</div>'
-            f'<div style="font-size:0.86rem;color:#1d1d1f;margin-top:4px;"><b>Slugline:</b> <code>{ctx["slugline"]}</code></div>'
-            f'<div style="font-size:0.86rem;color:#1d1d1f;margin-top:3px;"><b>Setting & Environment:</b> {ctx["location"]}</div>'
-            f'<div style="font-size:0.80rem;color:#636366;margin-top:2px;"><b>Camera Staging:</b> {ctx["camera_setup"]}</div>'
-            f'</div>'
-            f'<div style="background:#f8f9fa;border-radius:10px;padding:10px 16px;margin-bottom:16px;border:1px solid #e5e5ea;">'
-            f'<div style="font-size:0.75rem;font-weight:700;color:#34c759;text-transform:uppercase;letter-spacing:0.04em;">👥 Dramatis Personae</div>'
-            f'<div style="font-size:0.84rem;color:#1d1d1f;margin-top:4px;">{"<br>".join(["• " + ch for ch in ctx["characters"]])}</div>'
-            f'</div>'
-        )
-
-        script_html = f'<div class="script-preview"><div class="script-format">9:16 VERTICAL REEL | ~{curr_script.target_duration_sec} SECONDS · {curr_script.angle}</div>{scene_desc_html}'
-        for sc in curr_script.scenes:
-            act_dialogue = strip_commenting_and_cta(sc.dialogue or sc.narration_line or curr_script.narration_hindi)
-            char_clean = sanitize_character_name(sc.character)
-            clean_act = clean_beat_action(sc.visual_b_roll)
-            graphic_html = f'<div class="news-rank" style="margin-top:4px;font-size:0.75rem;">GRAPHIC OVERLAY: [{sc.on_screen_text}]</div>' if sc.on_screen_text else ''
-            sfx_html = f'<div style="font-size:0.72rem;color:#86868b;margin-top:2px;">AUDIO / SFX: {sc.audio_sfx}</div>' if sc.audio_sfx else ''
-            beat_label = f"BEAT {sc.scene_number}"
-            script_html += f'''<div class="script-scene"><div class="script-time">[T={sc.timestamp}] — {beat_label}</div><div class="script-visual"><span style="font-weight:700;color:#0071e3;">🎬 ACTION:</span> {clean_act}</div>{graphic_html}{sfx_html}<div class="script-character" style="margin-top:8px;">{char_clean.upper()}:</div><div class="script-dialogue">“{act_dialogue}”</div></div>'''
-        script_html += '</div>'
-        st.markdown(script_html, unsafe_allow_html=True)
-
-        st.markdown("### 📋 Copy Full Screenplay Content")
+        st.markdown("### 🎬 Final Screenplay")
+        st.caption("Your chosen format — 9:16 vertical reel · SCENE DETAIL · CHARACTERS & CLOTHING · sequential beats.")
         col_c1, col_c2 = st.columns([1, 1])
         with col_c1:
             include_overlays = st.checkbox("Include Text Overlay (Optional)", value=st.session_state.get("include_overlays", True), key="inc_overlays_chk", help="Toggle whether Text Overlay (Optional) lines appear in the screenplay based on user preference.")
@@ -1467,6 +1522,11 @@ with col_output:
         plain_script = format_plain_script(curr_script, include_overlays=include_overlays, include_sfx=include_sfx)
         teleprompter_text = format_teleprompter_text(curr_script)
         visual_prompts_text = format_director_prompts(curr_script)
+
+        with st.container(border=True):
+            st.markdown(pro_screenplay)
+
+        st.markdown("### 📋 Copy Full Screenplay Content")
 
         tab_screenplay, tab_teleprompter, tab_plain, tab_visuals = st.tabs([
 

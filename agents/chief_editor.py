@@ -1,5 +1,6 @@
 """Agent 8: Chief Editor & Pipeline Orchestrator Agent."""
 
+import re
 import time
 from typing import Generator, Dict, Any, List, Tuple, Optional
 from core.models import (
@@ -18,7 +19,7 @@ from core.models import (
 from agents.news_validator import news_validator
 from agents.contextual_selector import contextual_selector
 from agents.hook_strategist import hook_strategist
-from agents.dialogue_writer import dialogue_writer, get_character_personas, clean_hindi_dialogue, strip_commenting_and_cta
+from agents.dialogue_writer import dialogue_writer, get_character_personas, clean_hindi_dialogue, strip_commenting_and_cta, ScriptDialogue
 from agents.timing_auditor import timing_auditor
 from agents.scene_director import scene_director
 from agents.video_prompt_engineer import video_prompt_engineer
@@ -49,6 +50,8 @@ class ChiefEditorCoordinatorAgent:
         max_retries: int,
         budget: dict,
         sample_story: Optional[str] = None,
+        personas_override: Optional[List[str]] = None,
+        only_for: Optional[List[str]] = None,
     ) -> Dict[str, str]:
         """
         Master Agent decomposition:
@@ -56,6 +59,12 @@ class ChiefEditorCoordinatorAgent:
         for each sub-agent in the pipeline, explicitly assigning dialogue word count
         budgets, speech rates, character counts, scene styles, angles, tones,
         and optional sample story with discrepancy precedence.
+
+        Step-by-step mode: pass `only_for` to build sub-instructions for just the
+        agents of the stage that is currently running, so Stage 1 no longer
+        pre-generates every later stage's instructions in one shot. Pass
+        `personas_override` (e.g. finalized Stage-2 character names) so downstream
+        instructions reference the real cast instead of generic placeholders.
         """
         from agents.dialogue_writer import get_character_personas, get_creative_guidelines
 
@@ -63,7 +72,7 @@ class ChiefEditorCoordinatorAgent:
         min_w = budget["min_words"]
         max_w = budget["max_words"]
         scenes_cnt = budget.get("scenes", max(2, min(5, round(target_seconds / 5))))
-        personas = get_character_personas(
+        personas = personas_override or get_character_personas(
             scene_style, character_count, tone, angle,
             topic_or_script=news_topic, sample_story=sample_story
         )
@@ -72,19 +81,21 @@ class ChiefEditorCoordinatorAgent:
         sample_clause = ""
         if sample_story and sample_story.strip():
             sample_clause = (
-                f"\n⭐ SAMPLE STORY DIRECTIVE (PRECEDENCE OVER GENERAL INSTRUCTIONS):\n"
-                f"Reference Sample Story: \"{sample_story.strip()}\"\n"
-                f"Rule: If there is any discrepancy or conflict between general instructions and this sample story, "
-                f"THE SAMPLE STORY TAKES PRECEDENCE! Base the character narrative and spoken lines on this sample story.\n"
+                f"\n📌 SAMPLE EXAMPLE (style/format reference ONLY \u2014 lowest precedence):\n"
+                f"Reference Sample: \"{sample_story.strip()}\"\n"
+                f"Rule: Generate from the NEWS with your own creativity. The sample is only an example "
+                f"of tone/format \u2014 never copy its characters, plot, or lines, and never let it override "
+                f"verified facts or finalized creative decisions.\n"
             )
 
-        return {
+        all_instructions = {
             "news_validator": (
                 f"News Validation Sub-Instruction (Agent 1):\n"
                 f"- Story to Verify: {news_topic}\n"
                 f"- Task: Cross-reference live wire search feeds. Extract confirmed facts, entities, and figures.\n"
                 f"- Filter: Discard unverified viral gossip or clickbait rumors.\n"
-                f"- Target Outcome: Provide verified factual foundation for {scene_style.lower()} screenplay."
+                f"- Report Format: VERIFICATION STATUS / CONFIDENCE SCORE / SUMMARY (confirmed usable facts only) / VERIFIED FACTS (bullets) / PHYSICAL PROPS (real objects from the news only) / KEY LOCATIONS (real places from the news only) / CORE CONFLICT OR IRONY / TANGIBLE ACTIONS (real people's actions only) / POTENTIAL FLAGS (one-line do-not-use items).\n"
+                f"- Usefulness Rule: Everything you report feeds the creative AI directly — include only verified, reel-useful material. No process narration, no invented details."
             ),
             "contextual_selector": (
                 f"Scene & Character Selector Sub-Instruction (Dynamic Subagent):\n"
@@ -134,7 +145,7 @@ class ChiefEditorCoordinatorAgent:
                 f"- Core Mission: Break the screenplay into {scenes_cnt} distinct 9:16 vertical scenes totaling {target_seconds}s.\n"
                 f"- Format: {scene_style} with {character_count} character(s): {', '.join(personas)}.\n"
                 f"- Single Video Continuity: There will be ONE cohesive video reel. Establish the setting in Scene 1 and do NOT repeatedly re-introduce or re-explain background context across scenes.\n"
-                f"- Directives: Depict the imaginary situation matching '{angle}' with tone '{tone}'. Assign each scene to its speaking character with distinct dialogue, on-screen Devanagari text overlays, and dynamic visual B-roll."
+                f"- Directives: Depict the imaginary situation matching '{angle}' with tone '{tone}'. Assign each scene to its speaking character with distinct visual action, on-screen ENGLISH text overlays (never Hindi), and dynamic visual B-roll. Do NOT repeat the spoken dialogue in the storyboard — visuals, camera, SFX and overlay text only."
             ),
             "video_prompt_engineer": (
                 f"AI Video Prompt Sub-Instruction (Agent 6):\n"
@@ -146,6 +157,86 @@ class ChiefEditorCoordinatorAgent:
                 f"- Core Mission: Audit all video prompts for 3-5s physical feasibility, temporal consistency across scenes, and AI safety compliance."
             ),
         }
+        if only_for:
+            return {k: v for k, v in all_instructions.items() if k in only_for}
+        return all_instructions
+
+    # Matches feedback blocks previously appended via _set_feedback_block so the
+    # latest user feedback replaces stale ones instead of stacking up.
+    _FEEDBACK_BLOCK_RE = re.compile(r"\n\n\u2b50 (?:CORRECTION FEEDBACK|USER EXTRA INSTRUCTION)[\s\S]*?(?=\n\n\u2b50 |\Z)")
+
+    @staticmethod
+    def _set_feedback_block(subs: Dict[str, str], key: str, block: str) -> None:
+        """Attach user feedback for a stage re-run: replace any stale feedback
+        block on the same sub-instruction instead of stacking contradictory
+        blocks, so the model follows the LATEST feedback."""
+        current = subs.get(key, "")
+        current = ChiefEditorCoordinatorAgent._FEEDBACK_BLOCK_RE.sub("", current)
+        subs[key] = current + block
+
+    def _build_refine_directive(
+        self,
+        stage_label: str,
+        previous_output_text: str,
+        feedback: str,
+        locked_decisions: List[str],
+    ) -> str:
+        """Build the dedicated RETRY instruction shared by all stages.
+
+        A re-run is a surgical refinement, not a regeneration:
+        - baseline = the exact current visible finalized output of the stage,
+        - change driver = the user's custom instruction (feedback),
+        - every entry in ``locked_decisions`` was finalized earlier and must be
+          preserved exactly (counts, angles, characters, modes, ...).
+        Stale details from older runs are never included.
+        """
+        locked_lines = "\n".join(f"- {d}" for d in locked_decisions) or "- (none)"
+        return (
+            f"\n\n\U0001F504 REFINE MODE \u2014 {stage_label} RETRY (HIGHEST PRIORITY):\n"
+            f"This is a RETRY with a custom instruction. Do NOT regenerate from scratch.\n"
+            f"LOCKED DECISIONS (finalized earlier \u2014 preserve exactly, do not re-pick or re-roll):\n"
+            f"{locked_lines}\n"
+            f"PREVIOUS OUTPUT (the exact current visible output \u2014 your ONLY baseline):\n"
+            f"{previous_output_text}\n\n"
+            f"USER'S CUSTOM INSTRUCTION:\n{feedback.strip()}\n"
+            f"REFINE MANDATE: change ONLY what the custom instruction targets; keep every "
+            f"locked decision and everything that already works. Output the complete refined "
+            f"result in the same format as the previous output."
+        )
+
+    def ensure_sub_instructions(self, state: Dict[str, Any], *agent_keys: str) -> Dict[str, str]:
+        """Step-by-step instruction building: each stage builds ONLY its own
+        agents' sub-instructions when it runs, using the freshest upstream
+        outputs (e.g. finalized Stage-2 character names), instead of Stage 1
+        pre-generating every later stage's instructions in one shot.
+
+        Instructions are ALWAYS rebuilt fresh on every run: a re-run must never
+        inherit stale personas, budgets, or old feedback blocks from a previous
+        run. The current run's feedback (if any) is attached afterwards via
+        _set_feedback_block / _build_refine_directive."""
+        subs = state.setdefault("sub_instructions", {})
+        fin_chars = state.get("finalized_characters") or []
+        personas = [c.name for c in fin_chars] if fin_chars else None
+        budget = state.get("budget") or get_duration_budget(state.get("target_seconds", 30))
+        for key in agent_keys:
+            built = self.decompose_master_instruction(
+                    master_instruction=state.get("scenario", ""),
+                    news_topic=state["news_input"],
+                    target_seconds=state["target_seconds"],
+                    tone=state.get("active_tone", ""),
+                    angle=state.get("active_angle", ""),
+                    character_count=state.get("character_count", 1),
+                    scene_style=state.get("scene_style", "Dialogue"),
+                    batch_size=state.get("batch_size", 1),
+                    max_retries=state.get("max_retries", 5),
+                    budget=budget,
+                    sample_story=state.get("active_sample_story", ""),
+                    personas_override=personas,
+                    only_for=[key],
+                )
+            if key in built:
+                subs[key] = built[key]
+        return subs
 
     def audit_configuration_compliance(
         self,
@@ -268,6 +359,9 @@ class ChiefEditorCoordinatorAgent:
 
         budget = get_duration_budget(target_seconds)
 
+        # Step-by-step: Stage 1 builds ONLY its own sub-instruction. Later stages
+        # build theirs when they run (see ensure_sub_instructions), using the
+        # freshest upstream outputs.
         sub_instructions = self.decompose_master_instruction(
             master_instruction=scenario,
             news_topic=news_input,
@@ -280,6 +374,7 @@ class ChiefEditorCoordinatorAgent:
             max_retries=max_retries,
             budget=budget,
             sample_story=active_sample_story,
+            only_for=["news_validator"],
         )
 
         prev_verif = kwargs.get("previous_verification")
@@ -287,14 +382,18 @@ class ChiefEditorCoordinatorAgent:
             state_history = kwargs.get("extra_instructions_history", [])
             state_history.append(extra_instruction.strip())
             if prev_verif:
-                sub_instructions["news_validator"] += (
+                self._set_feedback_block(
+                    sub_instructions,
+                    "news_validator",
                     f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS FACT VERIFICATION (HIGH PRIORITY):\n"
                     f"Previous Verified Facts: {prev_verif.verified_facts}\n"
                     f"User Correction Feedback:\n{extra_instruction.strip()}\n"
-                    f"Mandate: Re-verify news story and refine facts/props/conflict directly incorporating this critique."
+                    f"Mandate: REFINE the previous verification — keep every fact that already checks out and correct ONLY what this critique targets. Do NOT start over with a brand-new unrelated verification."
                 )
             else:
-                sub_instructions["news_validator"] += (
+                self._set_feedback_block(
+                    sub_instructions,
+                    "news_validator",
                     f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 1 (HIGH PRIORITY):\n{extra_instruction.strip()}"
                 )
 
@@ -395,7 +494,9 @@ class ChiefEditorCoordinatorAgent:
         scene_style = state["scene_style"]
         active_scenario = state.get("scenario", "")
         active_sample_story = state.get("active_sample_story", "")
-        sub_instructions = state["sub_instructions"]
+        # Step-by-step: build this stage's sub-instruction now (Stage 1 no longer
+        # pre-generates everything for later stages).
+        sub_instructions = self.ensure_sub_instructions(state, "hook_strategist")
 
         # Capture previous characters and scenes if re-running Stage 2
         prev_chars = state.get("available_characters") or state.get("finalized_characters")
@@ -404,14 +505,18 @@ class ChiefEditorCoordinatorAgent:
         if extra_instruction and extra_instruction.strip():
             state.setdefault("extra_instructions_history", []).append(extra_instruction.strip())
             if prev_chars:
-                sub_instructions["hook_strategist"] += (
+                self._set_feedback_block(
+                    sub_instructions,
+                    "hook_strategist",
                     f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS CHARACTERS & SCENES (HIGH PRIORITY):\n"
                     f"Previous Characters: {[c.name for c in prev_chars]}\n"
                     f"User Correction Feedback:\n{extra_instruction.strip()}\n"
-                    f"Mandate: Re-finalize characters (names, jobs, attire) and scene locations directly addressing this critique."
+                    f"Mandate: REFINE the previous characters and scenes — keep every character/scene that already works and change ONLY what this critique targets. Respect the finalized character count; do NOT invent a brand-new unrelated cast."
                 )
             else:
-                sub_instructions["hook_strategist"] += (
+                self._set_feedback_block(
+                    sub_instructions,
+                    "hook_strategist",
                     f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 2 (HIGH PRIORITY):\n{extra_instruction.strip()}"
                 )
 
@@ -486,26 +591,65 @@ class ChiefEditorCoordinatorAgent:
                 )
                 for p in raw_personas
             ]
+            # News-grounded fallback scenes: prefer verified locations from the news
+            # itself so we never emit the same hardcoded tapri default every run.
+            _fb_locs: List[str] = []
+            for _loc in (verification.key_locations if verification and verification.key_locations else []):
+                _loc = (_loc or "").strip()
+                if _loc and _loc.lower() not in {_x.lower() for _x in _fb_locs}:
+                    _fb_locs.append(_loc)
+            while len(_fb_locs) < 2:
+                _fb_locs.append("Everyday home discussion corner" if _fb_locs else "Authentic Indian neighbourhood street")
+            _fb_props = verification.physical_props[:3] if (verification and verification.physical_props) else ["Smartphone", "Headline sign"]
             available_scenes = [
                 SceneSettingOption(
-                    scene_option_number=1,
-                    location_name=locs_text or "Bustling Indian street food stall / tea tapri",
-                    atmosphere=f"Vibrant and realistic ambient setting for {active_tone}",
-                    lighting_mood="Natural cinematic daylight",
-                    props=verification.physical_props[:3] if (verification and verification.physical_props) else ["Smartphone", "Headline sign"],
-                ),
-                SceneSettingOption(
-                    scene_option_number=2,
-                    location_name="Modern executive office / administrative room",
-                    atmosphere="Minimalist, sharp professional interior",
-                    lighting_mood="Clean office fluorescent and glass reflections",
-                    props=["Desk", "Documents", "Laptop"],
-                ),
+                    scene_option_number=i + 1,
+                    location_name=_fb_locs[i],
+                    atmosphere=f"Vibrant, realistic {active_tone} setting drawn from the news",
+                    lighting_mood="Natural cinematic daylight" if i % 2 == 0 else "Warm practical indoor lighting",
+                    props=_fb_props,
+                )
+                for i in range(2)
             ]
 
         # Select the requested number of characters and scenes as primary defaults for downstream stages
         finalized_chars = available_characters[:max(1, character_count)]
         finalized_scenes = available_scenes[:req_scenes]
+
+        # Hard guarantee: the configured character count MUST be met exactly.
+        # If the hook strategist parsed fewer characters than requested, top up
+        # with news-grounded personas so Stage 3/4 never silently drop a speaker.
+        if len(finalized_chars) < character_count:
+            def _canon_name(n):
+                return re.sub(r"[^\w]", "", n or "", flags=re.UNICODE).lower()
+            _existing_first = set()
+            for _c in finalized_chars:
+                _toks = re.findall(r"[\w]+", (_c.name or "").lower(), flags=re.UNICODE)
+                if _toks:
+                    _existing_first.add(_toks[0])
+            _need = character_count - len(finalized_chars)
+            for _p in get_character_personas(
+                scene_style, character_count + _need, active_tone,
+                preferred_angle or "Funny & Relatable",
+                topic_or_script=news_input, sample_story=active_sample_story or active_scenario,
+            ):
+                _ptoks = re.findall(r"[\w]+", _p.lower(), flags=re.UNICODE)
+                if _ptoks and _ptoks[0] in _existing_first:
+                    continue
+                finalized_chars.append(CharacterProfile(
+                    name=_p,
+                    role_or_job="Key Character / Speaker",
+                    attire="",
+                    emotional_stance="Engaged & authentic",
+                    relationship_dynamic="Relational dynamic grounded in story context",
+                ))
+                if _ptoks:
+                    _existing_first.add(_ptoks[0])
+                if len(finalized_chars) >= character_count:
+                    break
+            stage2_errors.append(
+                f"Character shortfall topped up: finalized {len(finalized_chars)}/{character_count} characters"
+            )
 
         # Generate lightweight default hooks and CTAs for batch items
         default_cta = "फॉलो करें!" if target_seconds <= 10 else "शेयर करें और अपनी राय कमेंट में बताएं!"
@@ -584,7 +728,9 @@ class ChiefEditorCoordinatorAgent:
         scene_style = state["scene_style"]
         active_angle = state["active_angle"]
         active_sample_story = state["active_sample_story"]
-        sub_instructions = state["sub_instructions"]
+        # Step-by-step: build this stage's sub-instructions now (Stage 1 no longer
+        # pre-generates everything for later stages).
+        sub_instructions = self.ensure_sub_instructions(state, "dialogue_writer", "timing_auditor")
         max_retries = state["max_retries"]
         budget = state["budget"]
 
@@ -601,19 +747,12 @@ class ChiefEditorCoordinatorAgent:
                     draft_chunks.append(f"Script {idx}:\n{d['narration']}")
             previous_draft_text = "\n\n".join(draft_chunks)
 
+        # Stage 3 retry uses a dedicated refine prompt inside write_dialogues_batch
+        # (previous visible draft + custom instruction, locked creative decisions).
+        # Feedback is carried ONLY there — never duplicated or persisted into
+        # sub-instructions, so re-runs can never stack stale blocks.
         if extra_instruction and extra_instruction.strip():
             state.setdefault("extra_instructions_history", []).append(extra_instruction.strip())
-            if previous_draft_text:
-                sub_instructions["dialogue_writer"] += (
-                    f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS DIALOGUE DRAFT (HIGH PRIORITY):\n"
-                    f"Previous Draft:\n{previous_draft_text}\n\n"
-                    f"User Correction Feedback:\n{extra_instruction.strip()}\n"
-                    f"Mandate: Rewrite and improve the dialogues to directly incorporate this feedback while enforcing tight character interconnectedness."
-                )
-            else:
-                sub_instructions["dialogue_writer"] += (
-                    f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 3 (HIGH PRIORITY):\n{extra_instruction.strip()}"
-                )
 
         batch_items = [
             {"angle": selected_angles[i][0], "hook": hooks_and_ctas[i][0], "cta": hooks_and_ctas[i][1]}
@@ -645,6 +784,7 @@ class ChiefEditorCoordinatorAgent:
                 previous_draft=previous_draft_text if previous_draft_text else None,
                 feedback=extra_instruction if extra_instruction else None,
                 finalized_characters=state.get("finalized_characters"),
+                finalized_scenes=state.get("finalized_scenes"),
                 story_steps=state.get("story_steps"),
             )
         except ModelGenerationError:
@@ -652,11 +792,20 @@ class ChiefEditorCoordinatorAgent:
         except Exception as e:
             stage3_failures += 1
             stage3_errors.append(f"Dialogue generation error: {str(e)[:80]}")
-            stage3_resolution = "Constructed fallback narrations from verified wire facts"
-            raw_narrations = [
-                f"{it['hook']} {news_input}. {it['cta']}"
-                for it in batch_items
-            ]
+            if previous_dialogues:
+                # Refine, don't restart: carry the previous draft forward so its
+                # beats, creativity and the user's feedback context are not lost.
+                raw_narrations = [
+                    ScriptDialogue(d.get("narration", ""), scene_lines=d.get("scene_lines") or [])
+                    for d in previous_dialogues
+                ]
+                stage3_resolution = "Generation failed; refined previous dialogue draft instead of starting over"
+            else:
+                stage3_resolution = "Constructed fallback narrations from verified wire facts"
+                raw_narrations = [
+                    f"{it['hook']} {news_input}. {it['cta']}"
+                    for it in batch_items
+                ]
 
         min_w = budget["min_words"]
         rec_w = budget["recommended_words"]
@@ -717,6 +866,31 @@ class ChiefEditorCoordinatorAgent:
                     passed = True
                 else:
                     narration = calibrated
+
+            # Character-count compliance: every finalized character must speak at least once.
+            _final_names = [(c.name or "") for c in (state.get("finalized_characters") or [])]
+            if _final_names and scene_lines:
+                def _canon_spk(n):
+                    return re.sub(r"[^\w]", "", n or "", flags=re.UNICODE).lower()
+                _speakers = set()
+                for _sl in scene_lines:
+                    if isinstance(_sl, dict):
+                        _speakers.add(_canon_spk(_sl.get("character", "")))
+                    elif isinstance(_sl, (list, tuple)) and len(_sl) >= 1:
+                        _speakers.add(_canon_spk(_sl[0]))
+                _missing = [
+                    _nm for _nm in _final_names
+                    if _canon_spk(_nm) and not any(
+                        _canon_spk(_nm) in _sp or _sp in _canon_spk(_nm) for _sp in _speakers if _sp
+                    )
+                ]
+                if _missing:
+                    _miss_note = (
+                        f"⚠️ Character coverage: {', '.join(_missing)} has no spoken line "
+                        f"(expected {character_count} speakers)."
+                    )
+                    retry_notes.append(_miss_note)
+                    stage3_errors.append(f"Script #{i+1}: " + _miss_note)
 
             script_dialogues.append({
                 "idx": i,
@@ -974,7 +1148,12 @@ class ChiefEditorCoordinatorAgent:
         engine_mode: str = "first_local_then_agy",
         extra_instruction: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Execute Stage 5: Video Quality Gate, Configuration Compliance Audit & Sign-Off."""
+        """Execute Stage 5: Integration & Final Validation.
+
+        FIRST integrate every stage output (verified facts, finalized characters
+        and scenes, dialogue script, storyboards, video prompts, audit trail)
+        into one coherent final package; THEN validate quality, compliance and
+        sign-off."""
         stage5_start = time.time()
         scripts = state["scripts"]
         target_seconds = state["target_seconds"]
@@ -1006,17 +1185,54 @@ class ChiefEditorCoordinatorAgent:
             )
         )
 
-        total_failures = sum(a.failures_count for a in state["agent_audits"])
+        # Normalize audit items through the canonical AgentAuditItem model.
+        # Defensive: if any item was built from a duplicate-imported copy of the
+        # model class (same name, different class object), Pydantic's isinstance
+        # check would reject it with a cryptic model_type error. Rebuilding via
+        # model_dump() guarantees the canonical class and preserves all data.
+        canonical_audits: List[AgentAuditItem] = []
+        for _a in state["agent_audits"]:
+            if isinstance(_a, AgentAuditItem):
+                canonical_audits.append(_a)
+            elif isinstance(_a, dict):
+                canonical_audits.append(AgentAuditItem(**_a))
+            elif hasattr(_a, "model_dump"):
+                canonical_audits.append(AgentAuditItem(**_a.model_dump()))
+            else:
+                canonical_audits.append(AgentAuditItem(**dict(_a)))
+        state["agent_audits"] = canonical_audits
+
+        total_failures = sum(a.failures_count for a in canonical_audits)
         audit_report = PipelineAuditReport(
             total_stages=5,
             total_agents=7,
             total_failures_detected=total_failures,
             total_retries_resolved=total_retries,
             overall_health="100% Operational (All Steps Self-Healed & Passed)" if total_failures > 0 else "100% Flawless First-Pass Pass",
-            agent_audits=state["agent_audits"],
+            agent_audits=canonical_audits,
         )
 
         total_time = round(time.time() - state["start_time"], 1)
+
+        # Normalize verification + scripts through their canonical models.
+        # Same duplicate-class hazard as agent_audits above: model instances built
+        # in earlier stages can fail Pydantic's isinstance check at re-wrap time if
+        # core.models ended up imported twice under different module names in this
+        # process. Rebuilding via model_dump() preserves all data and guarantees
+        # the canonical classes (nested models become plain dicts and revalidate).
+        def _canon(model_cls, value):
+            if isinstance(value, model_cls):
+                return value
+            if isinstance(value, dict):
+                return model_cls(**value)
+            if hasattr(value, "model_dump"):
+                return model_cls(**value.model_dump())
+            return model_cls(**dict(value))
+
+        verification = _canon(NewsVerificationReport, verification)
+        scripts = [_canon(ReelScript, _s) for _s in scripts]
+        state["verification"] = verification
+        state["scripts"] = scripts
 
         compliance_passed, compliance_notes, retry_prompt = self.audit_configuration_compliance(
             scripts=scripts,
@@ -1191,10 +1407,10 @@ class ChiefEditorCoordinatorAgent:
         yield {
             "step": 5,
             "total_steps": 5,
-            "stage_label": "Stage 5 of 5: AI Video Quality Gate & Editorial Sign-Off",
+            "stage_label": "Stage 5 of 5: Integration & Final Validation",
             "agent": video_quality_gate.name,
             "icon": video_quality_gate.icon,
-            "status": "Agent 7: Verifying cinematic visual feasibility and production standards...",
+            "status": "Agent 7: Integrating all stage outputs, then validating quality and compliance...",
             "data": None,
         }
 

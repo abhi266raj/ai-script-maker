@@ -91,6 +91,17 @@ class SceneItem(BaseModel):
     on_screen_text: str  # Hindi text overlay
     audio_sfx: str
     video_prompt: Optional[VideoScenePrompt] = None
+    # Step-4 coordination: per-beat direction + Step 2 system-knowledge pass-through.
+    # The character bible (role/attire/emotion) and the selected scene setting flow
+    # from the system into the final output — they are never re-invented per beat.
+    emotion: str = ""  # character's emotional expression while delivering this beat
+    character_role: str = ""  # from Step 2 character bible
+    character_attire: str = ""  # from Step 2 character bible
+    scene_location: str = ""  # selected (or newly created) location for this beat
+    scene_atmosphere: str = ""
+    scene_lighting: str = ""
+    scene_props: List[str] = Field(default_factory=list)
+    scene_source: str = ""  # "supplied" (selected from Step 2 options) | "new" (created in Step 4)
 
 
 class ReelScript(BaseModel):

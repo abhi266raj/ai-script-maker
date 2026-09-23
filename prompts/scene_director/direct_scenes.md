@@ -40,7 +40,7 @@ TIME: [e.g., 0:00 - 0:03]
 CHARACTER: [Speaker name]
 DIALOGUE: [Exact Hindi dialogue line]
 ACTION: [Specific physical actor action, gesture, and prop interaction ONLY - do NOT describe the general location or camera framing here as that is in Scene Description]
-TEXT: [Devanagari on-screen text overlay]
+TEXT: [Short punchy ENGLISH on-screen popup text — never Hindi, never Devanagari]
 SFX: [Sound effect, e.g. Street Ambience + Whoosh]
 
 (Repeat for SCENE 2 to SCENE {target_frames})

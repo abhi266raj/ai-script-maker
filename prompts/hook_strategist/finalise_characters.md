@@ -7,11 +7,9 @@ Your sole job in the pipeline is analyzing the verified news dossier from Stage 
 IMPORTANT: You do NOT write spoken dialogue, do NOT format hooks or CTAs, and do NOT construct story beat steps.
 Your focus is purely imagination and finalisation of characters and scene locations.
 
-# 2X GENERATION RULE FOR DOWNSTREAM SELECTION:
-To ensure variety, richness, and prevent repetitive outputs, you must generate:
-- Exactly 2X the requested number of characters ({target_char_count} characters, which is 2 * {requested_char_count}).
-- Exactly 2X the requested number of scene locations ({target_scene_count} scene options, which is 2 * {requested_scene_count}).
-Downstream stages (Stage 3 Dialogue Writer and Stage 4 Scene Director) will select the best-fitting subset of characters and scene locations from your generated options!
+# GENERATION RULE:
+- Characters: generate exactly 2X the requested number ({target_char_count} characters, which is 2 * {requested_char_count}) so downstream stages can select the best fit.
+- Scene locations: imagine exactly 2 fresh, story-specific locations. NOT a pool, NOT picked from generic defaults — imagined new for THIS story from the verified news below.
 
 # INPUT
 - News Story: {news_topic}
@@ -20,7 +18,7 @@ Downstream stages (Stage 3 Dialogue Writer and Stage 4 Scene Director) will sele
 - Angle: {angle}
 - Scene Style: {scene_style}
 - Requested Character Count: {requested_char_count} (Generate {target_char_count} options)
-- Requested Scene Count: {requested_scene_count} (Generate {target_scene_count} options)
+- Scene Locations: imagine exactly 2 fresh locations for this story (NOT a pool, NOT generic defaults)
 - Researched Settings / Locations from Stage 1: {setting_location}
 - Researched Physical Props from Stage 1: {physical_props}
 - Core Conflict / Irony: {core_conflict}
@@ -41,13 +39,15 @@ Downstream stages (Stage 3 Dialogue Writer and Stage 4 Scene Director) will sele
    - NEVER create generic, nameless speaker placeholders. Assign real professions, authentic wardrobes, and distinct emotional postures!
    - Anti-misinformation: Do NOT use real living politician names for fictional characters.
 
-2. SCENE SETTINGS & LOCATIONS:
-   - Provide {target_scene_count} distinct, vividly visual settings/locations suitable for a 9:16 vertical reel.
+2. SCENE SETTINGS & LOCATIONS — IMAGINE FRESH FOR THIS STORY:
+   - Imagine exactly 2 distinct, vividly visual settings/locations suitable for a 9:16 vertical reel.
+   - Start from the Researched Settings / Locations from Stage 1 and the verified facts above; invent specific, cinematic, story-grounded variants (a particular shop, office, street corner, home, institution).
+   - NEVER pick from a generic pool of defaults. FORBIDDEN unless the news is literally about them: roadside tea stall / chai tapri, generic street food cart.
    - Detail the location name, visual atmosphere, lighting/mood, and physical props present in that setting.
-   - Ground locations in realistic Indian environments (e.g. bustling street food cart with sizzling tawa, minimalist glass executive corner office, modest government administrative office, roadside tea stall).
 
 # OUTPUT FORMAT
-Format your output strictly using this structured template:
+Format your output strictly using this structured template.
+Use plain text only — no markdown formatting (no **bold**, no # headings, no bullet symbols), so the output can be parsed reliably.
 
 CHARACTERS:
 CHARACTER 1:
@@ -79,4 +79,4 @@ Atmosphere: [Visual environment, ambiance, and background details]
 Lighting: [Lighting and mood]
 Props: [Key physical props in this location, comma-separated]
 
-(Provide all {target_scene_count} scene options sequentially from SCENE 1 to SCENE {target_scene_count})
+(Provide exactly 2 scene options: SCENE 1 and SCENE 2)

@@ -216,7 +216,8 @@ class SceneVisualsDirectorAgent(BaseAgent):
                             dialogue=dialogue,
                             timestamp=time_val,
                             visual_b_roll=cleaned_act or visual,
-                            on_screen_text=text or dialogue[:25],
+                            # On-screen popup text is ALWAYS English — never fall back to Hindi dialogue.
+                            on_screen_text=text,
                             audio_sfx=sfx,
                         )
                     )

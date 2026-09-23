@@ -2,7 +2,7 @@
 
 ## 📌 Feature: Continuous vs Step-Wise Script Generation with Per-Step Model Selection & Dynamic Instruction Refinement
 
-**Status:** Implemented  
+**Status:** Implemented — refinements in progress (step-wise coordination hardening)  
 **Target:** Hindi Reel Studio (AI Script Maker)  
 **Architecture:** Multi-Agent Editorial Pipeline (Chief Editor, News Validator, Hook Strategist, Dialogue Writer, Timing Auditor, Scene Director, Video Prompt Engineer, Video Quality Gate)
 
@@ -37,24 +37,37 @@ This architectural enhancement makes the generation pipeline modular, scalable, 
 - **FR-3.2:** When checked, an instruction text area expands, accepting natural-language guidance (e.g., *"Make tone more sarcastic", "Place in high court corridor", "Focus on consumer inflation"*).
 - **FR-3.3:** The Chief Editor seamlessly merges the extra instruction into the specialized sub-instructions dispatched to the underlying sub-agent.
 - **FR-3.4:** The user can re-run the current step with updated instructions and/or a new model, or proceed forward to the next step with queued guidance.
-- **FR-3.5 (Same-Stage Output Feedback & Correction Loop):** When a stage is re-run with user feedback/corrections, the orchestrator MUST capture the previous output/draft of that exact stage and pass it back into the agent alongside the user's critique under a high-priority `REVISION & CORRECTION MODE` block. The agent treats the previous output as the baseline draft and rewrites/improves it to directly resolve the user's critique.
+- **FR-3.5 (Same-Stage Output Feedback & Correction Loop):** When a stage is re-run with user feedback/corrections, the orchestrator MUST capture the previous output/draft of that exact stage and pass it back into the agent alongside the user's critique under a high-priority `REVISION & CORRECTION MODE` block. The agent treats the previous output as the baseline draft and **REFINES** it — keeping every beat, line, joke, and character moment that already works, and changing ONLY what the critique targets. It MUST NOT discard the draft to generate a brand-new unrelated output, and it MUST NOT drop the draft's established creativity, angle, or tone unless the feedback explicitly asks for it.
+- **FR-3.6 (Feedback Replacement, Not Stacking):** Re-running a stage with new feedback REPLACES any stale feedback block on that stage's sub-instruction instead of appending alongside it, so the model always follows the LATEST feedback and never receives contradictory stacked critiques.
+- **FR-3.7 (Step-by-Step Instruction Building):** Stage 1 builds ONLY its own (news validator) sub-instruction. Each subsequent stage builds its own agents' sub-instructions at the moment it runs, using the freshest upstream outputs (e.g. Stage 3/4 instructions reference the finalized Stage-2 character names, not generic placeholders). No stage pre-generates later stages' instructions in one shot.
+- **FR-3.8 (Feedback Honored in Fallbacks):** If model generation fails inside a stage, the deterministic fallback MUST refine/carry forward the previous draft (when one exists) rather than generating unrelated placeholder content, and must record that the fallback preserved the prior output.
 
 #### 2.4 Intermediate Stage Outputs & Telemetry
 - **FR-4.1 Stage 1 (News Validation & Dossier Extraction):**
-  - Displays: Verified facts, confidence score, physical props extracted, key locations, core conflict/irony, and generated sub-instructions.
+  - Displays: Verified facts, confidence score, physical props extracted, key locations, core conflict/irony, and this stage's own sub-instruction. (Stage 1 does NOT pre-generate later stages' instructions — see FR-3.7.)
   - Same-stage revision: Captures previous facts and summary to refine directly upon retry.
 - **FR-4.2 Stage 2 (Character Finalisation & Viral Hooks):**
   - Role: Grounded in Stage 1 news dossier and scenario, finalizes specific actors/characters (names, professions/jobs, attire, emotional stance, and relational dynamic) and sequential story beat steps (action and speech objective).
   - Displays: Finalized characters (occupations, wardrobes, emotional stances), story beat actions, formulated Devanagari hooks (0-3s), and closing CTAs.
-  - Upstream Hand-off: Passes finalized characters and story steps directly to Stage 3 Dialogue Writer to prevent generic persona drift.
+  - Upstream Hand-off: Passes finalized characters AND finalized scene options (location, atmosphere, lighting, props, source) directly to Stages 3 and 4 to prevent generic persona/location drift. Stage 4 selects from these scene options per dialogue beat.
 - **FR-4.3 Stage 3 (Spoken Dialogue Writing, Interconnectedness & Timing Audit):**
   - Uses exact Stage 2 finalized characters and story steps to craft spoken Hindi dialogue lines.
+  - **Hidden Continuity Knowledge:** Stage 3 receives full character profiles (role, attire, emotional stance) and per-beat scene plans (location, atmosphere, lighting, props) as system knowledge for continuity. The dialogue MUST NOT redundantly describe character appearance, attire, or location — that knowledge stays attached internally and flows into the final output instead of being spoken aloud.
+  - **Creativity Preservation:** The user-selected editorial angle and tone (especially humor) MUST survive in every output, including deterministic fallbacks. New creative details produced at this stage (beat actions, SFX/music hints) MUST be captured and carried forward, never silently dropped.
+  - **Configured Character Count:** Exactly the configured number of characters may speak; no extra speaking characters may be introduced by the model or by fallbacks.
+  - **Dialogue-Type Enforcement:** The output MUST honor the selected dialogue type — Interview (strict host/guest Q&A), Debate (claim + rebuttal), Argument (heated clash), Speech/Monologue (solo direct address), Lament (somber, no jokes), or standard Dialogue (natural ping-pong).
   - Displays: Character dialogue lines, speech word count, recommended word budget, strict max limit, and timing audit calibration status.
   - **Dialogue Interconnectedness Standard:** Characters must NOT deliver isolated monologues. Every line (Beat 2 onwards) must directly answer, counter, or rebut the previous speaker using reactive connectors, echo-and-pivot keyword callbacks, and natural Hindi conversational ping-pong.
   - Same-stage revision: Captures previous dialogue draft to resolve critiques directly upon retry.
-- **FR-4.4 Stage 4 (Scene Storyboards & AI Video Prompts):**
-  - Displays: 9:16 vertical scene beats, physical actor kinematics, on-screen Devanagari text overlays, audio/SFX cues, and generative video prompts (Google Flow / Veo).
-  - Same-stage revision: Captures previous storyboard scenes to refine camera framing and actions upon retry.
+- **FR-4.4 Stage 4 (Dialogue-Aware Scene Selection, Storyboards & AI Video Prompts):**
+  - **Scene Selection (Not Scene Invention):** For each dialogue beat, Stage 4 interprets the dialogue's meaning, action, and emotion, then SELECTS the most appropriate scene from the finalized Stage-2 scene options (matching location, atmosphere, lighting, and props). Only if NO supplied option fits the beat may it create a NEW scene grounded in the news — explicitly marked as newly created. It MUST NOT blindly cycle scene options and MUST NOT re-describe characters or locations (already known from Stage 2).
+  - **Action & Emotion Focus:** The dialogue is used INTERNALLY to infer physical action, gesture, facial expression/emotion, prop interaction, and reaction to the previous line. The storyboard and final visual presentation emphasize action, emotion, and visual direction — they do not restate the dialogue. Spoken lines are carried verbatim from Stage 3.
+  - **Character Count:** All actors are restricted to the finalized characters within the configured count; fallbacks must not introduce extra speaking characters.
+  - **Music/SFX:** Every beat gets an appropriate, emotion-matched music/SFX cue — never a one-size-fits-all default.
+  - **No Hardcoded Defaults:** Scene/visual fallbacks must be news-grounded (prefer verified key locations); hardcoded generic venues are forbidden as defaults.
+  - **Video Prompts:** Carry character appearance/attire and selected scene location metadata WITHOUT quoting dialogue.
+  - Displays: 9:16 vertical scene beats with per-beat action, emotion, selected (or newly created) scene, music/SFX cues, and generative video prompts (Google Flow / Veo).
+  - Same-stage revision: Captures previous storyboard scenes to refine camera framing, actions, and music upon retry.
 - **FR-4.5 Stage 5 (Chief Editor Review & Final Packaging):**
   - Displays: Full configuration compliance audit, common-sense validation, and the final production screenplay package.
 

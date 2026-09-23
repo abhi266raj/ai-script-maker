@@ -1,9 +1,25 @@
 """Multi-Agent Hindi Reel Generation Workflow delegating to ChiefEditorCoordinatorAgent."""
 
-from typing import Generator, Dict, Any, Optional
+from typing import Generator, Dict, Any, Optional, Callable
 from core.models import ReelBatchResult
 from core.dual_engine import dual_engine
+from core.prompt_recorder import start_recording, stop_recording, get_recorded
 from agents.chief_editor import chief_editor_coordinator
+
+
+def _capture_prompts(fn: Callable[..., Dict[str, Any]], *args: Any, **kwargs: Any) -> Dict[str, Any]:
+    """Run a stage while recording every rendered prompt, then attach them
+    to the returned state as ``input_prompts`` so the UI can show the exact
+    input prompt sent to the AI for that step."""
+    start_recording()
+    try:
+        result = fn(*args, **kwargs)
+    finally:
+        prompts = get_recorded()
+        stop_recording()
+    if isinstance(result, dict):
+        result["input_prompts"] = prompts
+    return result
 
 
 class ReelWorkflow:
@@ -65,7 +81,8 @@ class ReelWorkflow:
     ) -> Dict[str, Any]:
         """Execute Step 1 of the pipeline (News Validation & Decomposition)."""
         dual_engine.validate_mode(engine_mode)
-        return chief_editor_coordinator.execute_stage_1(
+        return _capture_prompts(
+            chief_editor_coordinator.execute_stage_1,
             news_input=news_input,
             scenario=scenario,
             batch_size=batch_size,
@@ -90,7 +107,8 @@ class ReelWorkflow:
     ) -> Dict[str, Any]:
         """Execute Step 2 of the pipeline (Viral Angles & Hooks Formulation)."""
         dual_engine.validate_mode(engine_mode)
-        return chief_editor_coordinator.execute_stage_2(
+        return _capture_prompts(
+            chief_editor_coordinator.execute_stage_2,
             state=state,
             engine_mode=engine_mode,
             extra_instruction=extra_instruction,
@@ -105,7 +123,8 @@ class ReelWorkflow:
     ) -> Dict[str, Any]:
         """Execute Step 3 of the pipeline (Dialogue Writing & Duration Calibration)."""
         dual_engine.validate_mode(engine_mode)
-        return chief_editor_coordinator.execute_stage_3(
+        return _capture_prompts(
+            chief_editor_coordinator.execute_stage_3,
             state=state,
             engine_mode=engine_mode,
             extra_instruction=extra_instruction,
@@ -121,7 +140,8 @@ class ReelWorkflow:
     ) -> Dict[str, Any]:
         """Execute Step 4 of the pipeline (Scene Storyboard & AI Video Prompts)."""
         dual_engine.validate_mode(engine_mode)
-        return chief_editor_coordinator.execute_stage_4(
+        return _capture_prompts(
+            chief_editor_coordinator.execute_stage_4,
             state=state,
             engine_mode=engine_mode,
             extra_instruction=extra_instruction,
@@ -136,7 +156,8 @@ class ReelWorkflow:
     ) -> Dict[str, Any]:
         """Execute Step 5 of the pipeline (Quality Gate & Chief Editor Sign-Off)."""
         dual_engine.validate_mode(engine_mode)
-        return chief_editor_coordinator.execute_stage_5(
+        return _capture_prompts(
+            chief_editor_coordinator.execute_stage_5,
             state=state,
             engine_mode=engine_mode,
             extra_instruction=extra_instruction,
