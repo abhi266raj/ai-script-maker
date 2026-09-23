@@ -28,6 +28,7 @@ Equipped with a collaborative team of specialized AI sub-agents, autonomous self
 - 🎯 **Screenplay Coherence Sub-Agent:** Physically locks actor kinematics and camera focus to objects mentioned in dialogue (*sipping cutting chai, unfolding morning newspapers, waving billing receipts, thrusting smartphone screens, counting currency, slamming coaching textbooks, pressing official ink stamps*).
 - ⚖️ **Common Sense Realism Validator:** Audits screenplay realism for setting-character mismatches, marital vocative errors (*e.g. calling male friends "सुनती हो"*), and occupational prop ergonomics (*tea vendor handling phone with wiping cloth and strainer*), triggering automatic self-healing retries.
 - ⚡ **Dual-Engine AI Inference Bridge:** High-speed private on-device inference via **Apple Foundation Models (`fm`)**, with an explicit hybrid mode for optional **Antigravity (`agy`)** fallback.
+- 🪜 **Continuous vs Step-Wise Generation Modes:** Choose between automated one-click generation (Continuous) or an interactive checkpointed workflow (Step-Wise) featuring intermediate output inspection, per-step model selection, and dynamic instruction refinement via tickboxes.
 - ⏱️ **Pacing & Word Count Calibration:** Mathematical word-budget enforcement across 10s, 15s, 20s, 30s, 45s, and 60s timelines at natural Indian speech delivery rates (~2.3 words/sec).
 - 🪓 **Strict Ban on Social Media Meta:** dialogue strictly contains in-universe character conversation, purging all meta calls (*"comment below", "like and share", "subscribe"*).
 

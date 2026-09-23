@@ -5,7 +5,7 @@ import random
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 from agents.base import BaseAgent
-from core.models import NewsVerificationReport
+from core.models import NewsVerificationReport, CharacterProfile, StoryBeatStep, SceneSettingOption
 from core.metrics import get_duration_budget, count_words
 from core.dual_engine import ModelGenerationError
 from core.prompt_loader import load_prompt, render_prompt
@@ -32,6 +32,19 @@ def sanitize_persona_name(name: str) -> str:
             t = re.sub(rf"\b{pol}\b", "Rohan", t, flags=re.IGNORECASE)
             t = t.replace("राहुल", "रोहन").replace("अमित", "आरव").replace("मोदी", "कबीर")
     return t
+
+
+def clean_hook_for_dialogue(hook: str) -> str:
+    """Strip emojis and template filler from a hook before it reaches the dialogue
+    writer. The hook is an IDEA for the model to express in natural spoken
+    Hindi — it must never be quotable verbatim (no character may 'speak' an
+    emoji or a 'bada update' template line)."""
+    if not hook:
+        return ""
+    h = re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]+", "", hook)
+    h = re.sub(r"\s*को\s+लेकर\s+बड़\w*\s*(?:अपडेट|खबर)\s*!?\s*$", "", h).strip()
+    h = re.sub(r"\s+", " ", h).strip(" -–—:;,")
+    return h
 
 
 def get_sentence_guidance(duration_sec: int, rec_w: int, max_w: int, tone: str = "", angle: str = "") -> str:
@@ -625,11 +638,9 @@ def get_character_personas(
     sample_story: Optional[str] = None,
 ) -> List[str]:
     """Generate rich, socioeconomically diverse character personas grounded in the script topic and representing India."""
-    # ⭐ HIGHEST PRECEDENCE: Check if sample story/script defines characters or relationships
-    if sample_story and sample_story.strip():
-        sample_personas = extract_sample_story_personas(sample_story.strip(), character_count)
-        if sample_personas:
-            return sample_personas
+    # NOTE: a sample story is only a style/tone EXAMPLE — it never overrides
+    # character selection. Characters come from finalized Stage-2 output or
+    # from news-grounded creative generation below. The news always comes first.
 
     import random
     combined = f"{tone} {angle}".lower()
@@ -743,6 +754,74 @@ NARRATIVE_MODES = [
 ]
 
 
+def get_dialogue_type_directive(scene_style: str, character_count: int) -> str:
+    """Structural directive forcing the dialogue to honor the user's chosen dialogue type.
+
+    scene_style is the user's input (Dialogue / Argument / Interview / Debate /
+    Speech / Lament / Monologue). The model must shape every beat accordingly."""
+    style = (scene_style or "dialogue").strip().lower()
+    if style == "interview":
+        return (
+            "DIALOGUE TYPE: INTERVIEW (strict Q&A format)\n"
+            "- One character is the HOST who ONLY asks sharp, short questions.\n"
+            "- The other character is the GUEST who answers using the verified news facts.\n"
+            "- Strictly alternate question \u2192 answer \u2192 question \u2192 answer. "
+            "The host never lectures; the guest never asks questions."
+        )
+    if style == "debate":
+        return (
+            "DIALOGUE TYPE: DEBATE (structured for-vs-against)\n"
+            "- Two opposing sides: one defends the news development, the other attacks it.\n"
+            "- Every beat must contain a claim AND a direct rebuttal of the previous claim.\n"
+            "- No agreement, no neutral filler \u2014 keep the clash alive till the final verdict line."
+        )
+    if style == "argument":
+        return (
+            "DIALOGUE TYPE: HEATED ARGUMENT\n"
+            "- Fast, interruptive, high-energy clash with personal stakes.\n"
+            "- Every line must react to and escalate what the previous speaker just said.\n"
+            "- Short punchy lines, overlapping energy \u2014 no calm exposition."
+        )
+    if style in ("speech", "monologue", "solo"):
+        return (
+            "DIALOGUE TYPE: SOLO SPEECH (single speaker, direct to camera)\n"
+            "- Exactly ONE character speaks directly to the viewer.\n"
+            "- No second voice, no dialogue exchange \u2014 one tight, punchy monologue.\n"
+            "- Rhetorical questions and direct address are encouraged."
+        )
+    if style == "lament":
+        return (
+            "DIALOGUE TYPE: LAMENT (somber and grief-stricken)\n"
+            "- Slow, heavy, emotional lines honoring loss.\n"
+            "- Absolutely NO jokes, banter, or punchlines."
+        )
+    return (
+        "DIALOGUE TYPE: NATURAL CONVERSATION\n"
+        "- Two people talking like real friends \u2014 relaxed, reactive ping-pong.\n"
+        "- Balance humor with the verified news facts; every joke must come from a real fact."
+    )
+
+
+_COMEDY_KEYWORDS = ["funny", "humor", "humour", "humorous", "comedy", "comic", "sarcasm", "satire", "satirical", "witty", "fun", "\u0939\u094d\u092f\u0942\u092e\u0930", "\u0926\u0947\u0938\u0940", "\u092e\u091c\u093e\u0915", "\u0939\u0902\u0938\u0940"]
+
+
+def is_comedy_request(tone: str, angle: str) -> bool:
+    """True when the requested tone/angle demands comedy — jokes become mandatory, not optional."""
+    combined = f"{tone or ''} {angle or ''}".lower()
+    return any(w in combined for w in _COMEDY_KEYWORDS)
+
+
+def get_role_identity(scene_style: str, tone: str, angle: str) -> str:
+    """Role priming for the dialogue writer: a funny screenwriter identity when comedy is requested."""
+    if is_comedy_request(tone, angle):
+        return (
+            "You are a FUNNY SCREENWRITER for viral Hindi comedy reels \u2014 a joke writer, not a news reporter. "
+            f"You are writing a {angle or 'Funny'} {scene_style or 'Dialogue'} reel. "
+            "Your job is making people LAUGH while delivering the verified news \u2014 every funny beat needs a real joke."
+        )
+    return "You are a master Hindi Dialogue & Voiceover Scriptwriter for short reels and videos."
+
+
 def get_creative_guidelines(scene_style: str, character_count: int, tone: str, angle: str) -> str:
     """Generate explicit directives to ensure AI respects Angle (creative situation), Tone (jokes/emotions), and Style."""
     combined = f"{tone} {angle}".lower()
@@ -754,7 +833,7 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
         f"- The angle dictates HOW you imagine and set up the scene!\n"
         f"- Do NOT just report dry news. Create an imaginary relatable situation, sketch, or scenario:\n"
         f"  * If Tragic & Heartbreaking: Frame through a quiet, solemn moment of personal loss, deep empathy, and emotional vulnerability.\n"
-        f"  * If Funny & Relatable: Create an everyday situation (e.g. friends at a chai tapri, dealing with hilarious daily absurdities).\n"
+        f"  * If Funny & Relatable: Create an everyday situation (e.g. friends dealing with hilarious daily absurdities at home or at work).\n"
         f"  * If Sarcastic & Edgy: Roast the ironies and contrast expectations vs reality with sharp wit.\n"
         f"  * If Bollywood Masala: Inject dramatic Hindi cinema flair, punchy one-liners, and dramatic tension.\n"
         f"  * If Gen-Z Hinglish: Use modern viral slang, relatable meme references, and casual conversational flow.\n"
@@ -770,12 +849,18 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
             f"- Spoken dialogue must honor human grief with tender sensitivity and solemn dignity.\n"
             f"- Avoid loud, sensational, or rushed delivery."
         )
-    elif any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी"]):
+    elif is_comedy_request(tone, angle):
         tone_guidance = (
-            f"😂 TONE DIRECTIVE ({tone}):\n"
-            f"- THIS MUST BE GENUINELY FUNNY! Use real jokes, witty banter, humorous metaphors, and comedic punchlines.\n"
-            f"- Characters should react with funny shock, tease each other, or make hilarious relatable comparisons.\n"
-            f"- Avoid flat, boring news reciting. Be entertaining, witty, and creative!"
+            f"😂 TONE DIRECTIVE ({tone}) — COMPLIANCE IS MANDATORY, NOT OPTIONAL:\n"
+            f"- AT LEAST 70% OF BEATS (round up) must be GENUINELY FUNNY. A comedy reel that is mostly dry news recitation is a SYSTEM BUG.\n"
+            f"- JOKE MANDATE: every funny beat must contain at least one REAL JOKE — a setup followed by a punchline. A 'humorous tone' with no actual joke is a FAILURE.\n"
+            f"- Joke tools (use at least 2 across the reel): exaggerate the news absurdity, rule of three, callback to an earlier beat, misdirection, relatable everyday comparison (rent, traffic, relatives, jugaad).\n"
+            f"- Solo Speech/Monologue: speak directly to the viewer — rhetorical question as setup, then punchline; callback the opening joke in the final beat.\n"
+            f"- The remaining beats may deliver straight facts but must stay NEUTRAL — never somber, never dark, never contradicting the comedy.\n"
+            f"- Characters react with funny shock, tease each other mercilessly, and make hilarious relatable comparisons to everyday Indian life.\n"
+            f"- Comedy comes FROM the news facts: exaggerate the absurdity, roast the irony, land meme-worthy punchlines grounded in verified facts.\n"
+            f"- Audio/SFX for comedic tone MUST include comedic background music AND laughter in beats where humor lands.\n"
+            f"- SELF-CHECK: count your beats — at least 70% funny, zero beats contradicting the tone. Rewrite failures before emitting."
         )
     elif any(w in combined for w in ["viral", "high energy", "धमाकेदार"]):
         tone_guidance = (
@@ -941,19 +1026,54 @@ class DialogueNarrationAgent(BaseAgent):
         sub_instruction: Optional[str] = None,
         engine_mode: str = "first_local_then_agy",
         num_scenes: Optional[int] = None,
-    ) -> List[str]:
+        previous_draft: Optional[str] = None,
+        feedback: Optional[str] = None,
+        finalized_characters: Optional[List[CharacterProfile]] = None,
+        finalized_scenes: Optional[List[SceneSettingOption]] = None,
+        story_steps: Optional[List[StoryBeatStep]] = None,
+    ) -> List[ScriptDialogue]:
         """Craft spoken Hindi dialogues for all items scene-by-scene respecting character count, style, tone, and angle."""
         budget = get_duration_budget(duration_sec)
         guidance = get_sentence_guidance(duration_sec, budget["recommended_words"], budget["max_words"])
-        personas = get_character_personas(
-            scene_style, character_count, tone, preferred_angle,
-            topic_or_script=news_input, sample_story=sample_story
-        )
+
+        if finalized_characters and len(finalized_characters) > 0:
+            personas = [
+                f"{c.name} ({c.role_or_job}, Attire: {c.attire}, Emotional Stance: {c.emotional_stance})"
+                for c in finalized_characters[:character_count]
+            ]
+        else:
+            personas = get_character_personas(
+                scene_style, character_count, tone, preferred_angle,
+                topic_or_script=news_input, sample_story=sample_story
+            )
         creative_rules = get_creative_guidelines(scene_style, character_count, tone, preferred_angle)
 
-        # Dynamic scene count: respect user override or calculate from duration, style, and character count
+        # Defensive: never enter generation with fewer personas than configured.
+        if len(personas) < character_count:
+            _need = character_count - len(personas)
+            _have_first = set()
+            for _pp in personas:
+                _t = re.findall(r"[\w]+", _pp.lower(), flags=re.UNICODE)
+                if _t:
+                    _have_first.add(_t[0])
+            for _gp in get_character_personas(
+                scene_style, character_count + _need, tone, preferred_angle,
+                topic_or_script=news_input, sample_story=sample_story,
+            ):
+                _gt = re.findall(r"[\w]+", _gp.lower(), flags=re.UNICODE)
+                if _gt and _gt[0] in _have_first:
+                    continue
+                personas.append(_gp)
+                if _gt:
+                    _have_first.add(_gt[0])
+                if len(personas) >= character_count:
+                    break
+
+        # Dynamic scene count: respect user override, story steps count, or calculate from duration
         if num_scenes is not None and 1 <= num_scenes <= 5:
             actual_scenes = num_scenes
+        elif story_steps and len(story_steps) > 0:
+            actual_scenes = min(len(story_steps), 5)
         elif duration_sec <= 8 and (scene_style.lower() in ["speech", "monologue"] or character_count == 1):
             actual_scenes = 1
         elif duration_sec <= 15:
@@ -963,20 +1083,27 @@ class DialogueNarrationAgent(BaseAgent):
         else:
             actual_scenes = budget.get("scenes", 3)
 
+        # Every configured character must speak at least once: never run fewer
+        # beats than speaking characters (capped at 5 scenes max).
+        if character_count > 1:
+            actual_scenes = max(actual_scenes, min(character_count, 5))
+
         per_scene_words = max(6, budget["recommended_words"] // actual_scenes)
         per_scene_max = max(8, budget["max_words"] // actual_scenes + 2)
 
         sample_directive = ""
         if sample_story and sample_story.strip():
             sample_directive = (
-                f"\n⭐ SAMPLE STORY (HIGHEST PRECEDENCE OVER GENERAL INSTRUCTIONS):\n"
+                f"\n📌 SAMPLE EXAMPLE (style/format reference ONLY \u2014 lowest precedence):\n"
                 f"\"{sample_story.strip()}\"\n"
-                f"DISCREPANCY PRECEDENCE RULE: In case of any conflict between general instructions and this sample story, "
-                f"THE SAMPLE STORY TAKES PRECEDENCE! Adapt the characters, plot points, and dialogue from this sample story.\n"
+                f"Generate from the NEWS facts above with your own creativity. This sample is ONLY an "
+                f"example of tone and format \u2014 do NOT copy its characters, plot points, or dialogue lines. "
+                f"If the sample conflicts with the verified news facts or the locked characters above, "
+                f"the NEWS and the LOCKED decisions win.\n"
             )
 
         items_desc = "\n\n".join([
-            f"SCRIPT {i+1}:\nAngle: {it['angle']}\nHook: {it['hook']}"
+            f"SCRIPT {i+1}:\nAngle: {it['angle']}\nHook idea (express in your own natural spoken Hindi — NEVER quote verbatim): {clean_hook_for_dialogue(it['hook'])}"
             for i, it in enumerate(items)
         ])
 
@@ -984,6 +1111,38 @@ class DialogueNarrationAgent(BaseAgent):
         props_text = ", ".join(verification.physical_props) if (verification and verification.physical_props) else ""
         locs_text = ", ".join(verification.key_locations) if (verification and verification.key_locations) else ""
         conflict_text = verification.core_conflict_or_irony if (verification and verification.core_conflict_or_irony) else ""
+
+        # --- Real Stage 2 connection: finalized scenes drive the dialogue setting ---
+        # StoryBeatStep carries no location info, so without this the dialogue
+        # setting falls back to raw verification locations and ignores Stage 2.
+        beat_scene_settings: List[Dict[str, str]] = []
+        if finalized_scenes:
+            for sc in finalized_scenes:
+                beat_scene_settings.append({
+                    "location": sc.location_name,
+                    "atmosphere": sc.atmosphere or "",
+                    "lighting": sc.lighting_mood or "",
+                    "props": ", ".join(sc.props) if sc.props else "",
+                })
+        setting_location_text = locs_text or "Authentic Indian street or workplace setting"
+        if beat_scene_settings:
+            scene_setting_lines = "\n".join([
+                f"- Beat {i + 1} setting: {s['location']}"
+                + (f" | Atmosphere: {s['atmosphere']}" if s["atmosphere"] else "")
+                + (f" | Lighting: {s['lighting']}" if s["lighting"] else "")
+                + (f" | Props in frame: {s['props']}" if s["props"] else "")
+                for i, s in enumerate(beat_scene_settings)
+            ])
+            setting_location_text = "; ".join(s["location"] for s in beat_scene_settings)
+        else:
+            scene_setting_lines = f"- Beat setting: {setting_location_text}"
+
+        # --- Respect the user's chosen dialogue type (scene_style) structurally ---
+        dialogue_type_directive = get_dialogue_type_directive(scene_style, character_count)
+
+        # --- Role priming: funny screenwriter identity when comedy is requested ---
+        _eff_angle = (items[0].get("angle") if items else "") or preferred_angle or ""
+        role_identity = get_role_identity(scene_style, tone, _eff_angle)
 
         sub_directive = f"\nChief Editor Directive & Dialogue Word Limits:\n{sub_instruction}\n" if sub_instruction else ""
 
@@ -994,90 +1153,150 @@ class DialogueNarrationAgent(BaseAgent):
         # Dynamically build continuous-shot beat templates for 1 to 5 scenes
         scene_templates = []
         for s_idx in range(1, actual_scenes + 1):
-            char_s = personas[(s_idx - 1) % len(personas)]
-            if actual_scenes == 1:
-                label = f"BEAT 1 (Continuous Master Shot: Complete Story - ~{per_scene_words} words, max {per_scene_max}w)"
-                act = f"Single continuous vertical shot in {locs_text or 'the setting'}; character holds {props_text or 'key prop'}, delivering complete narrative fluidly"
+            matching_step = story_steps[s_idx - 1] if (story_steps and s_idx <= len(story_steps)) else None
+            # Each beat plays in its Stage 2 finalized scene (cycled if fewer scenes than beats)
+            _beat_setting = beat_scene_settings[(s_idx - 1) % len(beat_scene_settings)] if beat_scene_settings else None
+            if _beat_setting:
+                beat_setting_text = _beat_setting["location"]
+                beat_setting_line = (
+                    f"{_beat_setting['location']}"
+                    + (f" | {_beat_setting['atmosphere']}" if _beat_setting["atmosphere"] else "")
+                    + (f" | Lighting: {_beat_setting['lighting']}" if _beat_setting["lighting"] else "")
+                    + (f" | Props: {_beat_setting['props']}" if _beat_setting["props"] else "")
+                )
+            else:
+                beat_setting_text = locs_text or "the setting"
+                beat_setting_line = beat_setting_text
+            if matching_step:
+                char_s = matching_step.character_name
+            else:
+                char_s = personas[(s_idx - 1) % len(personas)]
+
+            if matching_step:
+                label = f"BEAT {s_idx} (Shot {s_idx})"
+                act = f"{matching_step.action_step}"
+                dial = f"Conversational Hindi dialogue fulfilling goal: {matching_step.speech_objective}"
+            elif actual_scenes == 1:
+                label = f"BEAT 1 (Continuous Master Shot: Complete Story)"
+                act = f"Single continuous vertical shot in {beat_setting_text}; character holds {props_text or 'key prop'}, delivering complete narrative fluidly"
                 dial = "Dynamic Hindi dialogue stating what happened, the context, and key takeaway in one fluid take"
             elif n_mode == "fun_first":
                 if s_idx == 1:
-                    label = f"BEAT 1 (Shot 1: Hilarious Banter / Misunderstanding - ~{per_scene_words} words, max {per_scene_max}w)"
-                    act = f"Continuous shot starts in {locs_text or 'the setting'}; characters engaged in witty relatable banter or comedic misconception"
+                    label = f"BEAT 1 (Shot 1: Hilarious Banter / Misunderstanding)"
+                    act = f"Continuous shot starts in {beat_setting_text}; characters engaged in witty relatable banter or comedic misconception"
                     dial = "Witty, humorous Hindi conversational opener establishing a relatable premise (NO direct news drop yet)"
                 elif s_idx == 2:
-                    label = f"BEAT 2 (Shot 2: The Shocking News Reveal - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT 2 (Shot 2: The Shocking News Reveal)"
                     act = f"Camera smoothly pivots/refocuses; character pulls out {props_text or 'smartphone/document'} revealing the verified news facts"
                     dial = "Sharp Hindi reality check dropping the actual news facts and context, shattering the previous illusion"
                 elif s_idx == actual_scenes:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Humorous Punchline & Resolution - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Humorous Punchline & Resolution)"
                     act = f"Camera holds continuous framed reaction; crowd or companions react as character lands the punchline"
                     dial = "Logical concluding Hindi line delivering witty punchline, satirical twist, or meme takeaway"
                 else:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Escalation & Fact Evidence - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Escalation & Fact Evidence)"
                     act = f"Camera reframes; examining {props_text or 'the physical object'} with verified details"
                     dial = "Conversational Hindi counterpoint or startling fact"
             elif n_mode == "mid_conversation":
                 if s_idx == 1:
-                    label = f"BEAT 1 (Shot 1: Everyday Life Routine & Banter - ~{per_scene_words} words, max {per_scene_max}w)"
-                    act = f"Continuous shot begins in {locs_text or 'the setting'}; characters debating daily life, work, or routine matters"
+                    label = f"BEAT 1 (Shot 1: Everyday Life Routine & Banter)"
+                    act = f"Continuous shot begins in {beat_setting_text}; characters debating daily life, work, or routine matters"
                     dial = "Relatable conversational Hindi dialogue reflecting daily Indian hustle or workplace debate"
                 elif s_idx == 2:
-                    label = f"BEAT 2 (Shot 2: Sudden News Bombshell Discovery - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT 2 (Shot 2: Sudden News Bombshell Discovery)"
                     act = f"Camera tracks over shoulder as character notices breaking news on {props_text or 'smartphone screen/paper'} with wide-eyed shock"
                     dial = "Urgent Hindi line interrupting the banter with the shocking verified news headline and fact"
                 elif s_idx == actual_scenes:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Mutual Shock & Comic Resolution - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Mutual Shock & Comic Resolution)"
                     act = f"Camera captures both characters in continuous two-shot sharing mutual disbelief and reaction"
                     dial = "Witty concluding Hindi line re-evaluating their situation in light of the news"
                 else:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Examining the Evidence - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Examining the Evidence)"
                     act = f"Camera continuously pans; verifying {props_text or 'the details'} together"
                     dial = "Conversational Hindi detail verifying the bizarre fact"
             elif n_mode == "curiosity_first":
                 if s_idx == 1:
-                    label = f"BEAT 1 (Shot 1: Puzzling Observation / Mystery - ~{per_scene_words} words, max {per_scene_max}w)"
-                    act = f"Continuous shot opens in {locs_text or 'the setting'}; character points out a puzzling event or strange crowd behavior"
+                    label = f"BEAT 1 (Shot 1: Puzzling Observation / Mystery)"
+                    act = f"Continuous shot opens in {beat_setting_text}; character points out a puzzling event or strange crowd behavior"
                     dial = "Intriguing Hindi observation questioning what on earth is happening"
                 elif s_idx == 2:
-                    label = f"BEAT 2 (Shot 2: Unpacking the News Mystery - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT 2 (Shot 2: Unpacking the News Mystery)"
                     act = f"Camera reframes smoothly; second character reveals the real verified news backstory holding {props_text or 'key prop'}"
                     dial = "Hindi explanation revealing the verified facts and why this event is actually taking place"
                 elif s_idx == actual_scenes:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Satirical Realization & Payoff - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Satirical Realization & Payoff)"
                     act = f"Camera holds the final reaction framed against the ongoing backdrop"
                     dial = "Memorable Hindi punchline or eye-opening satirical takeaway"
                 else:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Deeper Revelation - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Deeper Revelation)"
                     act = f"Camera reframes dynamically to show public reaction"
                     dial = "Surprising Hindi supporting fact or evidence"
             else:  # news_first default
                 if s_idx == 1:
-                    label = f"BEAT 1 (Shot 1: Breaking Hook & Disruption - ~{per_scene_words} words, max {per_scene_max}w)"
-                    act = f"Continuous shot starts in {locs_text or 'the setting'}; character disrupts with breaking news holding {props_text or 'the news'}"
+                    label = f"BEAT 1 (Shot 1: Breaking Hook & Disruption)"
+                    act = f"Continuous shot starts in {beat_setting_text}; character disrupts with breaking news holding {props_text or 'the news'}"
                     dial = "Attention-grabbing Hindi hook line clearly introducing what happened and where"
                 elif s_idx == 2:
-                    label = f"BEAT 2 (Shot 2: Fact Counterpoint & Interaction - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT 2 (Shot 2: Fact Counterpoint & Interaction)"
                     act = f"Camera continuously refocuses; second character responds directly examining {props_text or 'the physical object'}"
                     dial = "Hindi dialogue answering Beat 1 with verified facts and contextual depth"
                 elif s_idx == actual_scenes:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Payoff & Resolution - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Payoff & Resolution)"
                     act = f"Camera captures concluding two-shot; characters deliver final verdict"
                     dial = "Logical concluding Hindi line delivering witty payoff, punchline, or impact"
                 else:
-                    label = f"BEAT {s_idx} (Shot {s_idx}: Evidence & Escalation - ~{per_scene_words} words, max {per_scene_max}w)"
+                    label = f"BEAT {s_idx} (Shot {s_idx}: Evidence & Escalation)"
                     act = f"Camera pivots continuously; revealing startling evidence"
                     dial = "Conversational Hindi counterpoint or startling fact"
 
+            spk = sanitize_persona_name(char_s.split("(")[0].strip()).upper() or f"SPEAKER{s_idx}"
             scene_templates.append(
-                f"{label}:\n"
-                f"CHARACTER: {char_s}\n"
-                f"ACTION: [{act}]\n"
-                f"DIALOGUE: [{dial}]"
+                f"BEAT {s_idx}:\n"
+                f"Camera Focus & Action: [{act}]\n"
+                f"Audio/SFX: [Background music bed fitting the tone + ambient scene SFX + laughter where the beat is funny]\n"
+                f"Text Overlay (Optional): [Short punchy ENGLISH popup text only if it adds punch]\n"
+                f"{spk}: \"[{dial}]\""
             )
-        sample_scenes = "\n\n".join(scene_templates)
+        _cast_lines = "\n".join(
+            f"\u26ac [{sanitize_persona_name(p.split('(')[0].strip()).upper()} ({sanitize_persona_name(p.split('(')[0].strip())}): English clothing/appearance description]"
+            for p in personas[:character_count]
+        )
+        sample_scenes = (
+            "[Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]\n\n"
+            "SCENE DETAIL:\n"
+            f"\u26ac [{setting_location_text} \u2014 vivid English description of the location, vibe and energy]\n\n"
+            "CHARACTERS & CLOTHING:\n"
+            f"{_cast_lines}\n\n"
+            + "\n\n".join(scene_templates)
+        )
+
+        revision_directive = ""
+        if previous_draft and previous_draft.strip():
+            fb_text = feedback.strip() if feedback and feedback.strip() else (sub_instruction or "Improve character interconnectedness and reactive flow.")
+            revision_directive = (
+                f"\n# 🔄 REVISION & CORRECTION MODE (HIGH PRIORITY):\n"
+                f"You are REVISING and REFINING an existing dialogue draft based on user feedback.\n"
+                f"Do NOT generate disconnected lines. Use this previous draft as the reference baseline and directly resolve the user's critique:\n\n"
+                f"PREVIOUS DRAFT:\n{previous_draft.strip()}\n\n"
+                f"USER CORRECTION FEEDBACK:\n{fb_text}\n\n"
+                f"CORRECTION MANDATE:\n"
+                f"- Directly address and fix the issues in the user's feedback.\n"
+                f"- Make character lines tightly INTERCONNECTED: use rapid reactive ping-pong, emotional replies, and direct rebuttals to what the previous speaker said.\n"
+                f"- Keep total spoken dialogue strictly within ~{budget['recommended_words']} words (max {budget['max_words']} words).\n"
+            )
+        elif feedback and feedback.strip():
+            # First run carrying a user instruction (no previous draft yet): apply
+            # it to the fresh generation. On retry the dedicated refine prompt
+            # above is the sole feedback carrier instead.
+            revision_directive = (
+                f"\n# ⭐ USER EXTRA INSTRUCTION (HIGH PRIORITY):\n"
+                f"{feedback.strip()}\n"
+                f"Apply this instruction while writing the dialogue below.\n"
+            )
 
         prompt = render_prompt(
             "dialogue_writer/write_dialogue_batch.md",
+            role_identity=role_identity,
             news_input=news_input,
             duration_sec=duration_sec,
             actual_scenes=actual_scenes,
@@ -1088,19 +1307,54 @@ class DialogueNarrationAgent(BaseAgent):
             per_scene_max=per_scene_max,
             narrative_name=chosen_narrative["name"],
             narrative_desc=chosen_narrative["description"],
-            character_count=len(personas),
+            character_count=character_count,
             personas_list="\n".join(["- " + p for p in personas]),
-            setting_location=locs_text or "Authentic Indian street or workplace setting",
+            setting_location=setting_location_text,
+            scene_setting_lines=scene_setting_lines,
+            dialogue_type_directive=dialogue_type_directive,
             physical_props=props_text or "Specific physical objects in the news story",
             core_conflict=conflict_text or "The central viral story hook",
             facts_text=facts_text,
             creative_rules=creative_rules,
             sample_directive=sample_directive,
             sub_directive=sub_directive,
+            revision_directive=revision_directive,
             guidance=guidance,
             items_desc=items_desc,
             sample_scenes=sample_scenes,
+            tone=tone,
         )
+
+        # --- RETRY PATH: dedicated refine prompt (not the generation prompt) ---
+        # A retry refines the exact previous visible draft with the user's custom
+        # instruction. All creative decisions are LOCKED: same characters, same
+        # count, same angle/hook meaning, same dialogue type, same word budget.
+        # No narrative re-roll, no persona re-selection — a surgical refinement.
+        if previous_draft and previous_draft.strip():
+            if finalized_characters and len(finalized_characters) > 0:
+                speaker_names = [c.name for c in finalized_characters[:character_count]]
+            else:
+                speaker_names = [
+                    re.sub(r"^[^\w\u0900-\u097F]+", "", p).split("(")[0].strip() or p
+                    for p in personas[:character_count]
+                ]
+            retry_angle = (items[0].get("angle") if items else "") or preferred_angle or ""
+            retry_hook = clean_hook_for_dialogue(items[0].get("hook", "")) if items else ""
+            prompt = render_prompt(
+                "dialogue_writer/refine_dialogue_batch.md",
+                character_count=character_count,
+                speaker_names_list="\n".join(f"- {n}" for n in speaker_names),
+                angle=retry_angle,
+                tone=tone,
+                hook_idea=retry_hook,
+                dialogue_type_name=scene_style or "Dialogue",
+                dialogue_type_directive=dialogue_type_directive,
+                rec_words=budget["recommended_words"],
+                max_words=budget["max_words"],
+                previous_draft=previous_draft.strip(),
+                feedback=(feedback.strip() if feedback and feedback.strip()
+                          else "Improve character interconnectedness and reactive flow."),
+            )
 
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
@@ -1114,34 +1368,87 @@ class DialogueNarrationAgent(BaseAgent):
         # Parse blocks by SCRIPT header (supporting markdown like **SCRIPT 1:**, ### SCRIPT 1, etc.)
         blocks = re.split(r"(?:###|\*\*|##)?\s*SCRIPT\s*(\d+)\s*(?:\*\*)?\s*:\s*", raw_output, flags=re.IGNORECASE)
 
+        def _beat_timestamp(s_num: int) -> str:
+            # Beat timings are computed deterministically in code — the model is
+            # never asked to write timestamps (it gets clock arithmetic wrong).
+            per = duration_sec / max(1, actual_scenes)
+            start = (s_num - 1) * per
+            end = s_num * per
+            def _fmt(t):
+                return f"{int(t // 60)}:{int(t % 60):02d}"
+            return f"{_fmt(start)} - {_fmt(end)}"
+
+        def _match_persona(name: str) -> str:
+            nl = name.strip().lower()
+            for p in personas:
+                pl = p.split("(")[0].strip()
+                pll = pl.lower()
+                if nl == pll or nl in pll or pll in nl:
+                    return pl
+            return name.strip()
+
         def parse_scene_block(content: str) -> List[Dict[str, str]]:
+            # Tolerate legacy/alternative [Time: 0:00 - 0:04] headers: when no
+            # BEAT/SCENE headers exist, convert them to sequential BEAT markers.
+            if not re.search(r"(?:SCENE|PART|BEAT)\s*\d+", content, flags=re.IGNORECASE):
+                _bc = [0]
+                def _time_to_beat(m):
+                    _bc[0] += 1
+                    return f"\nBEAT {_bc[0]}:"
+                content = re.sub(r"\[Time:[^\]\n]*\]", _time_to_beat, content, flags=re.IGNORECASE)
             scene_chunks = re.split(r"(?:###|\*\*|##)?\s*(?:SCENE|PART|BEAT)\s*(\d+)[^:]*:\s*", content, flags=re.IGNORECASE)
             script_scenes = []
             if len(scene_chunks) > 1:
                 for s_idx in range(1, len(scene_chunks), 2):
                     s_num = int(scene_chunks[s_idx])
                     s_body = scene_chunks[s_idx + 1]
-                    char_name = personas[(s_num - 1) % len(personas)]
+                    char_name = _match_persona(personas[(s_num - 1) % len(personas)]) if personas else ""
                     dial_text = ""
                     action_text = ""
+                    sfx_text = ""
+                    overlay_text = ""
                     for line in s_body.split("\n"):
                         ls = line.strip()
+                        if not ls or ls.startswith("\u26ac"):
+                            continue
                         clean_ls = re.sub(r"^\*+|\*+$", "", ls).strip()
                         upper_ls = clean_ls.upper()
-                        if upper_ls.startswith("CHARACTER:"):
-                            char_name = clean_ls.split(":", 1)[-1].strip("[] \"'*")
+                        if upper_ls.startswith("CAMERA FOCUS"):
+                            action_text = clean_ls.split(":", 1)[-1].strip("[] \"'*")
+                        elif upper_ls.startswith("AUDIO/SFX:") or upper_ls.startswith("SFX:") or upper_ls.startswith("AUDIO:"):
+                            sfx_text = clean_ls.split(":", 1)[-1].strip("[] \"'*")
+                        elif upper_ls.startswith("TEXT OVERLAY"):
+                            overlay_text = clean_ls.split(":", 1)[-1].strip("[] \"'*\u201c\u201d")
+                        elif upper_ls.startswith("CHARACTER:"):
+                            char_name = _match_persona(clean_ls.split(":", 1)[-1].strip("[] \"'*"))
                         elif upper_ls.startswith("ACTION:") or upper_ls.startswith("BACKGROUND & ACTION:") or upper_ls.startswith("BACKGROUND & VISUAL ACTION:") or upper_ls.startswith("BACKGROUND:") or upper_ls.startswith("VISUAL:"):
                             action_text = clean_ls.split(":", 1)[-1].strip("[] \"'*")
                         elif upper_ls.startswith("DIALOGUE:") or upper_ls.startswith("LINE:"):
                             dial_text = clean_hindi_dialogue(clean_ls.split(":", 1)[-1].strip("[] \"'*"))
-                        elif not any(upper_ls.startswith(k) for k in ["SCENE", "SCRIPT", "PART", "BEAT", "TIME", "SHOT"]) and dial_text:
-                            dial_text += " " + clean_hindi_dialogue(clean_ls)
+                        elif upper_ls.startswith("TIME:") or upper_ls.startswith("SETTING:"):
+                            continue
+                        else:
+                            # New inline speaker format:  NAME: "dialogue"
+                            m = re.match(r"^([A-Za-z][A-Za-z .'\-]*):\s*[\"“](.+?)[\"”]\s*$", clean_ls)
+                            if not m:
+                                m = re.match(r"^([A-Za-z][A-Za-z .'\-]*):\s*(.+)$", clean_ls)
+                            if m:
+                                spk, spoken = m.group(1).strip(), m.group(2).strip().strip("\"“”")
+                                if spk.upper() not in ("SCENE DETAIL", "CHARACTERS", "CLOTHING", "BEAT", "SCRIPT", "FORMAT REQUIREMENT"):
+                                    char_name = _match_persona(spk)
+                                    if spoken:
+                                        dial_text = clean_hindi_dialogue(spoken)
+                            elif dial_text and not any(upper_ls.startswith(k) for k in ["SCENE", "SCRIPT", "PART", "BEAT", "SHOT"]):
+                                dial_text += " " + clean_hindi_dialogue(clean_ls)
                     if dial_text:
                         script_scenes.append({
                             "scene_number": s_num,
                             "character": char_name,
                             "dialogue": dial_text,
                             "action": action_text,
+                            "sfx": sfx_text,
+                            "overlay": overlay_text,
+                            "timestamp": _beat_timestamp(s_num),
                         })
             return script_scenes
 
@@ -1205,8 +1512,9 @@ class DialogueNarrationAgent(BaseAgent):
                 elif verification and verification.verification_summary:
                     fact_detail = verification.verification_summary
 
-                # Construct authentic, meaningful Hindi dialogue lines aligned with narrative mode
-                clean_hook = it.get("hook") or "अरे सुनो भाई! आज की सबसे बड़ी खबर सामने आ गई है।"
+                # Construct authentic, meaningful Hindi dialogue lines aligned with narrative mode.
+                # Never let raw hook template text (emojis, "bada update" boilerplate) leak into spoken lines.
+                clean_hook = clean_hook_for_dialogue(it.get("hook") or "") or "अरे सुनो भाई! आज की सबसे बड़ी खबर सामने आ गई है।"
 
                 if n_mode == "fun_first":
                     beat_pool = [
@@ -1230,7 +1538,7 @@ class DialogueNarrationAgent(BaseAgent):
                         f"तुम्हें नहीं पता? सबसे बड़ी वजह ये है कि {clean_hook}",
                         f"असली पेंच ये है कि {fact_detail or 'सबूतों के बाद अब प्रशासन में हड़कंप मच गया है।'}",
                         "लोग हैरान हैं कि आखिर ये सब इतनी जल्दी कैसे हो गया!",
-                        "वाह भाई वाह! इसे कहते हैं असली ट्विस्ट, अब बात पूरी समझ आई!",
+                        "अब सबकी नज़र इस पर है कि इस खबर का असली असर किस पर पड़ेगा!",
                     ]
                 else:  # news_first
                     beat_pool = [

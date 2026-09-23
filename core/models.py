@@ -18,6 +18,7 @@ class NewsArticle(BaseModel):
 
 class NewsVerificationReport(BaseModel):
     """Step 1: News Verification Report & Story Research Dossier."""
+    headline: str = ""
     is_verified: bool = True
     confidence_score: int = 90  # 0 to 100
     verification_summary: str = ""
@@ -30,6 +31,31 @@ class NewsVerificationReport(BaseModel):
     core_conflict_or_irony: str = ""
     tangible_actions: List[str] = Field(default_factory=list)
 
+
+class CharacterProfile(BaseModel):
+    """Step 2: Finalized Character Profile (Actor, Occupation, Attire, Persona)."""
+    name: str
+    role_or_job: str
+    attire: str = ""
+    emotional_stance: str = ""
+    relationship_dynamic: str = ""
+
+
+class StoryBeatStep(BaseModel):
+    """Step 2: Story Beat Action Step."""
+    beat_number: int
+    character_name: str
+    action_step: str
+    speech_objective: str
+
+
+class SceneSettingOption(BaseModel):
+    """Step 2: Finalized Scene Setting / Location Option (for downstream 9:16 scene selection)."""
+    scene_option_number: int = 1
+    location_name: str
+    atmosphere: str = ""
+    lighting_mood: str = ""
+    props: List[str] = Field(default_factory=list)
 
 
 class VideoScenePrompt(BaseModel):
@@ -65,6 +91,17 @@ class SceneItem(BaseModel):
     on_screen_text: str  # Hindi text overlay
     audio_sfx: str
     video_prompt: Optional[VideoScenePrompt] = None
+    # Step-4 coordination: per-beat direction + Step 2 system-knowledge pass-through.
+    # The character bible (role/attire/emotion) and the selected scene setting flow
+    # from the system into the final output — they are never re-invented per beat.
+    emotion: str = ""  # character's emotional expression while delivering this beat
+    character_role: str = ""  # from Step 2 character bible
+    character_attire: str = ""  # from Step 2 character bible
+    scene_location: str = ""  # selected (or newly created) location for this beat
+    scene_atmosphere: str = ""
+    scene_lighting: str = ""
+    scene_props: List[str] = Field(default_factory=list)
+    scene_source: str = ""  # "supplied" (selected from Step 2 options) | "new" (created in Step 4)
 
 
 class ReelScript(BaseModel):

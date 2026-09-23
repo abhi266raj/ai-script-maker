@@ -94,6 +94,8 @@ class SceneVisualsDirectorAgent(BaseAgent):
         sub_instruction: Optional[str] = None,
         engine_mode: str = "first_local_then_agy",
         preferred_frames: Optional[int] = None,
+        previous_scenes: Optional[List[SceneItem]] = None,
+        feedback: Optional[str] = None,
     ) -> List[SceneItem]:
         """
         Direct and break down the narration into visual scenes with strict prop and dialogue coordination.
@@ -132,6 +134,21 @@ class SceneVisualsDirectorAgent(BaseAgent):
 
         sub_directive = f"\nChief Editor Directive for Scene Direction:\n{sub_instruction}\n" if sub_instruction else ""
 
+        revision_directive = ""
+        if previous_scenes:
+            prev_scenes_text = "\n\n".join([
+                f"SCENE {sc.scene_number} [{sc.timestamp}]:\nCHARACTER: {sc.character}\nACTION: {sc.visual_b_roll}\nDIALOGUE: {sc.dialogue}"
+                for sc in previous_scenes
+            ])
+            fb = feedback.strip() if feedback and feedback.strip() else (sub_instruction or "Improve scene visual framing and continuity.")
+            revision_directive = (
+                f"\n# 🔄 REVISION & CORRECTION MODE (HIGH PRIORITY):\n"
+                f"You are REVISING existing storyboard scenes based on user feedback.\n"
+                f"PREVIOUS SCENES:\n{prev_scenes_text}\n\n"
+                f"USER CORRECTION FEEDBACK:\n{fb}\n\n"
+                f"MANDATE: Directly address the user's critique. Refine the actor actions, prop interactions, and visual framing accordingly.\n"
+            )
+
         timestamps_text = ", ".join(calculate_scene_timestamps(duration_sec, target_frames))
 
         prompt = render_prompt(
@@ -147,6 +164,7 @@ class SceneVisualsDirectorAgent(BaseAgent):
             actions_text=actions_text,
             lines_summary=lines_summary,
             sub_directive=sub_directive,
+            revision_directive=revision_directive,
         )
 
         raw_output = ""
@@ -198,7 +216,8 @@ class SceneVisualsDirectorAgent(BaseAgent):
                             dialogue=dialogue,
                             timestamp=time_val,
                             visual_b_roll=cleaned_act or visual,
-                            on_screen_text=text or dialogue[:25],
+                            # On-screen popup text is ALWAYS English — never fall back to Hindi dialogue.
+                            on_screen_text=text,
                             audio_sfx=sfx,
                         )
                     )
