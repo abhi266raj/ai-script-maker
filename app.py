@@ -586,6 +586,7 @@ with col_settings:
             if is_feed_mode:
                 feed_categories = [
                     "🇮🇳 India Top Stories & Breaking",
+                    "😂 Desi Quirky, Jugaad & Funny India",
                     "🏛️ Indian Politics, Elections & Governance",
                     "🪔 Indian Culture, Heritage & Festivals",
                     "🚀 India Tech, Space (ISRO) & Startups",
@@ -620,30 +621,35 @@ with col_settings:
 
             if is_feed_mode and (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat):
                 with st.spinner("Loading headlines…"):
-                    if "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                            articles = news_fetcher.get_india_trending(limit=8)
+                    if "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                            articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                    elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                            articles = news_fetcher.get_india_trending(limit=16)
                     elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                            articles = news_fetcher.get_top_indian_politics_news(limit=8)
+                            articles = news_fetcher.get_top_indian_politics_news(limit=16)
                     elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                            articles = news_fetcher.get_top_indian_culture_news(limit=8)
+                            articles = news_fetcher.get_top_indian_culture_news(limit=16)
                     elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                            articles = news_fetcher.get_top_india_tech_news(limit=8)
+                            articles = news_fetcher.get_top_india_tech_news(limit=16)
                     elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                            articles = news_fetcher.get_top_tech_news(limit=8)
+                            articles = news_fetcher.get_top_tech_news(limit=16)
                     elif "World" in selected_news_cat:
-                            articles = news_fetcher.get_top_world_news(limit=8)
+                            articles = news_fetcher.get_top_world_news(limit=16)
                     elif "Business" in selected_news_cat:
-                            articles = news_fetcher.get_top_business_news(limit=8)
+                            articles = news_fetcher.get_top_business_news(limit=16)
                     else:
-                            articles = news_fetcher.get_top_india_news(limit=8)
+                            articles = news_fetcher.get_top_india_news(limit=16)
                     st.session_state.live_news_articles = articles
                     st.session_state.loaded_news_cat = selected_news_cat
 
             if is_feed_mode:
                 # Headline dropdown from live feed — persists selection and avoids re-fetching unless refreshed
-                arts = st.session_state.live_news_articles[:8]
+                arts = st.session_state.live_news_articles[:16]
                 if arts:
-                    headline_options = [f"{i + 1}. {a.title[:80]}" for i, a in enumerate(arts)]
+                    headline_options = [
+                        f"{i + 1}. {'[' + a.time_label + '] ' if a.time_label else ''}{a.title[:75]}"
+                        for i, a in enumerate(arts)
+                    ]
                     saved_headline = st.session_state.get("selected_headline_title") or app_cfg.get("selected_headline", "")
                     active_headline = st.session_state.get("active_story_input", "") or saved_headline
                     hl_idx = 0

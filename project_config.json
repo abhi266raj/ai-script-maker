@@ -17,8 +17,8 @@
     ],
     "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
   },
-  "default_tone": "\ud83d\ude22 Emotional & Heartbreaking (\u092d\u093e\u0935\u0941\u0915 / \u0926\u0941\u0916\u0926)",
-  "news_category": "\ud83d\udd25 India Trending & Viral",
+  "default_tone": "\ud83d\ude02 Relatable Comedy & Sarcasm (\u0926\u0947\u0938\u0940 \u0939\u094d\u092f\u0942\u092e\u0930)",
+  "news_category": "\ud83d\ude02 Desi Quirky, Jugaad & Funny India",
   "engines": {
     "hybrid": {
       "key": "first_local_then_agy",
@@ -251,12 +251,12 @@
   "max_retries": 1,
   "batch_count": 1,
   "selected_script_index": 0,
-  "default_angle": "Dramatic Storytelling",
-  "character_count": 2,
+  "default_angle": "Funny & Relatable",
+  "character_count": 3,
   "scene_style": "Dialogue",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
-  "source_mode": "\ud83d\udd25 Trending Topics",
-  "selected_headline": "IIT Bombay Professor Suryanarayana Doolla, At Centre Of Student's Suicide Row, Sent On Leave"
+  "source_mode": "\ud83d\udce1 Live News",
+  "selected_headline": "Hyderabad Entrepreneur Calls Indian Passport 'Absolutely Useless': 'I Pay \u20b975L-\u20b91Cr Tax, Zero Advantages'"
 }

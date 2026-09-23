@@ -12,6 +12,8 @@ class NewsArticle(BaseModel):
     source: str
     snippet: str = ""
     published: str = ""
+    age_hours: Optional[float] = None
+    time_label: str = ""
 
 
 class NewsVerificationReport(BaseModel):
