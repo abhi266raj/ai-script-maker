@@ -4,7 +4,7 @@
   "description": "Autonomous multi-agent system transforming breaking news into viral, fact-checked Hindi reels with Google Flow / Veo 9:16 prompts",
   "default_language": "Hindi (Devanagari)",
   "interface_language": "English",
-  "default_engine": "agy_only",
+  "default_engine": "codex_only",
   "default_duration": 10,
   "default_batch_count": 1,
   "local_llm_support": {
@@ -17,8 +17,8 @@
     ],
     "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
   },
-  "default_tone": "\ud83d\ude02 Relatable Comedy & Sarcasm (\u0926\u0947\u0938\u0940 \u0939\u094d\u092f\u0942\u092e\u0930)",
-  "news_category": "\ud83d\udcbb Technology & AI",
+  "default_tone": "\ud83d\ude22 Emotional & Heartbreaking (\u092d\u093e\u0935\u0941\u0915 / \u0926\u0941\u0916\u0926)",
+  "news_category": "\ud83d\udd25 India Trending & Viral",
   "engines": {
     "hybrid": {
       "key": "first_local_then_agy",
@@ -248,15 +248,15 @@
     "port": 8501,
     "health_endpoint": "http://127.0.0.1:8501/_stcore/health"
   },
-  "max_retries": 3,
+  "max_retries": 1,
   "batch_count": 1,
   "selected_script_index": 0,
-  "default_angle": "Sarcastic & Edgy",
+  "default_angle": "Dramatic Storytelling",
   "character_count": 2,
   "scene_style": "Dialogue",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
   "source_mode": "\ud83d\udd25 Trending Topics",
-  "selected_headline": "Beyond ISRO: Meet 5 Indian Space Startups Making Global Headlines in 2026"
+  "selected_headline": "IIT Bombay Professor Suryanarayana Doolla, At Centre Of Student's Suicide Row, Sent On Leave"
 }

@@ -27,14 +27,15 @@
 
 ### 3. DEVELOPMENT & TESTING IN FEATURE BRANCH
 - All edits, file creations, and iterations must take place within the active feature branch.
-- Commits are made exclusively on the feature branch.
-- Before considering the feature complete and preparing to merge, run and verify the test suite:
+- **NEVER merge or commit without user review/verification.** Always present the proposed changes, test status, and diff summary to the user for explicit confirmation before finalizing commits or merging into `main`.
+- Run and verify the test suite on the feature branch when ready:
   ```bash
   .venv/bin/python3 -m unittest discover tests
   ```
 
-### 4. MERGE INTO MAIN UPON COMPLETION
-- Once the feature is complete and all tests pass cleanly:
+### 4. USER VERIFICATION & MERGE INTO MAIN
+- **CRITICAL**: The agent must **NOT** merge the feature branch into `main` automatically. The agent must present the solution to the user, wait for user verification/approval, and only proceed with merging to `main` when explicitly confirmed by the user.
+- Once the user verifies and approves merging:
   1. Switch to `main`:
      ```bash
      git checkout main

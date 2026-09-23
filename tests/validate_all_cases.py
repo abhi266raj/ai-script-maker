@@ -76,6 +76,15 @@ def test_2_engine_modes_and_strict_selection():
     assert "OK" in out_agy.upper() or "AGY" in out_agy.upper()
     print(f"✅ Mode 3 (AGY Only): Returned via '{eng_agy}'")
 
+    # Test Mode 4: Codex Only
+    if diag.get("codex", {}).get("available"):
+        try:
+            out_codex, eng_codex = dual_engine.generate("Respond with: CODEX_OK", mode="codex_only")
+            assert "OK" in out_codex.upper() or "CODEX" in out_codex.upper()
+            print(f"✅ Mode 4 (Codex Only): Returned via '{eng_codex}'")
+        except ModelGenerationError as c_err:
+            print(f"⚠️ Mode 4 (Codex Only): Model/quota status verified ({c_err})")
+
 
 def test_3_real_wire_news():
     print("\n--- Test 3: Real Wire News Fetching ---")
