@@ -1,9 +1,19 @@
-.venv/
+# Python
 __pycache__/
-*/__pycache__/
-*/*/__pycache__/
-*.pyc
-.DS_Store
-*.log
-.pytest_cache/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
 
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# Build artifacts
+*.app/
+
+# Editors
+.vscode/
+.idea/

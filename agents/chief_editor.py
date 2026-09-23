@@ -11,6 +11,9 @@ from core.models import (
     VideoPassVerification,
     AgentAuditItem,
     PipelineAuditReport,
+    CharacterProfile,
+    SceneSettingOption,
+    StoryBeatStep,
 )
 from agents.news_validator import news_validator
 from agents.contextual_selector import contextual_selector
@@ -216,11 +219,11 @@ class ChiefEditorCoordinatorAgent:
 
         return all_passed, overall_notes, retry_prompt
 
-    def orchestrate_reel_pipeline(
+    def execute_stage_1(
         self,
         news_input: str,
         scenario: str,
-        batch_size: int = 10,
+        batch_size: int = 1,
         target_seconds: int = 30,
         engine_mode: str = "first_local_then_agy",
         max_retries: int = 5,
@@ -230,15 +233,16 @@ class ChiefEditorCoordinatorAgent:
         scene_style: str = "Dialogue",
         preferred_tone: str = "",
         sample_story: Optional[str] = None,
+        extra_instruction: Optional[str] = None,
         **kwargs,
-    ) -> Generator[Dict[str, Any], None, ReelBatchResult]:
-        """Orchestrate the end-to-end multi-agent pipeline with full stage telemetry and error audit."""
+    ) -> Dict[str, Any]:
+        """Execute Stage 1: News Validation & Instruction Decomposition."""
         start_time = time.time()
+        stage1_start = time.time()
         total_scripts = max(1, batch_size)
         total_retries = 0
         agent_audits: List[AgentAuditItem] = []
 
-        # Extract clean tone and angle from kwargs / scenario if not explicitly provided
         active_tone = preferred_tone or kwargs.get("preferred_tone") or kwargs.get("tone") or ""
         if not active_tone and "Tone:" in scenario:
             for line in scenario.split("\n"):
@@ -262,10 +266,8 @@ class ChiefEditorCoordinatorAgent:
                     active_sample_story = line.split("Reference Sample Story:")[-1].strip(" \"'")
                     break
 
-        # Calculate pacing budget
         budget = get_duration_budget(target_seconds)
 
-        # Step 0: Master Agent decomposes master instruction into specialized sub-instructions
         sub_instructions = self.decompose_master_instruction(
             master_instruction=scenario,
             news_topic=news_input,
@@ -280,19 +282,21 @@ class ChiefEditorCoordinatorAgent:
             sample_story=active_sample_story,
         )
 
-        # -------------------------------------------------------------
-        # STAGE 1: NewsValidationAgent (Fact-checking against live wire data)
-        # -------------------------------------------------------------
-        stage1_start = time.time()
-        yield {
-            "step": 1,
-            "total_steps": 5,
-            "stage_label": "Stage 1 of 5: Instruction Decomposition & Wire Fact Validation",
-            "agent": news_validator.name,
-            "icon": news_validator.icon,
-            "status": f"👑 Master Agent: Decomposed instruction into 7 sub-instructions. Calibrated dialogue: ~{budget['recommended_words']}w (Max: {budget['max_words']}w). Fact-checking live wire...",
-            "data": {"sub_instructions": sub_instructions},
-        }
+        prev_verif = kwargs.get("previous_verification")
+        if extra_instruction and extra_instruction.strip():
+            state_history = kwargs.get("extra_instructions_history", [])
+            state_history.append(extra_instruction.strip())
+            if prev_verif:
+                sub_instructions["news_validator"] += (
+                    f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS FACT VERIFICATION (HIGH PRIORITY):\n"
+                    f"Previous Verified Facts: {prev_verif.verified_facts}\n"
+                    f"User Correction Feedback:\n{extra_instruction.strip()}\n"
+                    f"Mandate: Re-verify news story and refine facts/props/conflict directly incorporating this critique."
+                )
+            else:
+                sub_instructions["news_validator"] += (
+                    f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 1 (HIGH PRIORITY):\n{extra_instruction.strip()}"
+                )
 
         stage1_failures = 0
         stage1_errors = []
@@ -300,7 +304,12 @@ class ChiefEditorCoordinatorAgent:
 
         try:
             verification: NewsVerificationReport = news_validator.validate_news(
-                news_input, scenario, sub_instruction=sub_instructions["news_validator"], engine_mode=engine_mode
+                news_input,
+                scenario,
+                sub_instruction=sub_instructions["news_validator"],
+                engine_mode=engine_mode,
+                previous_verification=prev_verif,
+                feedback=extra_instruction,
             )
         except ModelGenerationError:
             raise
@@ -317,19 +326,9 @@ class ChiefEditorCoordinatorAgent:
                 sources=[],
             )
 
-        # Self-healing check for Step 1
         if verification.confidence_score < 70 and max_retries > 0:
             stage1_failures += 1
             stage1_errors.append(f"Initial confidence score low ({verification.confidence_score}%)")
-            yield {
-                "step": 1,
-                "total_steps": 5,
-                "stage_label": "Stage 1 of 5: Self-Healing Query Refinement",
-                "agent": news_validator.name,
-                "icon": "🔄",
-                "status": f"Agent 1 Self-Healing: Confidence low ({verification.confidence_score}%). Refining search query...",
-                "data": None,
-            }
             try:
                 verification = news_validator.validate_news(
                     news_input + " official confirmed news updates", scenario, engine_mode=engine_mode
@@ -355,29 +354,66 @@ class ChiefEditorCoordinatorAgent:
             )
         )
 
-        yield {
+        return {
             "step": 1,
             "total_steps": 5,
-            "stage_label": "Stage 1 of 5 Complete: Facts Verified",
-            "agent": news_validator.name,
-            "icon": news_validator.icon,
-            "status": f"Agent 1 Complete: Verified with {verification.confidence_score}% confidence.",
-            "data": {"verification": verification},
+            "news_input": news_input,
+            "scenario": scenario,
+            "batch_size": total_scripts,
+            "target_seconds": target_seconds,
+            "active_tone": active_tone,
+            "active_angle": active_angle,
+            "character_count": character_count,
+            "scene_style": scene_style,
+            "active_sample_story": active_sample_story,
+            "max_retries": max_retries,
+            "preferred_frames": preferred_frames,
+            "budget": budget,
+            "sub_instructions": sub_instructions,
+            "verification": verification,
+            "agent_audits": agent_audits,
+            "start_time": start_time,
+            "total_retries": total_retries,
+            "extra_instructions_history": [extra_instruction.strip()] if extra_instruction and extra_instruction.strip() else [],
         }
 
-        # -------------------------------------------------------------
-        # STAGE 2: HookAndAngleAgent (Formulate viral angles & hooks)
-        # -------------------------------------------------------------
+    def execute_stage_2(
+        self,
+        state: Dict[str, Any],
+        engine_mode: str = "first_local_then_agy",
+        extra_instruction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute Stage 2: Character Finalisation, Story Steps & Viral Hook Strategy."""
         stage2_start = time.time()
-        yield {
-            "step": 2,
-            "total_steps": 5,
-            "stage_label": "Stage 2 of 5: Viral Angles & Hindi Hooks",
-            "agent": hook_strategist.name,
-            "icon": hook_strategist.icon,
-            "status": f"Agent 2: Formulating {total_scripts} viral angles & scroll-stopping Hindi hooks...",
-            "data": None,
-        }
+        news_input = state["news_input"]
+        total_scripts = state["batch_size"]
+        preferred_angle = state["active_angle"]
+        active_tone = state["active_tone"]
+        verification = state["verification"]
+        target_seconds = state["target_seconds"]
+        character_count = state["character_count"]
+        scene_style = state["scene_style"]
+        active_scenario = state.get("scenario", "")
+        active_sample_story = state.get("active_sample_story", "")
+        sub_instructions = state["sub_instructions"]
+
+        # Capture previous characters and scenes if re-running Stage 2
+        prev_chars = state.get("available_characters") or state.get("finalized_characters")
+        prev_scenes = state.get("available_scenes")
+
+        if extra_instruction and extra_instruction.strip():
+            state.setdefault("extra_instructions_history", []).append(extra_instruction.strip())
+            if prev_chars:
+                sub_instructions["hook_strategist"] += (
+                    f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS CHARACTERS & SCENES (HIGH PRIORITY):\n"
+                    f"Previous Characters: {[c.name for c in prev_chars]}\n"
+                    f"User Correction Feedback:\n{extra_instruction.strip()}\n"
+                    f"Mandate: Re-finalize characters (names, jobs, attire) and scene locations directly addressing this critique."
+                )
+            else:
+                sub_instructions["hook_strategist"] += (
+                    f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 2 (HIGH PRIORITY):\n{extra_instruction.strip()}"
+                )
 
         selected_angles: List[Tuple[str, str]] = []
         for i in range(total_scripts):
@@ -389,41 +425,125 @@ class ChiefEditorCoordinatorAgent:
 
         stage2_failures = 0
         stage2_errors = []
-        stage2_resolution = "All angles & hooks formulated"
+        stage2_resolution = "2X Characters & 2X Scene settings finalised"
+
+        # Calculate requested number of scenes for Stage 2
+        if target_seconds <= 8 and (scene_style.lower() in ["speech", "monologue"] or character_count == 1):
+            req_scenes = 1
+        elif target_seconds <= 15:
+            req_scenes = 2
+        elif target_seconds <= 35:
+            req_scenes = 3
+        else:
+            req_scenes = 4
 
         try:
-            hooks_and_ctas = hook_strategist.craft_hooks_batch(
+            prev_chars_dict = [c.model_dump() for c in prev_chars] if prev_chars else None
+            prev_scenes_dict = [s.model_dump() for s in prev_scenes] if prev_scenes else None
+            available_characters, available_scenes = hook_strategist.finalise_characters_and_scenes(
                 news_topic=news_input,
-                angles=selected_angles,
-                tone=active_tone,
                 verification=verification,
+                scenario=active_scenario,
+                sample_story=active_sample_story,
+                tone=active_tone,
+                angle=preferred_angle or (selected_angles[0][0] if selected_angles else "Funny & Relatable"),
+                character_count=character_count,
+                num_scenes=req_scenes,
+                scene_style=scene_style,
                 duration_sec=target_seconds,
                 sub_instruction=sub_instructions["hook_strategist"],
                 engine_mode=engine_mode,
+                previous_characters=prev_chars_dict,
+                previous_scenes=prev_scenes_dict,
+                feedback=extra_instruction,
             )
         except ModelGenerationError:
             raise
         except Exception as e:
             stage2_failures += 1
-            stage2_errors.append(f"Batch formulation error: {str(e)[:80]}")
-            stage2_resolution = "Used high-engagement fallback angle templates"
-            default_cta = "फॉलो करें!" if target_seconds <= 10 else "शेयर करें और अपनी राय कमेंट में बताएं!"
-            hooks_and_ctas = [
-                (f"🔥 {a[0].split('(')[0].strip()}: क्या आपको ये खबर पता चली?", default_cta)
-                for a in selected_angles
+            stage2_errors.append(f"Character finalisation notice: {str(e)[:80]}")
+            stage2_resolution = "Finalised characters & scenes using grounded domain templates"
+            # Fallback
+            from agents.dialogue_writer import get_character_personas
+            from core.screenplay_formatter import get_character_attire
+            from core.models import CharacterProfile, SceneSettingOption
+            locs_text = ", ".join(verification.key_locations) if (verification and verification.key_locations) else ""
+            raw_personas = get_character_personas(
+                scene_style=scene_style,
+                character_count=max(2, character_count * 2),
+                tone=active_tone,
+                angle=preferred_angle or "Funny & Relatable",
+                topic_or_script=news_input,
+                sample_story=active_sample_story or active_scenario,
+            )
+            available_characters = [
+                CharacterProfile(
+                    name=p,
+                    role_or_job="Key Character / Speaker",
+                    attire=get_character_attire(p.split("(")[0].strip(), locs_text),
+                    emotional_stance="Engaged & authentic",
+                    relationship_dynamic="Relational dynamic grounded in story context",
+                )
+                for p in raw_personas
+            ]
+            available_scenes = [
+                SceneSettingOption(
+                    scene_option_number=1,
+                    location_name=locs_text or "Bustling Indian street food stall / tea tapri",
+                    atmosphere=f"Vibrant and realistic ambient setting for {active_tone}",
+                    lighting_mood="Natural cinematic daylight",
+                    props=verification.physical_props[:3] if (verification and verification.physical_props) else ["Smartphone", "Headline sign"],
+                ),
+                SceneSettingOption(
+                    scene_option_number=2,
+                    location_name="Modern executive office / administrative room",
+                    atmosphere="Minimalist, sharp professional interior",
+                    lighting_mood="Clean office fluorescent and glass reflections",
+                    props=["Desk", "Documents", "Laptop"],
+                ),
             ]
 
+        # Select the requested number of characters and scenes as primary defaults for downstream stages
+        finalized_chars = available_characters[:max(1, character_count)]
+        finalized_scenes = available_scenes[:req_scenes]
+
+        # Generate lightweight default hooks and CTAs for batch items
+        default_cta = "फॉलो करें!" if target_seconds <= 10 else "शेयर करें और अपनी राय कमेंट में बताएं!"
+        primary_hook_cta = (f"🔥 {news_input[:40]} को लेकर बड़ा अपडेट!", default_cta)
+        hooks_and_ctas = [primary_hook_cta]
         while len(hooks_and_ctas) < total_scripts:
             idx = len(hooks_and_ctas)
             a = selected_angles[idx % len(selected_angles)]
             def_c = "फॉलो करें!" if target_seconds <= 10 else "फॉलो करें!"
             hooks_and_ctas.append((f"🔥 {a[0].split('(')[0].strip()}: बड़ी खबर!", def_c))
 
-        agent_audits.append(
+        # Build clean story beat steps from selected characters and primary scene setting
+        story_steps = []
+        loc_desc = finalized_scenes[0].location_name if finalized_scenes else "Authentic setting"
+        props_desc = ", ".join(finalized_scenes[0].props) if finalized_scenes and finalized_scenes[0].props else "Key props"
+        for b_idx in range(1, req_scenes + 1):
+            c = finalized_chars[(b_idx - 1) % len(finalized_chars)]
+            if b_idx == 1:
+                act_desc = f"Begins in {loc_desc}; {c.name} opens the situation interacting with {props_desc}"
+                goal_desc = "Establish opening hook and relatable situation"
+            elif b_idx == req_scenes:
+                act_desc = f"{c.name} delivers final reaction and punchline payoff"
+                goal_desc = "Deliver punchline or resolution"
+            else:
+                act_desc = f"{c.name} examines evidence and reacts to the verified news facts"
+                goal_desc = "Reveal and challenge key facts"
+            story_steps.append(StoryBeatStep(
+                beat_number=b_idx,
+                character_name=c.name,
+                action_step=act_desc,
+                speech_objective=goal_desc,
+            ))
+
+        state["agent_audits"].append(
             AgentAuditItem(
                 agent_id=2,
-                agent_name=hook_strategist.name,
-                icon=hook_strategist.icon,
+                agent_name="Character Finalisation Strategist",
+                icon="🎭",
                 stage_number=2,
                 status="Self-Healed" if stage2_failures > 0 else "Success",
                 attempts=1,
@@ -434,29 +554,66 @@ class ChiefEditorCoordinatorAgent:
             )
         )
 
-        yield {
-            "step": 2,
-            "total_steps": 5,
-            "stage_label": "Stage 2 of 5 Complete: Angles Ready",
-            "agent": hook_strategist.name,
-            "icon": hook_strategist.icon,
-            "status": f"Agent 2 Complete: {len(hooks_and_ctas)} viral angles and hooks formulated!",
-            "data": None,
-        }
+        state["selected_angles"] = selected_angles
+        state["hooks_and_ctas"] = hooks_and_ctas
+        state["available_characters"] = available_characters
+        state["available_scenes"] = available_scenes
+        state["finalized_characters"] = finalized_chars
+        state["finalized_scenes"] = finalized_scenes
+        state["story_steps"] = story_steps
+        state["step"] = 2
+        return state
 
-        # -------------------------------------------------------------
-        # STAGE 3: DialogueNarrationAgent + TimingAuditorAgent
-        # -------------------------------------------------------------
+    def execute_stage_3(
+        self,
+        state: Dict[str, Any],
+        engine_mode: str = "first_local_then_agy",
+        extra_instruction: Optional[str] = None,
+        preferred_frames: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute Stage 3: Dialogue Narration Writing & Duration Calibration."""
         stage3_start = time.time()
-        yield {
-            "step": 3,
-            "total_steps": 5,
-            "stage_label": f"Stage 3 of 5: Spoken Dialogue Writing & {target_seconds}s Word Count Calibration",
-            "agent": dialogue_writer.name,
-            "icon": dialogue_writer.icon,
-            "status": f"Agent 3 & 4: Writing spoken Hindi dialogue & calibrating {target_seconds}s speech pace (~{budget['recommended_words']}w, max {budget['max_words']}w)...",
-            "data": None,
-        }
+        news_input = state["news_input"]
+        total_scripts = state["batch_size"]
+        selected_angles = state["selected_angles"]
+        hooks_and_ctas = state["hooks_and_ctas"]
+        active_tone = state["active_tone"]
+        target_seconds = state["target_seconds"]
+        verification = state["verification"]
+        character_count = state["character_count"]
+        scene_style = state["scene_style"]
+        active_angle = state["active_angle"]
+        active_sample_story = state["active_sample_story"]
+        sub_instructions = state["sub_instructions"]
+        max_retries = state["max_retries"]
+        budget = state["budget"]
+
+        # Extract previous draft if re-running Stage 3 with feedback/corrections
+        previous_dialogues = state.get("script_dialogues", [])
+        previous_draft_text = ""
+        if previous_dialogues:
+            draft_chunks = []
+            for idx, d in enumerate(previous_dialogues, 1):
+                if d.get("scene_lines"):
+                    lines = [f"{sl.get('character', 'Character')}: \"{sl.get('dialogue', '')}\"" for sl in d["scene_lines"]]
+                    draft_chunks.append(f"Script {idx}:\n" + "\n".join(lines))
+                elif d.get("narration"):
+                    draft_chunks.append(f"Script {idx}:\n{d['narration']}")
+            previous_draft_text = "\n\n".join(draft_chunks)
+
+        if extra_instruction and extra_instruction.strip():
+            state.setdefault("extra_instructions_history", []).append(extra_instruction.strip())
+            if previous_draft_text:
+                sub_instructions["dialogue_writer"] += (
+                    f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS DIALOGUE DRAFT (HIGH PRIORITY):\n"
+                    f"Previous Draft:\n{previous_draft_text}\n\n"
+                    f"User Correction Feedback:\n{extra_instruction.strip()}\n"
+                    f"Mandate: Rewrite and improve the dialogues to directly incorporate this feedback while enforcing tight character interconnectedness."
+                )
+            else:
+                sub_instructions["dialogue_writer"] += (
+                    f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 3 (HIGH PRIORITY):\n{extra_instruction.strip()}"
+                )
 
         batch_items = [
             {"angle": selected_angles[i][0], "hook": hooks_and_ctas[i][0], "cta": hooks_and_ctas[i][1]}
@@ -467,9 +624,9 @@ class ChiefEditorCoordinatorAgent:
         stage3_errors = []
         stage3_resolution = "Spoken dialogue generated and calibrated"
 
-        explicit_frames = kwargs.get("preferred_frames") or kwargs.get("num_scenes")
-        if not explicit_frames and preferred_frames and preferred_frames != 3:
-            explicit_frames = preferred_frames
+        explicit_frames = preferred_frames or state.get("preferred_frames")
+        if explicit_frames and explicit_frames == 3:
+            explicit_frames = None
 
         try:
             raw_narrations = dialogue_writer.write_dialogues_batch(
@@ -485,6 +642,10 @@ class ChiefEditorCoordinatorAgent:
                 sub_instruction=sub_instructions["dialogue_writer"],
                 engine_mode=engine_mode,
                 num_scenes=explicit_frames,
+                previous_draft=previous_draft_text if previous_draft_text else None,
+                feedback=extra_instruction if extra_instruction else None,
+                finalized_characters=state.get("finalized_characters"),
+                story_steps=state.get("story_steps"),
             )
         except ModelGenerationError:
             raise
@@ -497,7 +658,6 @@ class ChiefEditorCoordinatorAgent:
                 for it in batch_items
             ]
 
-        # Audit and calibrate each dialogue with Agent 4 (Timing & Duration Auditor)
         min_w = budget["min_words"]
         rec_w = budget["recommended_words"]
         max_w = budget["max_words"]
@@ -526,7 +686,7 @@ class ChiefEditorCoordinatorAgent:
             while not passed and attempt < max_retries:
                 attempt += 1
                 stage4_timing_failures += 1
-                total_retries += 1
+                state["total_retries"] = state.get("total_retries", 0) + 1
                 stage4_timing_errors.append(
                     f"Script #{i+1}: Dialogue exceeded max limit ({w_cnt} words > {max_w} max words for {target_seconds}s reel, attempt {attempt}/{max_retries})"
                 )
@@ -544,15 +704,17 @@ class ChiefEditorCoordinatorAgent:
                     )
                     passed = True
                 elif attempt == max_retries:
-                    # Final safety clamp on max allowed retries
-                    safe_tokens = calibrated.split()[:max_w]
-                    narration = " ".join(safe_tokens)
+                    from core.metrics import count_words
+                    while count_words(calibrated) > max_w and " " in calibrated:
+                        calibrated = " ".join(calibrated.split()[:-1])
+                    narration = calibrated
                     passed, w_cnt, w_stat, e_dur, t_stat, clarity, audit_feedback = timing_auditor.audit_script(
                         narration=narration, hook=hook, cta=cta, target_seconds=target_seconds, sub_instruction=sub_instructions["timing_auditor"]
                     )
                     retry_notes.append(
                         f"🔄 Agent 4 Timing Calibration: Precision clamped to {w_cnt} words (<= {max_w}w max) after exhausting {max_retries} retry attempts."
                     )
+                    passed = True
                 else:
                     narration = calibrated
 
@@ -577,7 +739,7 @@ class ChiefEditorCoordinatorAgent:
                 "is_over_budget": (w_cnt > max_w),
             })
 
-        agent_audits.append(
+        state["agent_audits"].append(
             AgentAuditItem(
                 agent_id=3,
                 agent_name=dialogue_writer.name,
@@ -592,7 +754,7 @@ class ChiefEditorCoordinatorAgent:
             )
         )
 
-        agent_audits.append(
+        state["agent_audits"].append(
             AgentAuditItem(
                 agent_id=4,
                 agent_name=timing_auditor.name,
@@ -607,45 +769,89 @@ class ChiefEditorCoordinatorAgent:
             )
         )
 
-        yield {
-            "step": 3,
-            "total_steps": 5,
-            "stage_label": "Stage 3 of 5 Complete: Dialogue Calibrated",
-            "agent": timing_auditor.name,
-            "icon": timing_auditor.icon,
-            "status": f"Agent 3 & 4 Complete: {total_scripts} Hindi scripts written & calibrated to {target_seconds}s.",
-            "data": None,
-        }
+        state["script_dialogues"] = script_dialogues
+        state["step"] = 3
+        return state
 
-        # -------------------------------------------------------------
-        # STAGE 4: SceneDirector + VideoPromptEngineer (Google Flow / Veo 9:16)
-        # -------------------------------------------------------------
+    def execute_stage_4(
+        self,
+        state: Dict[str, Any],
+        engine_mode: str = "first_local_then_agy",
+        extra_instruction: Optional[str] = None,
+        preferred_frames: Optional[int] = None,
+    ) -> Dict[str, Any]:
+        """Execute Stage 4: Scene Visuals Direction & AI Video Prompt Engineering."""
         stage4_start = time.time()
-        yield {
-            "step": 4,
-            "total_steps": 5,
-            "stage_label": "Stage 4 of 5: Scene Storyboards & Cinematic Visual Direction",
-            "agent": scene_director.name,
-            "icon": scene_director.icon,
-            "status": f"Agent 5 & 6: Directing scene storyboards & synthesizing 9:16 cinematic visual prompts...",
-            "data": None,
-        }
+        script_dialogues = state["script_dialogues"]
+        news_input = state["news_input"]
+        target_seconds = state["target_seconds"]
+        active_tone = state["active_tone"]
+        active_angle = state["active_angle"]
+        scene_style = state["scene_style"]
+        character_count = state["character_count"]
+        active_sample_story = state["active_sample_story"]
+        sub_instructions = state["sub_instructions"]
+        verification = state["verification"]
+        max_retries = state["max_retries"]
+        budget = state["budget"]
+        min_w = budget["min_words"]
+        rec_w = budget["recommended_words"]
+        max_w = budget["max_words"]
+
+        prev_scripts = state.get("scripts", [])
+        if extra_instruction and extra_instruction.strip():
+            state.setdefault("extra_instructions_history", []).append(extra_instruction.strip())
+            if prev_scripts:
+                sub_instructions["scene_director"] += (
+                    f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS STORYBOARD SCENES (HIGH PRIORITY):\n"
+                    f"Previous Scene Count: {len(prev_scripts[0].scenes) if prev_scripts and prev_scripts[0].scenes else 0}\n"
+                    f"User Correction Feedback:\n{extra_instruction.strip()}\n"
+                    f"Mandate: Re-direct visual scenes, props, and actions directly addressing this critique."
+                )
+                sub_instructions["video_prompt_engineer"] += (
+                    f"\n\n⭐ CORRECTION FEEDBACK ON PREVIOUS VIDEO PROMPTS (HIGH PRIORITY):\n{extra_instruction.strip()}"
+                )
+            else:
+                sub_instructions["scene_director"] += (
+                    f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 4 (HIGH PRIORITY):\n{extra_instruction.strip()}"
+                )
+                sub_instructions["video_prompt_engineer"] += (
+                    f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 4 (HIGH PRIORITY):\n{extra_instruction.strip()}"
+                )
+
+        explicit_frames = preferred_frames or state.get("preferred_frames")
+        if explicit_frames and explicit_frames == 3:
+            explicit_frames = None
 
         scripts: List[ReelScript] = []
 
-        for d in script_dialogues:
+        for d_idx, d in enumerate(script_dialogues):
             i = d["idx"]
             angle_tuple = d["angle_tuple"]
             hook = d["hook"]
             cta = d["cta"]
             narration = d["narration"]
             s_lines = d.get("scene_lines", [])
-            personas = get_character_personas(
-                scene_style, character_count, active_tone, active_angle,
-                topic_or_script=f"{news_input} {narration}", sample_story=active_sample_story
-            )
+            # Incorporate Stage 2 finalized characters and scenes if available
+            finalized_chars = state.get("finalized_characters") or []
+            if finalized_chars:
+                personas = [c.name for c in finalized_chars]
+            else:
+                personas = get_character_personas(
+                    scene_style, character_count, active_tone, active_angle,
+                    topic_or_script=f"{news_input} {narration}", sample_story=active_sample_story
+                )
 
-            # 🎬 Agent 5: SceneVisualsDirectorAgent - Directs visual scenes coordinated with dialogue and physical props
+            finalized_sc_list = state.get("finalized_scenes") or state.get("available_scenes") or []
+            active_locs = [sc.location_name for sc in finalized_sc_list if sc.location_name] or (verification.key_locations if verification else [])
+            active_props = []
+            for sc in finalized_sc_list:
+                active_props.extend(sc.props)
+            if not active_props and verification:
+                active_props = verification.physical_props
+
+            prev_scenes_for_script = prev_scripts[d_idx].scenes if (prev_scripts and d_idx < len(prev_scripts)) else None
+
             scenes = scene_director.direct_scenes(
                 news_topic=news_input,
                 hook=hook,
@@ -653,8 +859,8 @@ class ChiefEditorCoordinatorAgent:
                 duration_sec=target_seconds,
                 scene_lines=s_lines,
                 verified_facts=verification.verified_facts if verification else [],
-                physical_props=verification.physical_props if verification else [],
-                key_locations=verification.key_locations if verification else [],
+                physical_props=active_props,
+                key_locations=active_locs,
                 core_conflict_or_irony=verification.core_conflict_or_irony if verification else "",
                 tangible_actions=verification.tangible_actions if verification else [],
                 tone=active_tone,
@@ -664,9 +870,10 @@ class ChiefEditorCoordinatorAgent:
                 sub_instruction=sub_instructions.get("scene_director"),
                 engine_mode=engine_mode,
                 preferred_frames=explicit_frames,
+                previous_scenes=prev_scenes_for_script,
+                feedback=extra_instruction if extra_instruction else None,
             )
 
-            # 🎥 Agent 6: AIVideoPromptAgent - Translates scenes into Google Flow / Veo prompts with prop continuity
             video_prompts = video_prompt_engineer.generate_prompts(
                 news_topic=news_input,
                 scenes=scenes,
@@ -679,7 +886,6 @@ class ChiefEditorCoordinatorAgent:
             for sc, vp in zip(scenes, video_prompts):
                 sc.video_prompt = vp
 
-            # 🛡️ Agent 7: VideoQualityGateAgent - Audits video prompt continuity and generative clip feasibility
             video_verif = video_quality_gate.audit_prompts(
                 prompts=video_prompts,
                 sub_instruction=sub_instructions.get("video_quality_gate"),
@@ -714,20 +920,21 @@ class ChiefEditorCoordinatorAgent:
                     engine_used=engine_mode,
                 )
             )
+
             from core.script_analyzer import common_sense_validator
             sc_curr = scripts[-1]
             cs_valid, cs_issues, cs_feedback = common_sense_validator.audit_screenplay(sc_curr)
             cs_attempt = 0
             while not cs_valid and cs_attempt < max_retries:
                 cs_attempt += 1
-                total_retries += 1
+                state["total_retries"] = state.get("total_retries", 0) + 1
                 sc_curr, cs_valid, cs_feedback = common_sense_validator.heal_and_revalidate(sc_curr, cs_feedback)
                 sc_curr.self_healing_notes.append(
                     f"🔄 Common Sense Validator: Self-healed setting/dialogue/kinematics on attempt {cs_attempt}/{max_retries}."
                 )
             scripts[-1] = sc_curr
 
-        agent_audits.append(
+        state["agent_audits"].append(
             AgentAuditItem(
                 agent_id=5,
                 agent_name=scene_director.name,
@@ -737,12 +944,12 @@ class ChiefEditorCoordinatorAgent:
                 attempts=1,
                 failures_count=0,
                 errors_encountered=[],
-                resolution_action=f"Generated visual B-roll & SFX timeline breakdowns for all {total_scripts} scripts",
+                resolution_action=f"Generated visual B-roll & SFX timeline breakdowns for all {state['batch_size']} scripts",
                 execution_time_sec=round((time.time() - stage4_start) * 0.5, 2),
             )
         )
 
-        agent_audits.append(
+        state["agent_audits"].append(
             AgentAuditItem(
                 agent_id=6,
                 agent_name=video_prompt_engineer.name,
@@ -757,21 +964,34 @@ class ChiefEditorCoordinatorAgent:
             )
         )
 
-        # -------------------------------------------------------------
-        # STAGE 5: VideoQualityGateAuditor (Quality & Feasibility Verification)
-        # -------------------------------------------------------------
-        stage5_start = time.time()
-        yield {
-            "step": 5,
-            "total_steps": 5,
-            "stage_label": "Stage 5 of 5: AI Video Quality Gate & Editorial Sign-Off",
-            "agent": video_quality_gate.name,
-            "icon": video_quality_gate.icon,
-            "status": f"Agent 7: Verifying cinematic visual feasibility and production standards...",
-            "data": None,
-        }
+        state["scripts"] = scripts
+        state["step"] = 4
+        return state
 
-        agent_audits.append(
+    def execute_stage_5(
+        self,
+        state: Dict[str, Any],
+        engine_mode: str = "first_local_then_agy",
+        extra_instruction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute Stage 5: Video Quality Gate, Configuration Compliance Audit & Sign-Off."""
+        stage5_start = time.time()
+        scripts = state["scripts"]
+        target_seconds = state["target_seconds"]
+        character_count = state["character_count"]
+        scene_style = state["scene_style"]
+        active_tone = state["active_tone"]
+        active_sample_story = state["active_sample_story"]
+        news_input = state["news_input"]
+        scenario = state["scenario"]
+        verification = state["verification"]
+        sub_instructions = state["sub_instructions"]
+        total_retries = state.get("total_retries", 0)
+
+        if extra_instruction and extra_instruction.strip():
+            state.setdefault("extra_instructions_history", []).append(extra_instruction.strip())
+
+        state["agent_audits"].append(
             AgentAuditItem(
                 agent_id=7,
                 agent_name=video_quality_gate.name,
@@ -786,22 +1006,18 @@ class ChiefEditorCoordinatorAgent:
             )
         )
 
-        total_failures = sum(a.failures_count for a in agent_audits)
+        total_failures = sum(a.failures_count for a in state["agent_audits"])
         audit_report = PipelineAuditReport(
             total_stages=5,
             total_agents=7,
             total_failures_detected=total_failures,
             total_retries_resolved=total_retries,
             overall_health="100% Operational (All Steps Self-Healed & Passed)" if total_failures > 0 else "100% Flawless First-Pass Pass",
-            agent_audits=agent_audits,
+            agent_audits=state["agent_audits"],
         )
 
-        # -------------------------------------------------------------
-        # Final Assemble, Configuration Testing & Sign-Off by Chief Editor
-        # -------------------------------------------------------------
-        total_time = round(time.time() - start_time, 1)
+        total_time = round(time.time() - state["start_time"], 1)
 
-        # Agent 8 Testing Gate: Configuration Compliance & Custom Script Acceptance
         compliance_passed, compliance_notes, retry_prompt = self.audit_configuration_compliance(
             scripts=scripts,
             target_seconds=target_seconds,
@@ -827,6 +1043,168 @@ class ChiefEditorCoordinatorAgent:
             retry_prompt_recommendation=retry_prompt,
         )
 
+        state["batch_result"] = batch_result
+        state["compliance_passed"] = compliance_passed
+        state["compliance_notes"] = compliance_notes
+        state["retry_prompt"] = retry_prompt
+        state["audit_report"] = audit_report
+        state["total_time"] = total_time
+        state["step"] = 5
+        return state
+
+    def orchestrate_reel_pipeline(
+        self,
+        news_input: str,
+        scenario: str,
+        batch_size: int = 10,
+        target_seconds: int = 30,
+        engine_mode: str = "first_local_then_agy",
+        max_retries: int = 5,
+        preferred_frames: int = 3,
+        preferred_angle: str = "",
+        character_count: int = 1,
+        scene_style: str = "Dialogue",
+        preferred_tone: str = "",
+        sample_story: Optional[str] = None,
+        **kwargs,
+    ) -> Generator[Dict[str, Any], None, ReelBatchResult]:
+        """Orchestrate the end-to-end multi-agent pipeline with full stage telemetry and error audit."""
+        budget = get_duration_budget(target_seconds)
+
+        # -------------------------------------------------------------
+        # STAGE 1: NewsValidationAgent (Fact-checking against live wire data)
+        # -------------------------------------------------------------
+        yield {
+            "step": 1,
+            "total_steps": 5,
+            "stage_label": "Stage 1 of 5: Instruction Decomposition & Wire Fact Validation",
+            "agent": news_validator.name,
+            "icon": news_validator.icon,
+            "status": f"👑 Master Agent: Decomposed instruction into 7 sub-instructions. Calibrated dialogue: ~{budget['recommended_words']}w (Max: {budget['max_words']}w). Fact-checking live wire...",
+            "data": None,
+        }
+
+        state = self.execute_stage_1(
+            news_input=news_input,
+            scenario=scenario,
+            batch_size=batch_size,
+            target_seconds=target_seconds,
+            engine_mode=engine_mode,
+            max_retries=max_retries,
+            preferred_frames=preferred_frames,
+            preferred_angle=preferred_angle,
+            character_count=character_count,
+            scene_style=scene_style,
+            preferred_tone=preferred_tone,
+            sample_story=sample_story,
+            **kwargs,
+        )
+
+        yield {
+            "step": 1,
+            "total_steps": 5,
+            "stage_label": "Stage 1 of 5 Complete: Facts Verified",
+            "agent": news_validator.name,
+            "icon": news_validator.icon,
+            "status": f"Agent 1 Complete: Verified with {state['verification'].confidence_score}% confidence.",
+            "data": {"verification": state["verification"], "sub_instructions": state["sub_instructions"]},
+        }
+
+        # -------------------------------------------------------------
+        # STAGE 2: HookAndAngleAgent (Formulate viral angles & hooks)
+        # -------------------------------------------------------------
+        yield {
+            "step": 2,
+            "total_steps": 5,
+            "stage_label": "Stage 2 of 5: Viral Angles & Hindi Hooks",
+            "agent": hook_strategist.name,
+            "icon": hook_strategist.icon,
+            "status": f"Agent 2: Formulating {state['batch_size']} viral angles & scroll-stopping Hindi hooks...",
+            "data": None,
+        }
+
+        state = self.execute_stage_2(state, engine_mode=engine_mode)
+
+        yield {
+            "step": 2,
+            "total_steps": 5,
+            "stage_label": "Stage 2 of 5 Complete: Angles Ready",
+            "agent": hook_strategist.name,
+            "icon": hook_strategist.icon,
+            "status": f"Agent 2 Complete: {len(state['hooks_and_ctas'])} viral angles and hooks formulated!",
+            "data": None,
+        }
+
+        # -------------------------------------------------------------
+        # STAGE 3: DialogueNarrationAgent + TimingAuditorAgent
+        # -------------------------------------------------------------
+        yield {
+            "step": 3,
+            "total_steps": 5,
+            "stage_label": f"Stage 3 of 5: Spoken Dialogue Writing & {target_seconds}s Word Count Calibration",
+            "agent": dialogue_writer.name,
+            "icon": dialogue_writer.icon,
+            "status": f"Agent 3 & 4: Writing spoken Hindi dialogue & calibrating {target_seconds}s speech pace (~{budget['recommended_words']}w, max {budget['max_words']}w)...",
+            "data": None,
+        }
+
+        state = self.execute_stage_3(state, engine_mode=engine_mode, preferred_frames=preferred_frames)
+
+        yield {
+            "step": 3,
+            "total_steps": 5,
+            "stage_label": "Stage 3 of 5 Complete: Dialogue Calibrated",
+            "agent": timing_auditor.name,
+            "icon": timing_auditor.icon,
+            "status": f"Agent 3 & 4 Complete: {state['batch_size']} Hindi scripts written & calibrated to {target_seconds}s.",
+            "data": None,
+        }
+
+        # -------------------------------------------------------------
+        # STAGE 4: SceneDirector + VideoPromptEngineer (Google Flow / Veo 9:16)
+        # -------------------------------------------------------------
+        yield {
+            "step": 4,
+            "total_steps": 5,
+            "stage_label": "Stage 4 of 5: Scene Storyboards & Cinematic Visual Direction",
+            "agent": scene_director.name,
+            "icon": scene_director.icon,
+            "status": "Agent 5 & 6: Directing scene storyboards & synthesizing 9:16 cinematic visual prompts...",
+            "data": None,
+        }
+
+        state = self.execute_stage_4(state, engine_mode=engine_mode, preferred_frames=preferred_frames)
+
+        yield {
+            "step": 4,
+            "total_steps": 5,
+            "stage_label": "Stage 4 of 5 Complete: Storyboard Ready",
+            "agent": scene_director.name,
+            "icon": scene_director.icon,
+            "status": "Agent 5 & 6 Complete: Scene storyboards and visual prompts synthesized.",
+            "data": None,
+        }
+
+        # -------------------------------------------------------------
+        # STAGE 5: VideoQualityGateAuditor (Quality & Feasibility Verification)
+        # -------------------------------------------------------------
+        yield {
+            "step": 5,
+            "total_steps": 5,
+            "stage_label": "Stage 5 of 5: AI Video Quality Gate & Editorial Sign-Off",
+            "agent": video_quality_gate.name,
+            "icon": video_quality_gate.icon,
+            "status": "Agent 7: Verifying cinematic visual feasibility and production standards...",
+            "data": None,
+        }
+
+        state = self.execute_stage_5(state, engine_mode=engine_mode)
+        batch_result = state["batch_result"]
+        compliance_passed = state["compliance_passed"]
+        retry_prompt = state.get("retry_prompt")
+        total_time = state["total_time"]
+        audit_report = state["audit_report"]
+
         yield {
             "step": 5,
             "total_steps": 5,
@@ -834,7 +1212,7 @@ class ChiefEditorCoordinatorAgent:
             "agent": self.name,
             "icon": self.icon,
             "status": (
-                f"✅ Chief Editor Sign-Off: All {len(scripts)} scripts generated & verified in {total_time}s! ({total_retries} self-healing calibrations)"
+                f"✅ Chief Editor Sign-Off: All {len(state['scripts'])} scripts generated & verified in {total_time}s! ({state['total_retries']} self-healing calibrations)"
                 if compliance_passed
                 else f"⚠️ Chief Editor Alert: Configuration check flagged items to review. ({retry_prompt})"
             ),

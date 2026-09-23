@@ -28,8 +28,10 @@ class NewsValidationAgent(BaseAgent):
         sub_instruction: Optional[str] = None,
         status_callback: Optional[Callable[[str, str], None]] = None,
         engine_mode: str = "first_local_then_agy",
+        previous_verification: Optional[NewsVerificationReport] = None,
+        feedback: Optional[str] = None,
     ) -> NewsVerificationReport:
-        """Execute Step 1: Fact validation against live wire sources."""
+        """Execute Step 1: Fact validation against live wire sources with same-stage revision support."""
         if status_callback:
             status_callback(self.name, "Scanning live news wire feeds for source verification...")
 
@@ -41,11 +43,25 @@ class NewsValidationAgent(BaseAgent):
 
         sub_directive = f"\nChief Editor Directive for News Validation:\n{sub_instruction}\n" if sub_instruction else ""
 
+        revision_directive = ""
+        if previous_verification:
+            prev_facts = "\n".join([f"- {f}" for f in previous_verification.verified_facts])
+            fb = feedback.strip() if feedback and feedback.strip() else (sub_instruction or "Refine and correct factual details.")
+            revision_directive = (
+                f"\n# 🔄 REVISION & CORRECTION MODE (HIGH PRIORITY):\n"
+                f"You are REVISING an existing factual verification report based on user feedback.\n"
+                f"PREVIOUS VERIFIED FACTS:\n{prev_facts}\n\n"
+                f"PREVIOUS SUMMARY: {previous_verification.verification_summary}\n\n"
+                f"USER CORRECTION FEEDBACK:\n{fb}\n\n"
+                f"MANDATE: Directly address the user's critique. Correct the facts, physical props, locations, and central conflict accordingly.\n"
+            )
+
         prompt = render_prompt(
             "news_validator/validate_news.md",
             news_input=news_input,
             scenario=scenario,
             sub_directive=sub_directive,
+            revision_directive=revision_directive,
             sources_count=len(articles),
             sources_text=sources_text if sources_text else "No immediate wire feed found; verify using factual reasoning.",
         )

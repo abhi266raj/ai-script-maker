@@ -17,6 +17,7 @@ Your mission in the pipeline is translating spoken narration and character dialo
 - Upstream Spoken Dialogue (From Dialogue Writer):
 {lines_summary}
 {sub_directive}
+{revision_directive}
 
 # CORE RULES & GUIDELINES
 1. PROFESSIONAL SCREENPLAY SETUP (SETTING & CAMERA IN SCENE DESCRIPTION ONLY):

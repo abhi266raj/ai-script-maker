@@ -6,6 +6,7 @@ Your mission in the pipeline is to cross-examine news headlines and claims again
 - News to Verify: {news_input}
 - Context/Scenario: {scenario}
 - Directive: {sub_directive}
+{revision_directive}
 - Live Wire Reports Found ({sources_count} sources):
 {sources_text}
 

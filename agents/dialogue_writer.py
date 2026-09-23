@@ -5,7 +5,7 @@ import random
 import logging
 from typing import Optional, List, Dict, Any, Tuple
 from agents.base import BaseAgent
-from core.models import NewsVerificationReport
+from core.models import NewsVerificationReport, CharacterProfile, StoryBeatStep
 from core.metrics import get_duration_budget, count_words
 from core.dual_engine import ModelGenerationError
 from core.prompt_loader import load_prompt, render_prompt
@@ -941,19 +941,32 @@ class DialogueNarrationAgent(BaseAgent):
         sub_instruction: Optional[str] = None,
         engine_mode: str = "first_local_then_agy",
         num_scenes: Optional[int] = None,
-    ) -> List[str]:
+        previous_draft: Optional[str] = None,
+        feedback: Optional[str] = None,
+        finalized_characters: Optional[List[CharacterProfile]] = None,
+        story_steps: Optional[List[StoryBeatStep]] = None,
+    ) -> List[ScriptDialogue]:
         """Craft spoken Hindi dialogues for all items scene-by-scene respecting character count, style, tone, and angle."""
         budget = get_duration_budget(duration_sec)
         guidance = get_sentence_guidance(duration_sec, budget["recommended_words"], budget["max_words"])
-        personas = get_character_personas(
-            scene_style, character_count, tone, preferred_angle,
-            topic_or_script=news_input, sample_story=sample_story
-        )
+
+        if finalized_characters and len(finalized_characters) > 0:
+            personas = [
+                f"{c.name} ({c.role_or_job}, Attire: {c.attire}, Emotional Stance: {c.emotional_stance})"
+                for c in finalized_characters[:character_count]
+            ]
+        else:
+            personas = get_character_personas(
+                scene_style, character_count, tone, preferred_angle,
+                topic_or_script=news_input, sample_story=sample_story
+            )
         creative_rules = get_creative_guidelines(scene_style, character_count, tone, preferred_angle)
 
-        # Dynamic scene count: respect user override or calculate from duration, style, and character count
+        # Dynamic scene count: respect user override, story steps count, or calculate from duration
         if num_scenes is not None and 1 <= num_scenes <= 5:
             actual_scenes = num_scenes
+        elif story_steps and len(story_steps) > 0:
+            actual_scenes = min(len(story_steps), 5)
         elif duration_sec <= 8 and (scene_style.lower() in ["speech", "monologue"] or character_count == 1):
             actual_scenes = 1
         elif duration_sec <= 15:
@@ -994,8 +1007,17 @@ class DialogueNarrationAgent(BaseAgent):
         # Dynamically build continuous-shot beat templates for 1 to 5 scenes
         scene_templates = []
         for s_idx in range(1, actual_scenes + 1):
-            char_s = personas[(s_idx - 1) % len(personas)]
-            if actual_scenes == 1:
+            matching_step = story_steps[s_idx - 1] if (story_steps and s_idx <= len(story_steps)) else None
+            if matching_step:
+                char_s = matching_step.character_name
+            else:
+                char_s = personas[(s_idx - 1) % len(personas)]
+
+            if matching_step:
+                label = f"BEAT {s_idx} (Shot {s_idx}: ~{per_scene_words} words, max {per_scene_max}w)"
+                act = f"{matching_step.action_step}"
+                dial = f"Conversational Hindi dialogue fulfilling goal: {matching_step.speech_objective}"
+            elif actual_scenes == 1:
                 label = f"BEAT 1 (Continuous Master Shot: Complete Story - ~{per_scene_words} words, max {per_scene_max}w)"
                 act = f"Single continuous vertical shot in {locs_text or 'the setting'}; character holds {props_text or 'key prop'}, delivering complete narrative fluidly"
                 dial = "Dynamic Hindi dialogue stating what happened, the context, and key takeaway in one fluid take"
@@ -1076,6 +1098,21 @@ class DialogueNarrationAgent(BaseAgent):
             )
         sample_scenes = "\n\n".join(scene_templates)
 
+        revision_directive = ""
+        if previous_draft and previous_draft.strip():
+            fb_text = feedback.strip() if feedback and feedback.strip() else (sub_instruction or "Improve character interconnectedness and reactive flow.")
+            revision_directive = (
+                f"\n# 🔄 REVISION & CORRECTION MODE (HIGH PRIORITY):\n"
+                f"You are REVISING and REFINING an existing dialogue draft based on user feedback.\n"
+                f"Do NOT generate disconnected lines. Use this previous draft as the reference baseline and directly resolve the user's critique:\n\n"
+                f"PREVIOUS DRAFT:\n{previous_draft.strip()}\n\n"
+                f"USER CORRECTION FEEDBACK:\n{fb_text}\n\n"
+                f"CORRECTION MANDATE:\n"
+                f"- Directly address and fix the issues in the user's feedback.\n"
+                f"- Make character lines tightly INTERCONNECTED: use rapid reactive ping-pong, emotional replies, and direct rebuttals to what the previous speaker said.\n"
+                f"- Keep total spoken dialogue strictly within ~{budget['recommended_words']} words (max {budget['max_words']} words).\n"
+            )
+
         prompt = render_prompt(
             "dialogue_writer/write_dialogue_batch.md",
             news_input=news_input,
@@ -1097,6 +1134,7 @@ class DialogueNarrationAgent(BaseAgent):
             creative_rules=creative_rules,
             sample_directive=sample_directive,
             sub_directive=sub_directive,
+            revision_directive=revision_directive,
             guidance=guidance,
             items_desc=items_desc,
             sample_scenes=sample_scenes,

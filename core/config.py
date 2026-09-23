@@ -21,6 +21,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "default_angle": "Funny & Relatable",
     "character_count": 3,
     "scene_style": "Dialogue",
+    "workflow_mode": "⚡ Continuous",
 }
 
 

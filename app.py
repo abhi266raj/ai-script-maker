@@ -3,15 +3,10 @@
 import re
 import streamlit as st
 import sys
-import importlib
-if "core.dual_engine" in sys.modules:
-    importlib.reload(sys.modules["core.dual_engine"])
 from core.dual_engine import dual_engine
 from core.metrics import get_duration_budget
 from core.prompt_matrix import build_tailored_instruction
 from core.config import load_config, save_config, reset_to_defaults
-import workflow
-importlib.reload(workflow)
 from tools.news_fetcher import news_fetcher
 from workflow import reel_workflow
 from agents.dialogue_writer import strip_commenting_and_cta
@@ -25,6 +20,16 @@ from core.screenplay_formatter import (
     get_first_name,
 )
 
+ENGINE_OPTIONS = {
+    "Local First Then Antigravity": "first_local_then_agy",
+    "Antigravity": "agy_only",
+    "Codex": "codex_only",
+    "Grok Low": "grok_low",
+    "Grok Medium": "grok_medium",
+    "Grok High": "grok_high",
+    "On-device": "fm_only",
+}
+ENGINE_NAMES_REV = {v: k for k, v in ENGINE_OPTIONS.items()}
 
 
 def sanitize_visual_prompt(text: str) -> str:
@@ -543,6 +548,22 @@ if "chosen_sample_story" not in st.session_state:
     st.session_state.chosen_sample_story = ""
 if "headline_rev" not in st.session_state:
     st.session_state.headline_rev = 0
+if "workflow_mode" not in st.session_state:
+    st.session_state.workflow_mode = app_cfg.get("workflow_mode", "⚡ Continuous")
+if "stepwise_active" not in st.session_state:
+    st.session_state.stepwise_active = False
+if "stepwise_current_step" not in st.session_state:
+    st.session_state.stepwise_current_step = 1
+if "stepwise_state" not in st.session_state:
+    st.session_state.stepwise_state = None
+if "stepwise_step_model" not in st.session_state:
+    st.session_state.stepwise_step_model = st.session_state.chosen_engine_mode
+if "stepwise_extra_instruction" not in st.session_state:
+    st.session_state.stepwise_extra_instruction = ""
+if "stepwise_run_requested" not in st.session_state:
+    st.session_state.stepwise_run_requested = False
+if "stepwise_completed_steps" not in st.session_state:
+    st.session_state.stepwise_completed_steps = {}
 
 st.markdown(
     """
@@ -647,7 +668,7 @@ with col_settings:
                 arts = st.session_state.live_news_articles[:16]
                 if arts:
                     headline_options = [
-                        f"{i + 1}. {'[' + a.time_label + '] ' if a.time_label else ''}{a.title[:75]}"
+                        f"{i + 1}. {'[' + getattr(a, 'time_label', '') + '] ' if getattr(a, 'time_label', '') else ''}{getattr(a, 'title', '')[:75]}"
                         for i, a in enumerate(arts)
                     ]
                     saved_headline = st.session_state.get("selected_headline_title") or app_cfg.get("selected_headline", "")
@@ -897,31 +918,92 @@ with col_settings:
                 st.session_state[f"instruction_text_{st.session_state.instruction_rev}"] = instruction_seed
                 st.rerun()
 
+        curr_inst_key = f"instruction_text_{st.session_state.instruction_rev}"
+        if curr_inst_key not in st.session_state:
+            st.session_state[curr_inst_key] = instruction_seed
+
         instruction_text = st.text_area(
             "Instruction",
-            value=st.session_state.get(f"instruction_text_{st.session_state.instruction_rev}", instruction_seed),
             height=135,
             label_visibility="collapsed",
             help="This master instruction combines tone, angle, scene style, character count, duration budget, retries, and sample story directives. Divided into specialized sub-instructions by Chief Editor.",
-            key=f"instruction_text_{st.session_state.instruction_rev}",
+            key=curr_inst_key,
         )
-        launch_btn = st.button("Generate", type="primary", use_container_width=True)
+        st.markdown('<div class="ios-section-label" style="margin-top:14px; margin-bottom:4px;">Generation Mode</div>', unsafe_allow_html=True)
+        with st.container(border=True):
+            wf_modes = ["⚡ Continuous", "🪜 Step-Wise"]
+            curr_wf = st.session_state.get("workflow_mode") or app_cfg.get("workflow_mode", "⚡ Continuous")
+            if curr_wf not in wf_modes:
+                curr_wf = "⚡ Continuous"
+            sel_wf = st.radio(
+                "Generation Mode",
+                wf_modes,
+                index=wf_modes.index(curr_wf),
+                horizontal=True,
+                label_visibility="collapsed",
+                key="workflow_mode_radio",
+            )
+            if sel_wf != st.session_state.get("workflow_mode"):
+                st.session_state.workflow_mode = sel_wf
+                save_config("workflow_mode", sel_wf)
+                st.rerun()
 
-        if launch_btn and st.session_state.get("active_story_input", "").strip():
-            st.session_state.run_requested = True
-            # Never leave an older script visible while a new request is
-            # running or after the new request fails.
-            st.session_state.batch_result = None
-            st.session_state.generation_error = None
-            st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
-            st.session_state.run_scenario = instruction_text.strip()
-            st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
-            save_config("selected_headline", st.session_state.run_topic)
-            save_config("news_category", st.session_state.chosen_news_cat)
-            save_config("source_mode", st.session_state.chosen_source_mode)
-            save_config("max_retries", st.session_state.chosen_max_retries)
-            # Trigger full-page rerun so the output column picks up run_requested
-            st.rerun()
+        if st.session_state.get("workflow_mode") == "🪜 Step-Wise":
+            if not st.session_state.get("stepwise_active"):
+                launch_btn = st.button("🪜 Start Step-Wise Generation", type="primary", use_container_width=True, key="launch_stepwise_btn")
+                if launch_btn and st.session_state.get("active_story_input", "").strip():
+                    st.session_state.stepwise_active = True
+                    st.session_state.stepwise_current_step = 1
+                    st.session_state.stepwise_state = None
+                    st.session_state.stepwise_step_model = st.session_state.chosen_engine_mode
+                    st.session_state.stepwise_extra_instruction = ""
+                    st.session_state.stepwise_completed_steps = {}
+                    st.session_state.stepwise_run_requested = True
+                    st.session_state.batch_result = None
+                    st.session_state.generation_error = None
+                    st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
+                    st.session_state.run_scenario = instruction_text.strip()
+                    st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
+                    save_config("selected_headline", st.session_state.run_topic)
+                    save_config("news_category", st.session_state.chosen_news_cat)
+                    save_config("source_mode", st.session_state.chosen_source_mode)
+                    save_config("max_retries", st.session_state.chosen_max_retries)
+                    st.rerun()
+            else:
+                st.info(f"🪜 Step-Wise Active: Working on Step {st.session_state.get('stepwise_current_step', 1)} of 5")
+                c_exit, c_new = st.columns([1, 1])
+                with c_exit:
+                    if st.button("❌ Exit Step-Wise", use_container_width=True, key="reset_stepwise_btn"):
+                        st.session_state.stepwise_active = False
+                        st.session_state.stepwise_state = None
+                        st.session_state.stepwise_completed_steps = {}
+                        st.session_state.stepwise_current_step = 1
+                        st.session_state.stepwise_run_requested = False
+                        st.rerun()
+                with c_new:
+                    if st.button("🚀 Restart Step 1", use_container_width=True, key="restart_step1_btn"):
+                        st.session_state.stepwise_current_step = 1
+                        st.session_state.stepwise_state = None
+                        st.session_state.stepwise_completed_steps = {}
+                        st.session_state.stepwise_run_requested = True
+                        st.session_state.batch_result = None
+                        st.session_state.generation_error = None
+                        st.rerun()
+        else:
+            launch_btn = st.button("Generate (Continuous)", type="primary", use_container_width=True, key="launch_continuous_btn")
+            if launch_btn and st.session_state.get("active_story_input", "").strip():
+                st.session_state.stepwise_active = False
+                st.session_state.run_requested = True
+                st.session_state.batch_result = None
+                st.session_state.generation_error = None
+                st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
+                st.session_state.run_scenario = instruction_text.strip()
+                st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
+                save_config("selected_headline", st.session_state.run_topic)
+                save_config("news_category", st.session_state.chosen_news_cat)
+                save_config("source_mode", st.session_state.chosen_source_mode)
+                save_config("max_retries", st.session_state.chosen_max_retries)
+                st.rerun()
 
     settings_panel()
 
@@ -969,19 +1051,85 @@ with col_output:
                 }
                 status_box.update(label="Failed", state="error")
 
+    if st.session_state.get("stepwise_active") and st.session_state.get("stepwise_run_requested"):
+        st.session_state.stepwise_run_requested = False
+        curr_step = st.session_state.get("stepwise_current_step", 1)
+        step_model = st.session_state.get("stepwise_step_model", st.session_state.chosen_engine_mode)
+        extra_inst = st.session_state.get("stepwise_extra_instruction", "")
+
+        step_titles = {
+            1: "Stage 1: Wire Fact Validation",
+            2: "Stage 2: Character & Scene Finalisation",
+            3: "Stage 3: Dialogue Writing & Calibration",
+            4: "Stage 4: Storyboards & AI Video Prompts",
+            5: "Stage 5: Quality Gate & Editorial Sign-Off",
+        }
+
+        with st.status(f"Executing {step_titles.get(curr_step, f'Step {curr_step}')} with {ENGINE_NAMES_REV.get(step_model, step_model)}…", expanded=True) as s_box:
+            try:
+                if curr_step == 1:
+                    st_res = reel_workflow.run_step_1(
+                        news_input=st.session_state.run_topic,
+                        scenario=st.session_state.run_scenario,
+                        batch_size=st.session_state.chosen_batch_count,
+                        target_seconds=st.session_state.chosen_duration,
+                        engine_mode=step_model,
+                        max_retries=st.session_state.chosen_max_retries,
+                        preferred_angle=st.session_state.chosen_angle,
+                        character_count=st.session_state.chosen_character_count,
+                        scene_style=st.session_state.chosen_scene_style,
+                        preferred_tone=st.session_state.chosen_tone,
+                        sample_story=st.session_state.get("run_sample_story", ""),
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 2:
+                    st_res = reel_workflow.run_step_2(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 3:
+                    st_res = reel_workflow.run_step_3(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 4:
+                    st_res = reel_workflow.run_step_4(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 5:
+                    st_res = reel_workflow.run_step_5(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                    st.session_state.batch_result = st_res["batch_result"]
+                    st.session_state.selected_script_idx = 0
+                    save_config("selected_script_index", 0)
+
+                st.session_state.stepwise_state = st_res
+                st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = st_res
+                st.session_state.stepwise_extra_instruction = ""
+                st.session_state.generation_error = None
+                s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
+                st.rerun()
+            except Exception as e:
+                st.session_state.stepwise_run_requested = False
+                st.session_state.generation_error = {
+                    "message": str(e),
+                    "engine_mode": step_model,
+                    "partial_output": getattr(e, "partial_output", "") or "",
+                    "step": curr_step,
+                }
+                s_box.update(label=f"Step {curr_step} Failed", state="error")
+
     if st.session_state.get("generation_error"):
         failure = st.session_state.generation_error
-        engine_labels = {
-            "fm_only": "On-device Apple Foundation Model",
-            "agy_only": "Antigravity",
-            "codex_only": "Codex",
-            "grok_low": "Grok Low",
-            "grok_medium": "Grok Medium",
-            "grok_high": "Grok High",
-            "first_local_then_agy": "Local First Then Antigravity",
-        }
         st.error("Script generation failed")
-        st.write(f"Selected model: **{engine_labels.get(failure['engine_mode'], failure['engine_mode'])}**")
+        st.write(f"Selected model: **{ENGINE_NAMES_REV.get(failure['engine_mode'], failure['engine_mode'])}**")
         st.warning(failure["message"])
         if failure.get("partial_output"):
             st.markdown("#### Partial model output")
@@ -992,15 +1140,265 @@ with col_output:
                 disabled=True,
                 label_visibility="collapsed",
             )
-        st.caption("No script was generated. Resolve the model issue and try again.")
-        if st.button("Try again", key="retry_failed_generation", use_container_width=True):
-            st.session_state.generation_error = None
-            st.session_state.batch_result = None
-            st.session_state.run_requested = True
-            st.rerun()
+        if st.session_state.get("stepwise_active"):
+            err_step = failure.get("step", st.session_state.get("stepwise_current_step", 1))
+            st.caption(f"Failure occurred during Step {err_step}. You can change the model and retry.")
+            c_retry, c_abort = st.columns([1, 1])
+            with c_retry:
+                if st.button(f"🔄 Retry Step {err_step}", key="retry_stepwise_step", type="primary", use_container_width=True):
+                    st.session_state.generation_error = None
+                    st.session_state.stepwise_run_requested = True
+                    st.rerun()
+            with c_abort:
+                if st.button("❌ Exit Step-Wise", key="cancel_stepwise_err", use_container_width=True):
+                    st.session_state.generation_error = None
+                    st.session_state.stepwise_active = False
+                    st.rerun()
+        else:
+            st.caption("No script was generated. Resolve the model issue and try again.")
+            if st.button("Try again", key="retry_failed_generation", use_container_width=True):
+                st.session_state.generation_error = None
+                st.session_state.batch_result = None
+                st.session_state.run_requested = True
+                st.rerun()
+
+    step_names = [
+        "1. Facts & Wire",
+        "2. Character Finalisation",
+        "3. Spoken Dialogue",
+        "4. Storyboard & Video",
+        "5. Editorial Sign-Off",
+    ]
+
+    if st.session_state.get("stepwise_active") and not st.session_state.get("batch_result") and not st.session_state.get("generation_error"):
+        step_state = st.session_state.get("stepwise_state")
+        curr_step = st.session_state.get("stepwise_current_step", 1)
+
+        st.markdown('<div class="ios-section-label">Step-Wise Pipeline Checkpoint</div>', unsafe_allow_html=True)
+        cols_step = st.columns(5)
+        for idx, (c_st, name) in enumerate(zip(cols_step, step_names), 1):
+            with c_st:
+                if idx < curr_step:
+                    st.markdown(f'<div style="text-align:center; font-size:0.75rem; font-weight:700; color:#34c759; padding:4px 0; border-bottom:3px solid #34c759;">✓ {name}</div>', unsafe_allow_html=True)
+                elif idx == curr_step:
+                    st.markdown(f'<div style="text-align:center; font-size:0.75rem; font-weight:700; color:#0071e3; padding:4px 0; border-bottom:3px solid #0071e3;">▶ {name}</div>', unsafe_allow_html=True)
+                else:
+                    st.markdown(f'<div style="text-align:center; font-size:0.75rem; font-weight:500; color:#8e8e93; padding:4px 0; border-bottom:3px solid #d2d2d7;">{name}</div>', unsafe_allow_html=True)
+
+        st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
+
+        if step_state:
+            with st.container(border=True):
+                if curr_step == 1:
+                    st.markdown("### 🔍 Step 1: Fact Validation & Story Dossier")
+                    verif = step_state.get("verification")
+                    if verif:
+                        c_vf1, c_vf2 = st.columns([1, 1])
+                        with c_vf1:
+                            st.markdown(f"**Verification:** {'🟢 Confirmed' if verif.is_verified else '🟡 Warning'} ({verif.confidence_score}% Confidence)")
+                        with c_vf2:
+                            st.markdown(f"**Target Format:** {step_state['target_seconds']}s • {step_state['scene_style']}")
+                        topic_headline = getattr(verif, "headline", None) or step_state.get("news_input", "")
+                        if topic_headline:
+                            st.markdown(f"**Headline / Topic:** {topic_headline}")
+                        if getattr(verif, "verification_summary", None):
+                            st.caption(f"**Verification Summary:** {verif.verification_summary}")
+                        if verif.verified_facts:
+                            st.markdown("**Confirmed Wire Facts:**")
+                            for f in verif.verified_facts[:4]:
+                                st.markdown(f"- {f}")
+                        if verif.physical_props:
+                            st.markdown(f"**Physical Props:** {', '.join(verif.physical_props)}")
+                        if verif.key_locations:
+                            st.markdown(f"**Key Locations:** {', '.join(verif.key_locations)}")
+                        if verif.core_conflict_or_irony:
+                            st.markdown(f"**Core Conflict / Irony:** {verif.core_conflict_or_irony}")
+
+                    if step_state.get("sub_instructions"):
+                        with st.expander("👑 Generated Sub-Instructions for Upcoming Agents"):
+                            for ag, sub in step_state["sub_instructions"].items():
+                                st.markdown(f"**{ag.replace('_', ' ').title()}:**")
+                                st.caption(sub)
+
+                elif curr_step == 2:
+                    st.markdown("### 🎭 Step 2: Character & Scene Finalisation")
+                    chars = step_state.get("finalized_characters", [])
+                    avail_chars = step_state.get("available_characters", chars)
+                    scenes = step_state.get("finalized_scenes", [])
+                    avail_scenes = step_state.get("available_scenes", scenes)
+
+                    col_c, col_s = st.columns(2)
+                    with col_c:
+                        st.markdown(f"**👥 Characters Generated ({len(avail_chars)} Options - 2X Pool):**")
+                        for c_idx, ch in enumerate(avail_chars, 1):
+                            is_primary = "⭐ Primary" if c_idx <= len(chars) else "💡 Alternative"
+                            st.markdown(f"• **{ch.name}** (`{ch.role_or_job}`) — *{is_primary}*")
+                            if ch.attire:
+                                st.caption(f"👗 Attire: {ch.attire}")
+                            if ch.emotional_stance:
+                                st.caption(f"💥 Stance: {ch.emotional_stance}")
+                            if ch.relationship_dynamic:
+                                st.caption(f"🤝 Dynamic: {ch.relationship_dynamic}")
+
+                    with col_s:
+                        st.markdown(f"**📍 Scene Locations Generated ({len(avail_scenes)} Options - 2X Pool):**")
+                        for s_idx, sc in enumerate(avail_scenes, 1):
+                            is_primary = "⭐ Primary" if s_idx <= len(scenes) else "💡 Alternative"
+                            st.markdown(f"• **Option {sc.scene_option_number}: {sc.location_name}** — *{is_primary}*")
+                            if sc.atmosphere:
+                                st.caption(f"🌆 Atmosphere: {sc.atmosphere}")
+                            if sc.lighting_mood:
+                                st.caption(f"💡 Lighting: {sc.lighting_mood}")
+                            if sc.props:
+                                st.caption(f"📦 Props: {', '.join(sc.props)}")
+
+                elif curr_step == 3:
+                    st.markdown("### ✍️ Step 3: Spoken Hindi Dialogue & Timing Calibration")
+                    dialogues = step_state.get("script_dialogues", [])
+                    for d in dialogues:
+                        p_badge = "🟢 In Duration Budget" if not d.get("is_over_budget") else "🔴 Over Budget"
+                        st.markdown(f"**Spoken Words:** {d['w_cnt']} words (Recommended ~{d['recommended_words']}w, Max {d['max_words']}w) • **{p_badge}**")
+                        if d.get("scene_lines"):
+                            for sl in d["scene_lines"]:
+                                st.markdown(f"• **{sl.get('character', 'Character')}:** “{sl.get('dialogue', '')}”")
+                        else:
+                            st.markdown(f"“{d.get('narration', '')}”")
+                        if d.get("retry_notes"):
+                            for rn in d["retry_notes"]:
+                                st.caption(rn)
+
+                elif curr_step == 4:
+                    st.markdown("### 🎬 Step 4: Scene Storyboards & 9:16 Video Prompts")
+                    scripts = step_state.get("scripts", [])
+                    if scripts:
+                        s0 = scripts[0]
+                        v_verif = getattr(s0, "video_verification", None)
+                        if v_verif:
+                            st.caption(f"Feasibility Score: {v_verif.feasibility_score}% • Continuity: {v_verif.temporal_consistency}")
+                        for sc in s0.scenes:
+                            st.markdown(f"**BEAT {sc.scene_number}** [{sc.timestamp}] — **{sc.character}**")
+                            st.markdown(f"**🎬 Action:** {clean_beat_action(sc.visual_b_roll)}")
+                            if sc.dialogue:
+                                st.markdown(f"**💬 Spoken:** “{sc.dialogue}”")
+                            if sc.on_screen_text:
+                                st.caption(f"Overlay: {sc.on_screen_text}")
+                            if sc.audio_sfx:
+                                st.caption(f"SFX: {sc.audio_sfx}")
+                            if sc.video_prompt:
+                                st.text_area("Veo 9:16 Cinematic Prompt", value=sc.video_prompt.visual_prompt_ai, height=65, disabled=True, key=f"step4_vp_view_{sc.scene_number}")
+
+            if curr_step > 1:
+                with st.expander(f"📜 View Previous Completed Steps (1 to {curr_step - 1})"):
+                    comp_steps = st.session_state.get("stepwise_completed_steps", {})
+                    for s_num in range(1, curr_step):
+                        past_st = comp_steps.get(s_num)
+                        if past_st:
+                            st.markdown(f"**Step {s_num}:** {step_names[s_num - 1]}")
+                            if s_num == 1 and past_st.get("verification"):
+                                st.caption(f"Facts verified: {len(past_st['verification'].verified_facts)} facts (Confidence: {past_st['verification'].confidence_score}%)")
+                            elif s_num == 2 and past_st.get("available_characters"):
+                                n_c = len(past_st.get("available_characters", []))
+                                n_s = len(past_st.get("available_scenes", []))
+                                st.caption(f"2X Pool Finalised: {n_c} character options • {n_s} scene location options")
+                            elif s_num == 3 and past_st.get("script_dialogues"):
+                                st.caption(f"Dialogue words: {past_st['script_dialogues'][0]['w_cnt']}w")
+                            elif s_num == 4 and past_st.get("scripts"):
+                                st.caption(f"Scenes directed: {len(past_st['scripts'][0].scenes)} scenes with AI prompts")
+
+            st.markdown('<div class="ios-section-label" style="margin-top:14px;">Next Action &amp; Refinements</div>', unsafe_allow_html=True)
+            with st.container(border=True):
+                eng_labels = list(ENGINE_OPTIONS.keys())
+                curr_model_key = st.session_state.get("stepwise_step_model", st.session_state.chosen_engine_mode)
+                eng_idx = list(ENGINE_OPTIONS.values()).index(curr_model_key) if curr_model_key in ENGINE_OPTIONS.values() else 0
+                
+                c_lbl, c_sel = st.columns([3, 5])
+                with c_lbl:
+                    st.markdown('<div class="cfg-label">AI Model for Action</div>', unsafe_allow_html=True)
+                with c_sel:
+                    selected_model_name = st.selectbox(
+                        "AI Model for Step",
+                        eng_labels,
+                        index=eng_idx,
+                        label_visibility="collapsed",
+                        key=f"step_model_select_{curr_step}",
+                        help="Each step could change model in this mode. Select the AI model to execute the next step or re-run this step."
+                    )
+                chosen_step_engine = ENGINE_OPTIONS[selected_model_name]
+
+                has_extra = st.checkbox(
+                    "Provide extra instruction for current or next step",
+                    key=f"extra_tick_{curr_step}",
+                    help="Tick this box to provide custom instruction or steering prompts for the current step (re-run) or next step."
+                )
+                extra_text = ""
+                apply_target = "next"
+                if has_extra:
+                    col_t1, col_t2 = st.columns([1, 1])
+                    with col_t1:
+                        apply_next = st.radio(
+                            "Apply instruction to:",
+                            ["Next Step ➡️", f"Current Step (Step {curr_step}) 🔄"],
+                            horizontal=True,
+                            key=f"apply_target_radio_{curr_step}"
+                        )
+                        apply_target = "next" if "Next" in apply_next else "current"
+                    extra_text = st.text_area(
+                        "Extra Instruction / Custom Guidance",
+                        placeholder=f"Enter guidance for the model (e.g. {'focus on specific facts' if curr_step == 1 else 'make hooks punchier and witty' if curr_step == 2 else 'adjust character dialogue and banter' if curr_step == 3 else 'specify camera movements and locations'})...",
+                        key=f"extra_instruction_input_{curr_step}",
+                        height=75,
+                    )
+
+                c_proceed, c_rerun = st.columns([1.3, 1])
+                with c_proceed:
+                    if curr_step < 4:
+                        proceed_label = f"Proceed to Step {curr_step + 1} ➡️"
+                    else:
+                        proceed_label = "Finalize & Sign Off (Step 5) 🏁"
+
+                    if st.button(proceed_label, type="primary", use_container_width=True, key=f"proceed_btn_{curr_step}"):
+                        st.session_state.stepwise_step_model = chosen_step_engine
+                        # If user typed feedback for next step, pass it
+                        st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and apply_target == "next" and extra_text.strip()) else ""
+                        st.session_state.stepwise_current_step = curr_step + 1
+                        st.session_state.stepwise_run_requested = True
+                        st.rerun()
+
+                with c_rerun:
+                    if st.button(f"🔄 Re-run Step {curr_step}", use_container_width=True, key=f"rerun_step_btn_{curr_step}"):
+                        st.session_state.stepwise_step_model = chosen_step_engine
+                        # When user clicks Re-run Step with extra instruction, always feed it as correction feedback
+                        st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and extra_text.strip()) else ""
+                        st.session_state.stepwise_run_requested = True
+                        st.rerun()
 
     if st.session_state.get("batch_result"):
         res = st.session_state.batch_result
+        if st.session_state.get("stepwise_active"):
+            st.success("🎉 Step-Wise Reel Completed! All 5 stages verified and signed off by Chief Editor.")
+            with st.expander("🪜 Review Step-by-Step Outputs (Steps 1 to 4)"):
+                comp = st.session_state.get("stepwise_completed_steps", {})
+                step_names_history = [
+                    "1. Facts & Wire",
+                    "2. Character Finalisation",
+                    "3. Spoken Dialogue",
+                    "4. Storyboard & Video",
+                ]
+                for s_num in [1, 2, 3, 4]:
+                    past_st = comp.get(s_num)
+                    if past_st:
+                        st.markdown(f"**Step {s_num}: {step_names_history[s_num - 1]}**")
+                        if s_num == 1 and past_st.get("verification"):
+                            verif_obj = past_st['verification']
+                            v_hl = getattr(verif_obj, "headline", None) or past_st.get("news_input", "")
+                            st.caption(f"Verified: {v_hl} (Confidence: {verif_obj.confidence_score}%)")
+                        elif s_num == 2 and past_st.get("hooks_and_ctas"):
+                            for h, c in past_st["hooks_and_ctas"]:
+                                st.caption(f"Hook: {h} | CTA: {c}")
+                        elif s_num == 3 and past_st.get("script_dialogues"):
+                            st.caption(f"Dialogue words: {past_st['script_dialogues'][0]['w_cnt']}w")
+                        elif s_num == 4 and past_st.get("scripts"):
+                            st.caption(f"Scenes directed: {len(past_st['scripts'][0].scenes)} scenes with AI prompts")
         if len(res.scripts) > 1:
             sel_id = st.radio(
                 "Version",

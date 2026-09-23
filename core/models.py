@@ -18,6 +18,7 @@ class NewsArticle(BaseModel):
 
 class NewsVerificationReport(BaseModel):
     """Step 1: News Verification Report & Story Research Dossier."""
+    headline: str = ""
     is_verified: bool = True
     confidence_score: int = 90  # 0 to 100
     verification_summary: str = ""
@@ -30,6 +31,31 @@ class NewsVerificationReport(BaseModel):
     core_conflict_or_irony: str = ""
     tangible_actions: List[str] = Field(default_factory=list)
 
+
+class CharacterProfile(BaseModel):
+    """Step 2: Finalized Character Profile (Actor, Occupation, Attire, Persona)."""
+    name: str
+    role_or_job: str
+    attire: str = ""
+    emotional_stance: str = ""
+    relationship_dynamic: str = ""
+
+
+class StoryBeatStep(BaseModel):
+    """Step 2: Story Beat Action Step."""
+    beat_number: int
+    character_name: str
+    action_step: str
+    speech_objective: str
+
+
+class SceneSettingOption(BaseModel):
+    """Step 2: Finalized Scene Setting / Location Option (for downstream 9:16 scene selection)."""
+    scene_option_number: int = 1
+    location_name: str
+    atmosphere: str = ""
+    lighting_mood: str = ""
+    props: List[str] = Field(default_factory=list)
 
 
 class VideoScenePrompt(BaseModel):
