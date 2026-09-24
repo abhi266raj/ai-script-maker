@@ -1,22 +1,27 @@
-"""News-intelligibility enforcement + fail-loud Stage 3 tests.
+"""News-intelligibility + fail-loud Stage 3 tests.
+
+Stage 3 validation makes exactly ONE AI validator call per script per attempt:
+`ai_judge_script_quality` judges BOTH tone compliance (enforced) and news
+coverage (advisory) in a single model call and returns a split verdict.
+The other checks (structure, language, clothing, SFX) are code validators.
 
 News coverage is validated by the AI judge ONLY (FR-16.1) — no
 token/regex matching. The judge reads ONLY the short news title /
 basic news content + the dialogue (never the full verified-facts list)
 and verdicts whether the viewer can understand what happened.
 
-The judge's VERDICT + REASON are surfaced in the 3.2.2 output (FR-16.2).
+The judge's verdicts are surfaced in the 3.2.2 output (FR-16.2).
 A judge engine error renders as a visible warning — never a silent
 pass or silent fail.
 
 Regression tests for the user-reported defects:
-1. ai_judge_news_coverage(): returns (verdict, reason); reason is surfaced.
+1. ai_judge_script_quality(): one call, split (tone_ok, tone_issue, news_ok, news_reason) verdict.
 2. Judge input contains no verified facts.
 3. Judge engine error -> visible warning with error detail.
 4. Stage 3 must FAIL WITH ERROR, never fall silently:
    - model exception -> ModelGenerationError (no silent empty-output fallback)
    - unparseable model output -> ModelGenerationError (no silent synthetic scenes)
-   - news judge still failing after retries -> ModelGenerationError
+   - enforced tone verdict still failing after retries -> ModelGenerationError
    - each preview script is checked against ITS OWN hook (multi-preview batches)
 """
 import inspect
@@ -149,23 +154,24 @@ def test_empty_model_output_raises():
             _call()
 
 
-def test_news_retry_still_failing_raises():
-    """If the news-coverage judge keeps failing, the stage must fail with
-    error (surfacing the judge's reason), not ship the broken output."""
+def test_tone_judge_still_failing_raises():
+    """If the ENFORCED tone verdict keeps failing, the stage must fail with
+    error (surfacing the judge's reason), not ship the broken output.
+    (News is advisory-only: a failing news verdict never fails the stage.)"""
     vague_raw = (
         "SCRIPT 1:\n"
         "BEAT 1:\nCHARACTER: Rakesh\nDIALOGUE: \"भाई ज़रा इधर देखो, आज अचानक हर तरफ इतनी हलचल क्यों मची हुई है?\"\n"
         "BEAT 2:\nCHARACTER: Meenal\nDIALOGUE: \"अब सबकी नज़र इस पर है कि इस खबर का असली असर किस पर पड़ेगा!\"\n"
     )
     with patch.object(dw_mod.dialogue_writer, "execute", return_value=vague_raw), \
-         patch.object(dw_mod, "ai_judge_news_coverage",
-                      return_value=(False, "AI judge: VERDICT=NO — mocked: beats state no specific event")):
+         patch.object(dw_mod, "ai_judge_script_quality",
+                      return_value=(False, "TONE_ISSUE: mocked not funny", True, "mocked news pass")):
         with pytest.raises(ModelGenerationError) as exc:
             _call()
     assert "validation failed" in str(exc.value)
-    assert "news coverage" in str(exc.value).lower()
+    assert "tone + news check" in str(exc.value).lower()
     # The judge's reason is surfaced, not hidden.
-    assert "VERDICT=NO" in str(exc.value)
+    assert "mocked not funny" in str(exc.value)
 
 
 def test_judge_engine_error_surfaces_warning_in_failure():
@@ -177,12 +183,14 @@ def test_judge_engine_error_surfaces_warning_in_failure():
         "BEAT 2:\nCHARACTER: Meenal\nDIALOGUE: \"अब सबकी नज़र इस पर है कि इस खबर का असली असर किस पर पड़ेगा!\"\n"
     )
 
-    def _boom(agent, scene_lines, news_topic, hook, engine_mode="first_local_then_agy"):
-        return False, ("⚠️ AI news-coverage judge engine error "
-                       "(RuntimeError: boom). Coverage could not be verified — retry or accept manually.")
+    def _execute(prompt, engine_mode=None):
+        # Generation prompts return the draft; the merged quality-judge
+        # prompt raises so the judge's own engine-error path is exercised.
+        if "TONE_VERDICT" in prompt:
+            raise RuntimeError("boom")
+        return vague_raw
 
-    with patch.object(dw_mod.dialogue_writer, "execute", return_value=vague_raw), \
-         patch.object(dw_mod, "ai_judge_news_coverage", side_effect=_boom):
+    with patch.object(dw_mod.dialogue_writer, "execute", side_effect=_execute):
         with pytest.raises(ModelGenerationError) as exc:
             _call()
     assert "⚠️" in str(exc.value)
@@ -193,9 +201,9 @@ def test_each_preview_checked_against_own_hook():
     script 1's."""
     per_item_hooks = []
 
-    def spy(agent, scene_lines, news_topic, hook, engine_mode="first_local_then_agy"):
+    def spy(agent, scene_lines, news_topic, hook, tone, angle, engine_mode="first_local_then_agy"):
         per_item_hooks.append(hook)
-        return True, "AI judge: VERDICT=YES — mocked pass"
+        return True, "", True, "AI judge: NEWS_VERDICT=YES — mocked pass"
 
     good_raw = (
         "SCRIPT 1:\n"
@@ -208,11 +216,10 @@ def test_each_preview_checked_against_own_hook():
         {"angle": "B", "hook": "Zomato introduces new delivery fee", "cta": "Follow!"},
     ]
     with patch.object(dw_mod.dialogue_writer, "execute", return_value=good_raw), \
-         patch.object(dw_mod, "ai_judge_news_coverage", side_effect=spy), \
-         patch.object(dw_mod, "ai_judge_tone_compliance", return_value=(True, "")):
+         patch.object(dw_mod, "ai_judge_script_quality", side_effect=spy):
         result = _call(items=items, news_input="Ola rights issue; Zomato delivery fee")
     assert len(result) == 2
-    assert per_item_hooks, "news validation never ran"
+    assert per_item_hooks, "quality validation never ran"
     assert any("Ola" in h for h in per_item_hooks), per_item_hooks
     assert any("Zomato" in h for h in per_item_hooks), per_item_hooks
     first_two = per_item_hooks[:2]

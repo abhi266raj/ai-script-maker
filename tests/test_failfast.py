@@ -1,11 +1,15 @@
 """Fail-fast Stage 3 validation tests.
 
-User requirement (2026-09-24): if 3.x.1 (Structure) fails, 3.x.2-3.x.4 must
+User requirement (2026-09-24): if 3.x.1 (Structure) fails, 3.x.2-3.x.5 must
 NOT run -- they are recorded as "Skipped (<failed check> failed)", never
 merely "Not reached". Retry refines the previous full draft using only the
 first failure's exact feedback; re-validation then starts again at
-Structure. Check order is the contract: Structure -> News -> Tone ->
-Language (most failure-prone first).
+Structure. Check order is the contract: Structure -> Tone+news (ONE AI
+validator call: tone enforced, news advisory) -> Language -> Clothing -> SFX
+(most failure-prone first). There is no separate final gate: when all
+numbered checks pass, the narrations are fully validated. Every check is
+labeled "AI validator" or "code validator" so the UI shows which checks
+cost a model call.
 """
 from types import SimpleNamespace
 
@@ -96,6 +100,23 @@ def test_failfast_all_pass_runs_in_exact_order():
     assert feedback == []
 
 
+def test_validator_label_propagates_to_sub_checks():
+    specs = [
+        {"sub": "1", "name": "AI-ish", "validator": "AI validator",
+         "run": lambda: {"problems": [], "pass_output": "ok", "feedback": ""}},
+        {"sub": "2", "name": "Code-ish", "validator": "code validator",
+         "run": lambda: {"problems": ["x"], "pass_output": "", "feedback": "fb"}},
+        {"sub": "3", "name": "Skipped-ish", "validator": "code validator",
+         "run": lambda: {"problems": [], "pass_output": "ok", "feedback": ""}},
+    ]
+    sub_checks, _ = run_validation_checks_fail_fast(specs, stage_prefix="3", val_num=2)
+    assert sub_checks[0]["validator"] == "AI validator"
+    assert sub_checks[1]["validator"] == "code validator"
+    # skipped checks keep their validator label too
+    assert sub_checks[2]["validator"] == "code validator"
+    assert sub_checks[2]["skipped"] is True
+
+
 # ---------- Stage 3 integration tests ----------
 
 def _agent():
@@ -130,47 +151,52 @@ def _invoke(agent, **kw):
     return result, events
 
 
-def _patch_validators(monkeypatch, order, struct=(), news_ok=True,
-                      news_reason="judge: VERDICT=YES — mocked pass",
-                      tone_ok=True, lang=()):
-    """Patch the 4 module-level validators with spies.
+def _patch_validators(monkeypatch, order, struct=(),
+                      tone_ok=True, tone_issue="not funny",
+                      news_ok=True, news_reason="judge: NEWS_VERDICT=YES",
+                      lang=(), clothing=(), sfx=()):
+    """Patch the validators with spies.
 
-    struct/lang: problems to return. news_ok/news_reason: the AI news
-    judge's verdict (FR-16.1: judge-only news validation).
-    tone_ok: AI tone judge verdict.
+    The AI side is ONE merged judge (ai_judge_script_quality) returning
+    (tone_ok, tone_issue, news_ok, news_reason): tone is enforced, news is
+    advisory-only and never fails the stage. struct/lang/clothing/sfx are
+    code validators returning problem lists.
     """
     monkeypatch.setattr(
         dw, "validate_dialogue_structure",
         lambda sl, style, speakers: (order.append("structure"), list(struct))[1])
     monkeypatch.setattr(
-        dw, "ai_judge_news_coverage",
-        lambda agent_self, scene_lines, news_topic, hook, engine_mode=None:
-            (order.append("news-judge"), (news_ok, news_reason))[1])
-    monkeypatch.setattr(
-        dw, "ai_judge_tone_compliance",
-        lambda self, sl, tone, angle, engine_mode=None:
-            (order.append("tone"), (tone_ok, "" if tone_ok else "not funny"))[1])
+        dw, "ai_judge_script_quality",
+        lambda agent_self, scene_lines, news_topic, hook, tone, angle, engine_mode=None:
+            (order.append("quality"),
+             (tone_ok, "" if tone_ok else tone_issue, news_ok, news_reason))[1])
     monkeypatch.setattr(
         dw, "find_formal_hindi",
         lambda text: (order.append("language"), list(lang))[1])
+    monkeypatch.setattr(
+        dw, "validate_clothing_specificity",
+        lambda chars: (order.append("clothing"), list(clothing))[1])
+    monkeypatch.setattr(
+        dw, "validate_sfx_tone_match",
+        lambda sl, tone: (order.append("sfx"), list(sfx))[1])
 
 
 def _val_step(agent):
     return next(s for s in agent.last_validation_steps if s["stage"] == "3.2")
 
 
-def test_structure_failure_skips_news_tone_language(monkeypatch):
+def test_structure_failure_skips_rest(monkeypatch):
     order = []
     _patch_validators(monkeypatch, order, struct=["Script 1: bad structure"])
     agent = _agent()
     with pytest.raises(ModelGenerationError) as exc:
         _invoke(agent, _max_retries=0)
-    # news/tone/language must NEVER have run
+    # quality/language/clothing/sfx must NEVER have run
     assert order == ["structure"], f"later checks ran: {order}"
     assert "Structure check" in str(exc.value)
     step = _val_step(agent)
     subs = step["sub_checks"]
-    assert [s["stage"] for s in subs] == ["3.2.1", "3.2.2", "3.2.3", "3.2.4"]
+    assert [s["stage"] for s in subs] == ["3.2.1", "3.2.2", "3.2.3", "3.2.4", "3.2.5"]
     assert subs[0]["passed"] is False
     for s in subs[1:]:
         assert s["passed"] is None and s["skipped"] is True
@@ -180,27 +206,13 @@ def test_structure_failure_skips_news_tone_language(monkeypatch):
     assert step["output"] == "Failed: Structure check"
 
 
-def test_news_failure_skips_tone_language_and_retries_with_first_error_only(monkeypatch):
+def test_news_failure_is_advisory_never_retries(monkeypatch):
+    # News coverage is advisory-only: even a NEWS_VERDICT=NO inside the merged
+    # AI judge must NOT fail the stage, trigger a retry, or appear in retry
+    # feedback. The verdict is surfaced in the 3.2.2 sub-check output instead.
     order = []
-    judge_calls = {"n": 0}
-
-    def fake_judge(agent_self, scene_lines, news_topic, hook, engine_mode=None):
-        # FR-16.1: the AI judge is the sole news validator.
-        order.append("news-judge")
-        judge_calls["n"] += 1
-        if judge_calls["n"] == 1:
-            return False, "VERDICT=NO — beats state no specific event"
-        return True, "VERDICT=YES — mocked pass"
-
-    monkeypatch.setattr(dw, "validate_dialogue_structure",
-                        lambda sl, style, speakers: (order.append("structure"), [])[1])
-    monkeypatch.setattr(dw, "ai_judge_news_coverage", fake_judge)
-    monkeypatch.setattr(dw, "ai_judge_tone_compliance",
-                        lambda self, sl, tone, angle, engine_mode=None:
-                            (order.append("tone"), (True, ""))[1])
-    monkeypatch.setattr(dw, "find_formal_hindi",
-                        lambda text: (order.append("language"), [])[1])
-
+    _patch_validators(monkeypatch, order, news_ok=False,
+                      news_reason="NEWS_VERDICT=NO — beats state no specific event")
     agent = _agent()
     orig = agent.write_dialogues_batch
     retry_kwargs = []
@@ -212,47 +224,44 @@ def test_news_failure_skips_tone_language_and_retries_with_first_error_only(monk
     agent.write_dialogues_batch = spy
     result, events = _invoke(agent, _max_retries=1)
 
-    assert result, "retry should succeed once news is fixed"
-    # Fail-fast in round 1: structure -> news-judge(fail); tone/language never ran.
-    assert order[:2] == ["structure", "news-judge"], order
-    # Round 2 re-validation restarts at Structure and runs all four in order,
-    # followed by the final gate's own re-run (structure, language, news, tone).
-    assert order[2:6] == ["structure", "news-judge", "tone", "language"], order
-    assert order[6:] == ["structure", "language", "news-judge", "tone"], order
-    # retry refined the previous full draft with ONLY the first error
-    assert len(retry_kwargs) == 2
-    assert retry_kwargs[1]["previous_draft"] == DRAFT
-    assert "NEWS COVERAGE FIX" in retry_kwargs[1]["feedback"]
-    assert "TONE CORRECTION" not in retry_kwargs[1]["feedback"]
-    assert "COMMON-HINDI FIX" not in retry_kwargs[1]["feedback"]
-    # live events show skipped substeps for round 1
-    skipped = [e for e in events
-               if e.get("phase") == "complete" and e.get("status") == "skipped"]
-    assert {e["substep"] for e in skipped} >= {"3.2.3", "3.2.4"}
+    assert result, "advisory news failure must not fail the stage"
+    assert len(retry_kwargs) == 1, "no retry on advisory news failure"
+    # all five checks ran in contract order; none skipped
+    assert order == ["structure", "quality", "language", "clothing", "sfx"], order
+    step = _val_step(agent)
+    subs = step["sub_checks"]
+    assert [s["passed"] for s in subs] == [True] * 5
+    # news verdict visible as advisory note inside the merged check's output
+    assert "advisory, not blocking" in subs[1]["output"]
+    assert "NEWS_VERDICT=NO" in subs[1]["output"]
+    assert step["output"] == "All 5 checks passed"
 
 
-def test_all_pass_runs_four_checks_in_exact_order(monkeypatch):
+def test_all_pass_runs_five_checks_in_exact_order(monkeypatch):
     order = []
     _patch_validators(monkeypatch, order)
     agent = _agent()
     result, events = _invoke(agent, _max_retries=0)
     assert result and len(result) == 1
-    # numbered 3.2 checks run in exact contract order (news = AI judge, FR-16.1)...
-    assert order[:4] == ["structure", "news-judge", "tone", "language"], order
-    # ...then the pre-existing final gate double-checks (structure, language, news, tone)
-    assert order[4:] == ["structure", "language", "news-judge", "tone"], order
+    # numbered 3.2 checks run in exact contract order with exactly ONE AI
+    # validator call; no separate final gate re-runs anything afterwards.
+    assert order == ["structure", "quality", "language", "clothing", "sfx"], order
     step = _val_step(agent)
-    assert step["output"] == "All 4 checks passed"
+    assert step["output"] == "All 5 checks passed"
     assert all(s["passed"] for s in step["sub_checks"])
+    # validator labels: exactly one AI validator, four code validators
+    validators = [s["validator"] for s in step["sub_checks"]]
+    assert validators == ["code validator", "AI validator", "code validator",
+                          "code validator", "code validator"], validators
 
 
-def test_tone_failure_skips_language_only(monkeypatch):
+def test_tone_failure_skips_language_clothing_sfx(monkeypatch):
     order = []
     _patch_validators(monkeypatch, order, tone_ok=False)
     agent = _agent()
     with pytest.raises(ModelGenerationError):
         _invoke(agent, _max_retries=0)
-    assert order == ["structure", "news-judge", "tone"], f"language must not run: {order}"
+    assert order == ["structure", "quality"], f"later checks must not run: {order}"
     subs = _val_step(agent)["sub_checks"]
-    assert [s["passed"] for s in subs] == [True, True, False, None]
-    assert subs[3]["output"] == "Skipped (3.2.3 Tone check failed)"
+    assert [s["passed"] for s in subs] == [True, False, None, None, None]
+    assert subs[2]["output"] == "Skipped (3.2.2 Tone + news check failed)"

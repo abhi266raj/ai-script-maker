@@ -9,7 +9,7 @@
   "selected_script_index": 0,
   "default_angle": "Funny & Relatable",
   "character_count": 2,
-  "scene_style": "Argument",
+  "scene_style": "Dialogue",
   "workflow_mode": "\u26a1 Continuous",
   "source_mode": "\ud83d\udce1 Live News",
   "news_category": "\ud83d\ude02 Desi Quirky, Jugaad & Funny India",
@@ -33,7 +33,7 @@
       "title": "Bengaluru traffic cop clears drain amid heavy rain; video viral | Tap to know more | Inshorts",
       "link": "https://news.google.com/rss/articles/CBMirwFBVV95cUxPNE8td0JOSzhJSnNTT2NyVTBRUFRPQWRlaGdKa2lLVVNmRGFObGl2Z0JIRDBzWlRkQ2gxWk02N3Vfb2dCZmtWc0FFdDBOamNTUTFaaUVWT1M2cHBrZlh6WVBqekpwSldhVm13MW5LMFVYSHlTbTVMS3FZQW8tcHpmblVJNndXdW0xaC1pdUJWMUlZSlJMTV9aakpZUjIyRUdMVDJSLVIxdXFmVnBqZ0dr0gGvAUFVX3lxTE80Ty13Qk5LOElKc1NPY3JVMFFQVE9BZGVoZ0praUtVU2ZEYU5saXZnQkhEMHNaVGRDaDFaTTY3dV9vZ0Jma1ZzQUV0ME5qY1NRMVppRVZPUzZwcGtmWHpZUGp6SnBKV2FWbXcxbkswVVhIeVNtNUxLcVlBby1wemZuVUk2d1d1bTFoLWl1QlYxSVlKUkxNX1pqSllSMjJFR0xUMlItUjF1cWZWcGpnR2s?oc=5",
       "source": "Inshorts",
-      "time_label": "9h ago"
+      "time_label": "10h ago"
     },
     {
       "title": "Pothole \u201810th Birthday\u2019 Clip Goes Viral, PWD Repairs It In 24 Hours",
@@ -46,12 +46,6 @@
       "link": "https://news.google.com/rss/articles/CBMiuwFBVV95cUxQNWNmQ20ycGFwTUsyUWYwVmdLektpN2M3dXR3ZVJNVnFDN21sa1ZzLUk3UndvbURXdURVSHMyZ0tZWjFDSy1BRUpwUUxZTWhlcFJsa1pQTURWZXozRVVVVGhRQkJ2OUV3YnZ2SEQ5cXQ0TTBwa0tvaERPb20zOV9qcEVHaC1JaEZWeUtfYmJkejUwX2syVE9saXNHRE1FamlDZlYwbVBoRWk2YWRwdjdaUVRtTE1kRGN2NG5J0gHCAUFVX3lxTFB5MndUeHVwaERINXZxMHMxZl9ZYnpUUnhhOFFOeWdmbGF3MXN5WXREWHUyTG5zQnVhU091SmxVUXU3MjR1X1g0UXlxRWVDVVh0M2dSS0lzcDlBNnV2X1pvWnJnamQwX1pzc09VdXJ6UXVuV0h5allYY3pGSjZ5elNDRjdoT05EdVo4Q1RnQXZ2NnhrQUlZVHY0TmZXRUpCTzUtYU9pQnVZV2JBa3IyZ0w5Q0F5VGVHMU0xd3ZyNXcxVEFn?oc=5",
       "source": "The Indian Express",
       "time_label": "9h ago"
-    },
-    {
-      "title": "Exclusive: Seoul Metro Abandons Appeal in Union Officials' Dismissal Case",
-      "link": "https://news.google.com/rss/articles/CBMiiAFBVV95cUxQU3hzUndjdkVwZzllbnV0amlxck91VXhIYmxyNnd3ZmlDelBNQ1ZuTUZEQWJDX0RYdThEQWc3LWs1dVpkMFFRdkVNSVpJdTlGWEtzeDVTS0wwZGRuR1k0N04wQ0ZfR0xwdFJrRlhxaTNrV3ZrcFdMT1N3MW12ZEgwY3Rhc2RNR0xG?oc=5",
-      "source": "\uc870\uc120\uc77c\ubcf4",
-      "time_label": "2h ago"
     },
     {
       "title": "\u201cCall me Patrick Mahomes\u201d: Sophie Cunningham has a hilarious message for the Chiefs star",
@@ -75,13 +69,13 @@
       "title": "Indian Man Shares The True Cost Of Living In Australia: \"The Actual Numbers\"",
       "link": "https://news.google.com/rss/articles/CBMisAFBVV95cUxNMUs3d2t1cjRVNnJuVTBZY2ZWbW1CZk1KcWNkTTk2a0FlQzh1V0ZibGVQUERVWEV5UnNlRm5aTlFUbFlNVzFadHZzYTlMdDA5OVV0cTlhWHdLVGlyQzFjUm1iYlk4QXMybXVwaUVwLUM3SV9iZHZod3NnNEdkQlYtQ1p3YUN4Z0pxeDk2cVZDLWdvRjJxM1NobkNzYUZBbWVPNVQycjRLZVQyM2poQ0t2ctIBuAFBVV95cUxPWlR0OXFRRWJwRlo1WEo2RWNJTEdqZzQ5M3lnYW85Z2tibnBtWmRYVGlhNmM2TE9BQTJVQkNnS0pYaGJqSWViWFJ1aGUyZzlFTFAzeVZxdHpKSkFkMDl0cU0yUkJfMVVTVHB0RzBhbDh1WGdJck1NejZGTXR5ZTZubGhSZUJJYW1DSHNGTmp2NU9GTWlRNWpndXViRjVOM0IyQ2MyZDdDSGJZVXJVOUtPMGtJOUI2bmRV?oc=5",
       "source": "NDTV",
-      "time_label": "7h ago"
+      "time_label": "8h ago"
     },
     {
       "title": "'Won't hire male candidates from UP, Bihar, Rajasthan and Madhya Pradesh': Bengaluru entrepreneur's post sparks debate | Trending",
       "link": "https://news.google.com/rss/articles/CBMiggJBVV95cUxPeF9ta25SQnZKQzFFeTNTOXM3SmNISWQwanRxeVRRS2FqV2dtbTlQYmV1VXB2NGh0eHE2WXNLcHAtSVBRcHV6N0Q3cUVUUzFrWjZtQUIySmpfcHdYeVFHZndDbWJDVU1teExNLXc2TjhiVFhzbkFmZjFyYUVkcjBqa3FaQ01XMUFUNkRHdmlqN3RIRnJSVmRLcjUzRnJzRmpEZWFUMWZsbHhYWUNWRkNsMlNIMFRZZ0lJZHpncUZzUGpOd1RwU1pRYkRUYkhVT0JITFNoVU45RDRCRzk0UkFyWnItVjJ2Yk1KWTlyaFE3SDd4elVRT3Etdml5MVZNamp5SFHSAYcCQVVfeXFMT2V6UVVqLUJyaU9mLV85RTU0Rm1IRG9rcFJUc2tIb0ItVFZZV3I3b3BHSUNfNmRJS2p1a2ttQ2ZsQXFXU2hHdDBxamxUNVZTWmVKUmFkcGt3SUlrOWdWVlNVd3RFQmdCX3UzSTVHaGpVYXp2YnUxTTVKV2x3Qkk3YTh3R19NV2ZCZ0d1ZzU5WW5EeXAtRjBsNTZWQVE2V0NWMVBDZ0EyQkFPVWlwRTVWb29ONF9xY1BsWWphTXF5Mk9VYmEzMVA3UGQweWhYaFoyeWdDN0xULXlhdG92SFdudDkxN21aNXp2SEIyNmNUVXd2WmlmZEI0RVRaQkZfOGNIT0xMTHp1WHc?oc=5",
       "source": "Hindustan Times",
-      "time_label": "9h ago"
+      "time_label": "10h ago"
     },
     {
       "title": "Haiti\u2019s viral UNGA moment - India Today",
@@ -93,7 +87,7 @@
       "title": "India reaffirms commitment to eliminate Hepatitis B, C as public health threats by 2030",
       "link": "https://news.google.com/rss/articles/CBMi1gFBVV95cUxNQmw4blpUMEhnRU9VeDAzTG1QZklsbVJGQnk4alVobU54MF9MbFVGVzNCQ1IwaXNUa1BsYUJkTWpEOEJ2cGx0MzBGMXI5c183MWdJRmNJUDZUeVJ4d2xlQXozbDY1bjc1eEd6VUJjMUhzR2JhdWY3Q1pMeUZ5c1FyT1pDd3Y1SHlkVVFnRS15MC02UkU5dXYzWkhLZzhnV1p2WXZfS1NPUjljQXA2azhnZE84WllrSFozeURTOWxmMEVGZE5lOThRcnQwY1VjYnZBZ2pjTndB0gHjAUFVX3lxTE9waDQzZGNlbHpvbEJnMWZ1ZlFyU2hHUDFEUDdaS3ItYnFSTWtwUDZFUDl3bm1XYmpJSmJOZ3ZENTUwT2Z6bGpNZjFRVVZYUjFUeExfdjByMWpBMXlSaC1ad1dZNXpOV0VPT000SzNDSzhSY3YyQUpyRlAyS2FEWWlsU2s2VWVJd3hZc3BpZUs5QmdDNTlZWDB2QUVSVTBXY3lLa3RYSkxFUEZQQnF1Smc5WnJkcVRpS2lVVll1U25MaEhwbVpTLXhjLVhmYTZNNkJRdmVHSTZFSkpaVm5TSm5MRzFR?oc=5",
       "source": "The New Indian Express",
-      "time_label": "10h ago"
+      "time_label": "11h ago"
     },
     {
       "title": "Creator behind viral Avengers X South Indian wedding crossover reel reveals the AI solutions he used",
@@ -105,16 +99,22 @@
       "title": "Won't hire male candidates from UP, Rajasthan, Bihar, MP: Bengaluru founder's post goes viral, sparks...",
       "link": "https://news.google.com/rss/articles/CBMi7wFBVV95cUxNaG1JY01EUW0yMkUyVElQMjVRNm5GSUdBbENZY0NyUUs2UFVBeVNwdVNuVk1nOGV4RHZkci1kcVFpeW1WOFFPYXl4a291TXBtb01Ub29xQjlaS2xfOElyRnAzZmFhNzZpcVp4cnFCRjY5cnFVUEFzX2FZZEd2OENTNk9TVFhsb012Wk1WWnp2ajNLYmRhZF9YSi1JS216NFFMNmNhMlJYVWJiclB5SHFHMmJmeHNOdEJtYzlBUVpKaE1HVU1WVGZCSThiZUFRTUlMLUVGWVZ2UW5keTlUZm9mYkpDQkYyNW5QdWxlelY0Y9IB9AFBVV95cUxPMWxWc3ZzVnhocld1Z0lNbnBESXBpRDJXWUZZVTQzX2ljNGY5b1Azd3IyWHp1Z2Nncml5ZnhwbHVjaVMxXzl1UF9mRHlvazVSOWFYY3NuMXR6Q0s1TFBPTWt4eWYxNW5OU3I1cVhMV0FzMnVIR3hkN3ZzTHczMFF1eFN4UzdUV1BxX2dqdHR2dFI3MURZamZ6SGVpS0lWc2NjSUNFREk0VUFXSF9TVVBSd04yTUlibEFZY0RCS2R5WndFdXBIVW1yNXg1RkdLdE5FV2VnVWRnNFFuM3ZXcXRRZ0NLVVZWNm9CWnIzdWp3MzlSVU9o?oc=5",
       "source": "Moneycontrol.com",
-      "time_label": "13h ago"
+      "time_label": "14h ago"
+    },
+    {
+      "title": "Lagos: Police arrest man in viral video beating toddler for failing to read",
+      "link": "https://news.google.com/rss/articles/CBMiqwFBVV95cUxOdUtqei0xcGZPejFyOU5rbGFlZmRsX3BtTXg4cGFkMVpjcThPUFpSenVmeUR5UTFYaGJ5N01BMGpqR1QxMlFMSllpOU1TVkQ1MldEUW54T0EtZEJmQXBHTHR5clVxRnNTa2dqd2ZUZVBGNjY1MlkzUTZHUVZob2VWalpxbGN0eW5GeHpUanZTaTNaX2U0ajZyc0lvNlRwX3puZ2NNaW9JOHlDR2c?oc=5",
+      "source": "dailypost.ng",
+      "time_label": "3h ago"
     },
     {
       "title": "Grandson of Electronic City founder slams Bangalore\u2019s \u2018anti-North India propaganda\u2019 | Trending",
       "link": "https://news.google.com/rss/articles/CBMi3wFBVV95cUxOSWdnY1B5dnQ4RkZKVEdTRUVnaFdYRExtUENJWEVILUtWMTc5Zzh5VXNiQXZZX2IwcFl3eXp1ZXBHdUhDNGZkLTF2ZDJVaDJNOER5YU1nN0d2d283U2xBTE9DTkRxQVFfRnM4TG5UMnQ0TUVXWTlkQVNtTXJudFpQN3JfbWJWVi02U2RMLUJraTVpYXRRcXdOSUh3Wkd6YU1ZRVNzZTFNeGs5a2hUa085SWoyalJBNVFpc2Q1ZUY0dTZEZlVTTWtGbENxUUVfM1Y0dVVyU0drTEdDT2NhNkVF0gHkAUFVX3lxTE9pVFBfSFJXMDRBRy1PUF9EcExsRG00bEJyTjlzWFpKRkwtbTlFTVJVQktXRVllcnhLX0VsVVVoQkNJalBmVmlhc1BHNTBORWdhRjI3Z3BYX1VCY3VmMV9Wa2ZuTWQyazJZVDRycTNlYjNxU2Ixc1NvanFxb3hfeVU3MWJOUDhKWlhsc2czdEhUS2lZNmFOUjVfcHBvWHRLWEJJUWljamxZUndWREl4NDlJZmtNRVdUalhrTVRPRjN4UDdLZHJhbzJNSzZOQXFnc1Mwak1rTnQyTE5JNWlhaWlrRXEzTg?oc=5",
       "source": "Hindustan Times",
-      "time_label": "14h ago"
+      "time_label": "15h ago"
     }
   ],
   "cached_headlines_cat": "\ud83d\ude02 Desi Quirky, Jugaad & Funny India",
   "cached_headlines_hashtag": "",
-  "cached_headlines_ts": 1790210731.713614
+  "cached_headlines_ts": 1790212017.101403
 }

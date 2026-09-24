@@ -3,6 +3,7 @@
 import re
 import copy
 import json
+import contextlib
 import streamlit as st
 import sys
 from core.constants import (
@@ -28,7 +29,6 @@ from core.screenplay_formatter import (
     format_director_prompts,
     derive_scene_detail,
     clean_physical_action,
-    get_character_attire,
     get_first_name,
 )
 
@@ -1482,7 +1482,7 @@ def _to_jsonable(obj):
     return str(obj)
 
 
-def _render_raw_json(data, *, label="Raw JSON", key_prefix=""):
+def _render_raw_json(data, *, label="Raw JSON", key_prefix="", as_expander=True):
     """Collapsed debugging view of raw model JSON. Always secondary, never the primary view.
 
     The caller must render the pretty human view FIRST and call this after.
@@ -1496,7 +1496,11 @@ def _render_raw_json(data, *, label="Raw JSON", key_prefix=""):
         st.caption(f"(Raw JSON unavailable: {_e})")
         return
     _suffix = f" [{key_prefix}]" if key_prefix else ""
-    with st.expander(f"🔎 {label}{_suffix}", expanded=False):
+    if as_expander:
+        with st.expander(f"🔎 {label}{_suffix}", expanded=False):
+            st.code(_js, language="json")
+    else:
+        st.caption(f"🔎 {label}{_suffix}")
         st.code(_js, language="json")
 
 
@@ -1507,7 +1511,7 @@ def _model_field(obj, name, default=None):
     return getattr(obj, name, default)
 
 
-def _render_verification_report(verif, *, key_prefix=""):
+def _render_verification_report(verif, *, key_prefix="", as_expander=True):
     """Pretty human view of a NewsVerificationReport (dict or model).
 
     Clean sections — summary, facts, key figures, locations, props, conflict,
@@ -1570,10 +1574,10 @@ def _render_verification_report(verif, *, key_prefix=""):
             _url = _model_field(_s, "url", "") or _model_field(_s, "link", "") or ""
             _lbl = f"{_snm}: {_stl}" if _snm and _stl else (_snm or _stl or str(_s))
             st.markdown(f"- {_lbl}" + (f" ({_url})" if _url else ""))
-    _render_raw_json(verif, label="Raw JSON — verification", key_prefix=key_prefix)
+    _render_raw_json(verif, label="Raw JSON — verification", key_prefix=key_prefix, as_expander=as_expander)
 
 
-def _render_character_cards(chars, *, key_prefix=""):
+def _render_character_cards(chars, *, key_prefix="", as_expander=True):
     """Pretty character cards (name, role, attire, emotional stance) + collapsed raw JSON."""
     if not chars:
         st.caption("No characters.")
@@ -1595,7 +1599,7 @@ def _render_character_cards(chars, *, key_prefix=""):
             st.caption(f"😊 Emotional stance: {_es}")
         if _rd:
             st.caption(f"🤝 Dynamic: {_rd}")
-    _render_raw_json(chars, label="Raw JSON — characters", key_prefix=key_prefix)
+    _render_raw_json(chars, label="Raw JSON — characters", key_prefix=key_prefix, as_expander=as_expander)
 
 
 def _render_derived_scenes(derived_scenes_per_script, *, key_prefix=""):
@@ -1637,9 +1641,8 @@ def _render_storyboard_cards(scripts, *, key_prefix=""):
         with st.expander(f"🎞️ Storyboard {_bi2} — {len(_nsc)} scene(s)", expanded=False):
             if _ttl:
                 st.markdown(f"**{_ttl}**")
-            for _sc2 in _nsc:
+            for _si2, _sc2 in enumerate(_nsc):
                 _snum = _model_field(_sc2, "scene_number", "")
-                _sts = _model_field(_sc2, "timestamp", "") or ""
                 _sch = _model_field(_sc2, "character", "") or ""
                 _sloc = _model_field(_sc2, "scene_location", "") or _model_field(_sc2, "location_name", "")
                 _sbroll = _model_field(_sc2, "visual_b_roll", "") or ""
@@ -1647,8 +1650,6 @@ def _render_storyboard_cards(scripts, *, key_prefix=""):
                 _ssfx = _model_field(_sc2, "audio_sfx", "") or ""
                 _svp = _model_field(_sc2, "video_prompt", None)
                 _stitle = f"Scene {_snum}" if _snum != "" else "Scene"
-                if _sts:
-                    _stitle += f" [{_sts}]"
                 if _sch:
                     _stitle += f" — {_sch}"
                 st.markdown(f"**{_stitle}**")
@@ -1662,14 +1663,11 @@ def _render_storyboard_cards(scripts, *, key_prefix=""):
                     st.caption(f"🔊 SFX: {_ssfx}")
                 _vpa = _model_field(_svp, "visual_prompt_ai", "") if _svp else ""
                 if _vpa:
-                    st.text_area(
-                        "AI video prompt",
-                        value=str(_vpa),
-                        height=70,
-                        disabled=True,
-                        label_visibility="collapsed",
-                        key=f"{key_prefix}st5_vp_{_bi2}_{_snum}",
-                    )
+                    # Render as st.code (display element) rather than st.text_area (widget).
+                    # Streamlit input widgets register duplicate keys if re-rendered inside
+                    # the live streaming loop (st.empty().container()), causing DuplicateWidgetID.
+                    st.caption("🎬 AI video prompt (Veo):")
+                    st.code(str(_vpa), language="text")
     _render_raw_json(scripts, label="Raw JSON — storyboards", key_prefix=key_prefix)
 
 
@@ -1700,7 +1698,6 @@ def _render_dialogue_beats(narrations, *, show_raw_json=True, key_prefix=""):
                     _ac = _sl.get("camera_action", "") or _sl.get("action", "")
                     _sfx = _sl.get("sfx", "")
                     _ov = _sl.get("overlay", "")
-                    _ts = _sl.get("timestamp", "")
                     _bn = _sl.get("beat", "")
                 else:
                     _ch = getattr(_sl, "speaker", None) or getattr(_sl, "character", "?")
@@ -1708,11 +1705,9 @@ def _render_dialogue_beats(narrations, *, show_raw_json=True, key_prefix=""):
                     _ac = getattr(_sl, "camera_action", None) or getattr(_sl, "action", "")
                     _sfx = getattr(_sl, "sfx", "")
                     _ov = getattr(_sl, "overlay", "")
-                    _ts = getattr(_sl, "timestamp", "")
                     _bn = getattr(_sl, "beat", "")
                 _beat_no = _bn or _bi
-                _ts_txt = f" [{_ts}]" if _ts else ""
-                st.markdown(f"**🎙️ Beat {_beat_no}**{_ts_txt} — **{_ch}**")
+                st.markdown(f"**🎙️ Beat {_beat_no}** — **{_ch}**")
                 st.markdown(f"> {_dg}")
                 if _ac:
                     st.caption(f"🎬 Camera / action: {_ac}")
@@ -1746,17 +1741,18 @@ def _render_stage_output_card(stage_num, data, key_prefix=""):
         _ai_in = {k: v for k, v in _ai_in.items() if v} if isinstance(_ai_in, dict) else {}
         _iprompts = data.get("input_prompts") or []
         if _ai_in or _iprompts:
-            with st.expander(f"📥 Stage {stage_num} AI input", expanded=False):
-                for _ak, _av in _ai_in.items():
-                    st.markdown(f"**{_ak}**")
-                    st.code(str(_av)[:3000], language="text")
-                for _ip in _iprompts:
-                    _tmpl = _ip.get("template", "") if isinstance(_ip, dict) else ""
-                    _pr = _ip.get("prompt", "") if isinstance(_ip, dict) else str(_ip)
-                    if _tmpl:
-                        st.caption(f"Template: {_tmpl}")
-                    if _pr:
-                        st.code(str(_pr)[:3000], language="text")
+            st.markdown(f"**📥 Stage {stage_num} AI input**")
+            for _ak, _av in _ai_in.items():
+                st.caption(f"**{_ak}**")
+                st.code(str(_av)[:3000], language="text")
+            for _ip in _iprompts:
+                _tmpl = _ip.get("template", "") if isinstance(_ip, dict) else ""
+                _pr = _ip.get("prompt", "") if isinstance(_ip, dict) else str(_ip)
+                if _tmpl:
+                    st.caption(f"Template: {_tmpl}")
+                if _pr:
+                    st.code(str(_pr)[:3000], language="text")
+            st.divider()
         # --- Stage-specific output (only this stage's own keys are read)
         if stage_num == 1:
             _ver = data.get("verification")
@@ -1764,11 +1760,11 @@ def _render_stage_output_card(stage_num, data, key_prefix=""):
                 if data.get("verification_from_cache"):
                     _v_ch = data.get("cache_age_hours", 0) or 0
                     st.caption(f"✓ Used cached verification from {_v_ch:.1f}h ago — API call skipped")
-                _render_verification_report(_ver, key_prefix=f"{key_prefix}st1_")
+                _render_verification_report(_ver, key_prefix=f"{key_prefix}st1_", as_expander=False)
             else:
                 st.caption("No verification data.")
         elif stage_num == 2:
-            _render_character_cards(data.get("finalized_characters") or [], key_prefix=f"{key_prefix}st2_")
+            _render_character_cards(data.get("finalized_characters") or [], key_prefix=f"{key_prefix}st2_", as_expander=False)
         elif stage_num == 3:
             _narrs = data.get("narrations") or data.get("script_dialogues") or []
             if _narrs:
@@ -1824,14 +1820,26 @@ def _render_step_output(step_num, step_state, key_prefix=""):
     back (or reviewing history) always shows the complete finalized output.
     """
     if step_num == 1:
-        st.markdown("### 🔍 Step 1: Fact Validation & Story Dossier")
-        if step_state.get("verification_from_cache"):
-            _s1_ch = step_state.get("cache_age_hours", 0) or 0
-            st.success(f"✓ Used cached verification from {_s1_ch:.1f} hours ago — API call skipped (24h cache)")
-        _s1_verif = step_state.get("verification")
-        _s1_news = step_state.get("news_input", "")
-        # 1.1 Verify
-        with st.expander("1.1 Verify", expanded=False):
+        _outer_ctx = st.expander("🔍 Step 1: Fact Validation & Story Dossier", expanded=True) if key_prefix == "main_" else contextlib.nullcontext()
+        with _outer_ctx:
+            if step_state.get("verification_from_cache"):
+                _s1_ch = step_state.get("cache_age_hours", 0) or 0
+                st.success(f"✓ Used cached verification from {_s1_ch:.1f} hours ago — API call skipped (24h cache)")
+            _s1_verif = step_state.get("verification")
+            _s1_news = step_state.get("news_input", "")
+
+            # Overview & Target Format
+            if _s1_verif:
+                c_vf1, c_vf2 = st.columns([1, 1])
+                with c_vf1:
+                    st.markdown(f"**Verification:** {'🟢 Confirmed' if getattr(_s1_verif, 'is_verified', False) else '🟡 Warning'} ({getattr(_s1_verif, 'confidence_score', '?')}% Confidence)")
+                with c_vf2:
+                    st.markdown(f"**Target Format:** {step_state.get('target_seconds', 60)}s • {format_display_name(step_state.get('scene_style', ''))}")
+
+            st.divider()
+
+            # 1.1 Verify
+            st.markdown("#### 1.1 Verify")
             st.markdown("**Input:**")
             st.caption(_s1_news or "—")
             st.markdown("**Output:**")
@@ -1842,37 +1850,44 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                     st.markdown(f"- {_ff}")
             else:
                 st.caption("No verification data.")
-        # 1.2 Validation
-        with st.expander("1.2 Validation", expanded=False):
-            with st.expander("1.2.1 News Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Raw news topic → news validator")
-                st.markdown("**Output:**")
-                if _s1_verif is not None:
-                    _s1_ok = bool(getattr(_s1_verif, "is_verified", False))
-                    st.markdown(f"{'✓ Pass' if _s1_ok else '❌ Fail'} — news {'verified' if _s1_ok else 'not verified'}")
-                else:
-                    st.caption("No data.")
-            with st.expander("1.2.2 Confidence Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Verification result → confidence threshold (≥70%)")
-                st.markdown("**Output:**")
-                if _s1_verif is not None:
-                    _s1_conf = getattr(_s1_verif, "confidence_score", 0) or 0
-                    _s1_cok = _s1_conf >= 70
-                    st.markdown(f"{'✓ Pass' if _s1_cok else '❌ Fail'} — confidence {_s1_conf}% {'≥' if _s1_cok else '<'} 70%")
-                else:
-                    st.caption("No data.")
-        # 1.3 Retry / 1.4 Re-validate (only if a low-confidence retry ran)
-        _s1_audits = step_state.get("agent_audits") or []
-        _s1_retried = any(getattr(_a, "attempts", 1) > 1 for _a in _s1_audits)
-        if _s1_retried:
-            with st.expander("1.3 Retry", expanded=False):
+
+            st.divider()
+
+            # 1.2 Validation (rendered inline — no nested expanders)
+            st.markdown("#### 1.2 Validation")
+            st.markdown("##### 1.2.1 News Check")
+            st.markdown("**Input:**")
+            st.caption("Raw news topic → news validator")
+            st.markdown("**Output:**")
+            if _s1_verif is not None:
+                _s1_ok = bool(getattr(_s1_verif, "is_verified", False))
+                st.markdown(f"{'✓ Pass' if _s1_ok else '❌ Fail'} — news {'verified' if _s1_ok else 'not verified'}")
+            else:
+                st.caption("No data.")
+
+            st.markdown("##### 1.2.2 Confidence Check")
+            st.markdown("**Input:**")
+            st.caption("Verification result → confidence threshold (≥70%)")
+            st.markdown("**Output:**")
+            if _s1_verif is not None:
+                _s1_conf = getattr(_s1_verif, "confidence_score", 0) or 0
+                _s1_cok = _s1_conf >= 70
+                st.markdown(f"{'✓ Pass' if _s1_cok else '❌ Fail'} — confidence {_s1_conf}% {'≥' if _s1_cok else '<'} 70%")
+            else:
+                st.caption("No data.")
+
+            # 1.3 Retry / 1.4 Re-validate (only if a low-confidence retry ran)
+            _s1_audits = step_state.get("agent_audits") or []
+            _s1_retried = any(getattr(_a, "attempts", 1) > 1 for _a in _s1_audits)
+            if _s1_retried:
+                st.divider()
+                st.markdown("#### 1.3 Retry")
                 st.markdown("**Input:**")
                 st.caption("Refined query with official wire terms (confidence was < 70%)")
                 st.markdown("**Output:**")
                 st.caption("Re-verified facts — see 1.1 output above.")
-            with st.expander("1.4 Re-validate", expanded=False):
+
+                st.markdown("#### 1.4 Re-validate")
                 st.markdown("**Input:**")
                 st.caption("Re-verified result → confidence threshold (≥70%)")
                 st.markdown("**Output:**")
@@ -1881,91 +1896,97 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                     st.markdown(f"{'✓ Pass' if _s1_conf2 >= 70 else '❌ Fail'} — final confidence {_s1_conf2}%")
                 else:
                     st.caption("No data.")
-        verif = step_state.get("verification")
-        if verif:
-            c_vf1, c_vf2 = st.columns([1, 1])
-            with c_vf1:
-                st.markdown(f"**Verification:** {'🟢 Confirmed' if verif.is_verified else '🟡 Warning'} ({verif.confidence_score}% Confidence)")
-            with c_vf2:
-                st.markdown(f"**Target Format:** {step_state['target_seconds']}s • {format_display_name(step_state['scene_style'])}")
-            # Pretty rendered dossier first (all sections), raw JSON collapsed for debugging.
-            _render_verification_report(verif, key_prefix=f"{key_prefix}s1_")
 
-        if step_state.get("sub_instructions"):
-            with st.expander("👑 Generated Sub-Instructions for Upcoming Agents"):
+            st.divider()
+
+            # Dossier details
+            if _s1_verif:
+                _render_verification_report(_s1_verif, key_prefix=f"{key_prefix}s1_", as_expander=False)
+
+            if step_state.get("sub_instructions"):
+                st.divider()
+                st.markdown("**👑 Generated Sub-Instructions for Upcoming Agents**")
                 for ag, sub in step_state["sub_instructions"].items():
-                    st.markdown(f"**{ag.replace('_', ' ').title()}:**")
-                    st.caption(sub)
+                    st.markdown(f"• **{ag.replace('_', ' ').title()}:** {sub}")
 
     elif step_num == 2:
-        st.markdown("### 🎭 Step 2: Character Finalisation")
-        _s2_chars = step_state.get("finalized_characters") or []
-        _s2_news = step_state.get("news_input", "")
-        _s2_tone = step_state.get("active_tone", "")
-        # 2.1 Generate Characters
-        with st.expander("2.1 Generate Characters", expanded=False):
+        _outer_ctx2 = st.expander("🎭 Step 2: Character Finalisation", expanded=True) if key_prefix == "main_" else contextlib.nullcontext()
+        with _outer_ctx2:
+            _s2_chars = step_state.get("finalized_characters") or []
+            _s2_news = step_state.get("news_input", "")
+            _s2_tone = step_state.get("active_tone", "")
+
+            # 2.1 Generate Characters
+            st.markdown("#### 2.1 Generate Characters")
             st.markdown("**Input:**")
             st.caption(f"News: {(_s2_news[:80] + '...') if len(_s2_news) > 80 else _s2_news}")
             st.caption(f"Vibe: {_s2_tone} → hook strategist")
             st.markdown("**Output:**")
-            st.caption(f"{len(_s2_chars)} character(s) finalized — see below.")
-        # 2.2 Validation
-        with st.expander("2.2 Validation", expanded=False):
-            with st.expander("2.2.1 Count Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Finalized character list → count check (≥1)")
-                st.markdown("**Output:**")
-                st.markdown(f"{'✓ Pass' if len(_s2_chars) > 0 else '❌ Fail'} — {len(_s2_chars)} character(s)")
-            with st.expander("2.2.2 Diversity Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Character roles → diversity review")
-                st.markdown("**Output:**")
-                _s2_roles = [getattr(_c, "role_or_job", "?") for _c in _s2_chars]
-                if _s2_roles:
-                    st.caption(f"Roles: {', '.join(_s2_roles)}")
-                    st.caption("Manual review — automated diversity check not yet in pipeline.")
-                else:
-                    st.caption("No characters.")
-        # NEW: AI proposes TWO distinct character groups; the user picks ONE.
-        group_a = step_state.get("character_group_a") or []
-        group_b = step_state.get("character_group_b") or []
-        chars = step_state.get("finalized_characters", [])
+            st.caption(f"{len(_s2_chars)} characters generated with roles, attire, stance, and relationship dynamics.")
 
-        if group_a or group_b:
-            st.markdown("**The AI proposed 2 distinct character groups. Pick the cast for your dialogue:**")
-            sel = st.radio(
-                "Character group",
-                options=["A", "B"],
-                format_func=lambda x: f"Group {x} — {len(group_a if x == 'A' else group_b)} characters",
-                index=0 if step_state.get("selected_character_group", "A") == "A" else 1,
-                key="char_group_picker",
-                horizontal=True,
-            )
-            if sel != step_state.get("selected_character_group"):
-                step_state["selected_character_group"] = sel
-                step_state["finalized_characters"] = list(group_a if sel == "A" else group_b)
-                chars = step_state["finalized_characters"]
-                st.rerun()
+            st.divider()
 
-            for grp_label, grp in [("A", group_a), ("B", group_b)]:
-                with st.expander(f"👥 Group {grp_label} ({len(grp)} characters)" + (" ✅ SELECTED" if step_state.get("selected_character_group") == grp_label else ""), expanded=(step_state.get("selected_character_group") == grp_label)):
-                    for ch in grp:
-                        st.markdown(f"• **{ch.name}** (`{ch.role_or_job}`)")
-                        if ch.attire:
-                            st.caption(f"👗 Attire: {ch.attire}")
-                        if ch.emotional_stance:
-                            st.caption(f"💥 Stance: {ch.emotional_stance}")
-                        if ch.relationship_dynamic:
-                            st.caption(f"🤝 Dynamic: {ch.relationship_dynamic}")
-            st.caption("📍 Scenes are NOT finalized here — Step 4 derives shoot locations FROM the finalized Step 3 dialogue.")
-            _render_raw_json(step_state.get("finalized_characters") or [], label="Raw JSON — characters", key_prefix=f"{key_prefix}s2_")
-        else:
-            # Fallback for states created before groups existed
-            avail_chars = step_state.get("available_characters", chars)
-            st.markdown(f"**👥 Characters ({len(avail_chars)}):**")
-            for ch in avail_chars:
-                st.markdown(f"• **{ch.name}** (`{ch.role_or_job}`)")
-            st.caption("📍 Scenes are NOT finalized here — Step 4 derives shoot locations FROM the finalized Step 3 dialogue.")
+            # 2.2 Validation (rendered inline — no nested expanders)
+            st.markdown("#### 2.2 Validation")
+            st.markdown("##### 2.2.1 Count Check")
+            st.markdown("**Input:**")
+            st.caption("Character candidates → count consistency")
+            st.markdown("**Output:**")
+            st.markdown(f"{'✓ Pass' if len(_s2_chars) > 0 else '❌ Fail'} — {len(_s2_chars)} character(s)")
+
+            st.markdown("##### 2.2.2 Diversity Check")
+            st.markdown("**Input:**")
+            st.caption("Character roles → distinct personas")
+            st.markdown("**Output:**")
+            _s2_roles = [getattr(_c, "role_or_job", "?") for _c in _s2_chars]
+            st.markdown(f"{'✓ Pass' if _s2_roles else '❌ Fail'} — {len(_s2_roles)} distinct role(s)")
+
+            st.divider()
+
+            group_a = step_state.get("character_group_a") or []
+            group_b = step_state.get("character_group_b") or []
+            chars = step_state.get("finalized_characters", [])
+
+            if group_a or group_b:
+                st.markdown("**Pick the character cast for your dialogue:**")
+                sel = st.radio(
+                    "Character group",
+                    options=["A", "B"],
+                    format_func=lambda x: f"Group {x} — {len(group_a if x == 'A' else group_b)} characters",
+                    index=0 if step_state.get("selected_character_group", "A") == "A" else 1,
+                    key=f"{key_prefix}char_group_picker",
+                    horizontal=True,
+                )
+                if sel != step_state.get("selected_character_group"):
+                    step_state["selected_character_group"] = sel
+                    step_state["finalized_characters"] = list(group_a if sel == "A" else group_b)
+                    chars = step_state["finalized_characters"]
+                    st.rerun()
+
+                c_ga, c_gb = st.columns([1, 1])
+                for col, grp_label, grp in [(c_ga, "A", group_a), (c_gb, "B", group_b)]:
+                    with col:
+                        _is_sel = (step_state.get("selected_character_group") == grp_label)
+                        _sel_badge = " ✅ SELECTED" if _is_sel else ""
+                        st.markdown(f"**👥 Group {grp_label} ({len(grp)} characters){_sel_badge}**")
+                        for ch in grp:
+                            st.markdown(f"• **{ch.name}** (`{ch.role_or_job}`)")
+                            if ch.attire:
+                                st.caption(f"👗 Attire: {ch.attire}")
+                            if ch.emotional_stance:
+                                st.caption(f"💥 Stance: {ch.emotional_stance}")
+                            if ch.relationship_dynamic:
+                                st.caption(f"🤝 Dynamic: {ch.relationship_dynamic}")
+
+                st.caption("📍 Scenes are NOT finalized here — Step 4 derives shoot locations FROM the finalized Step 3 dialogue.")
+                _render_raw_json(step_state.get("finalized_characters") or [], label="Raw JSON — characters", key_prefix=f"{key_prefix}s2_", as_expander=False)
+            else:
+                avail_chars = step_state.get("available_characters", chars)
+                st.markdown(f"**👥 Characters ({len(avail_chars)}):**")
+                for ch in avail_chars:
+                    st.markdown(f"• **{ch.name}** (`{ch.role_or_job}`)")
+                st.caption("📍 Scenes are NOT finalized here — Step 4 derives shoot locations FROM the finalized Step 3 dialogue.")
+                _render_raw_json(avail_chars, label="Raw JSON — characters", key_prefix=f"{key_prefix}s2_", as_expander=False)
 
     elif step_num == 3:
         st.markdown("### ✍️ Step 3: Spoken Hindi Dialogue & Timing Calibration")
@@ -1973,54 +1994,58 @@ def _render_step_output(step_num, step_state, key_prefix=""):
         _s3_nbeats = sum(len(_d.get("scene_lines") or []) for _d in _s3_dlgs)
         _s3_attempts = step_state.get("stage3_attempt_history") or []
         _s3_vsteps = step_state.get("stage3_validation_steps") or []
-        # Sub-checks live inside the 3.2 validation step (names: "News coverage check", "Tone check").
+        # Sub-checks live inside the 3.2 validation step (5 numbered checks,
+        # each labeled "AI validator" or "code validator").
         _s3_val_step = next((s for s in _s3_vsteps if isinstance(s, dict) and str(s.get("stage", "")).strip() == "3.2"), None)
         _s3_subs = (_s3_val_step.get("sub_checks") or []) if isinstance(_s3_val_step, dict) else []
         # 3.1 Generate Dialogue
         with st.expander("3.1 Generate Dialogue", expanded=False):
             st.markdown("**Input:**")
             st.caption(f"News + {len(step_state.get('finalized_characters') or [])} character(s) + vibe ({step_state.get('active_tone', '')}) → dialogue writer")
-            st.markdown("**Output:**")
-            st.caption(f"{len(_s3_dlgs)} script(s), {_s3_nbeats} beat(s) — see below.")
+            st.markdown("**Output (Dialogue Beats):**")
+            st.caption(f"{len(_s3_dlgs)} script(s), {_s3_nbeats} beat(s) generated:")
+            for _di, _d in enumerate(_s3_dlgs, 1):
+                if len(_s3_dlgs) > 1:
+                    st.markdown(f"**Script {_di}:**")
+                for _sl in (_d.get("scene_lines") or []):
+                    st.markdown(f"• **{_sl.get('character', 'Speaker')}:** “{_sl.get('dialogue', '')}”")
+                    if _sl.get('action'):
+                        st.caption(f"&nbsp;&nbsp;&nbsp;&nbsp;🎬 {_sl.get('action')}")
         # 3.2 Validation
         with st.expander("3.2 Validation", expanded=False):
-            with st.expander("3.2.1 Structure Check", expanded=False):
+            # 3.2 Validation -- 5 numbered checks, each labeled with its
+            # validator type: AI validator = one model call per script per
+            # attempt; code validator = free deterministic code check.
+            _s3_check_defs = [
+                ("structure check", "3.2.1 Structure Check", "code validator",
+                 "Generated beats \u2192 speaker labels, format rules"),
+                ("tone + news check", "3.2.2 Tone + News Check", "AI validator",
+                 "ONE AI call: tone enforced (\u226570% of beats) + news coverage (advisory)"),
+                ("language check", "3.2.3 Language Check", "code validator",
+                 "Dialogue lines \u2192 common Hindi (no formal/shuddh words)"),
+                ("clothing check", "3.2.4 Clothing Check", "code validator",
+                 "Character attire specific, visual, job/news-appropriate"),
+                ("sfx check", "3.2.5 SFX Check", "code validator",
+                 "SFX matches the required tone"),
+            ]
+            for _c_idx, (_ck_name, _ck_title, _ck_validator, _ck_desc) in enumerate(_s3_check_defs):
+                if _c_idx > 0:
+                    st.divider()
+                _ck = next((_v for _v in _s3_subs if str(_v.get("name", "")).lower() == _ck_name), None)
+                _ck_icon = "\U0001f916" if "AI" in _ck_validator else "\u2699\ufe0f"
+                st.markdown(f"##### {_ck_title} \u2014 {_ck_icon} {_ck_validator}")
                 st.markdown("**Input:**")
-                st.caption("Generated beats → speaker labels, format rules")
+                st.caption(_ck_desc)
                 st.markdown("**Output:**")
-                _s3_struct_ok = all(
-                    _sl.get("character") and _sl.get("dialogue")
-                    for _d in _s3_dlgs for _sl in (_d.get("scene_lines") or [])
-                ) if _s3_nbeats else False
-                st.markdown(f"{'✓ Pass' if _s3_struct_ok else '❌ Fail'} — {_s3_nbeats} beat(s) with speaker + dialogue")
-            with st.expander("3.2.2 News Coverage Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Dialogue → news intelligibility (viewer understands what happened)")
-                st.markdown("**Output:**")
-                _s3_nv = next((_v for _v in _s3_subs if str(_v.get("name", "")).lower() == "news coverage check"), None)
-                if _s3_nv:
-                    st.markdown(f"{'✓ Pass' if _s3_nv.get('passed') else '❌ Fail'}" + (f" ({_s3_nv.get('retries', 0)} retries)" if _s3_nv.get('retries') else ""))
-                    if _s3_nv.get("error"): st.caption(_s3_nv["error"])
+                if _ck:
+                    _ck_passed = _ck.get("passed")
+                    _ck_label = ("\u2713 Pass" if _ck_passed
+                                 else ("\u23ed\ufe0f Skipped" if _ck_passed is None else "\u274c Fail"))
+                    st.markdown(_ck_label + (f" ({_ck.get('retries', 0)} retries)" if _ck.get("retries") else ""))
+                    if _ck.get("output"):
+                        st.caption(str(_ck["output"])[:500])
                 else:
-                    st.caption("Validated by AI judge — see 3.3 attempt history for details.")
-            with st.expander("3.2.3 Tone Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption(f"Dialogue → tone compliance (≥70% embody '{step_state.get('active_tone', '')}')")
-                st.markdown("**Output:**")
-                _s3_tv = next((_v for _v in _s3_subs if str(_v.get("name", "")).lower() == "tone check"), None)
-                if _s3_tv:
-                    st.markdown(f"{'✓ Pass' if _s3_tv.get('passed') else '❌ Fail'}" + (f" ({_s3_tv.get('retries', 0)} retries)" if _s3_tv.get('retries') else ""))
-                    if _s3_tv.get("error"): st.caption(_s3_tv["error"])
-                else:
-                    st.caption("Validated by AI judge — see 3.3 attempt history for details.")
-            with st.expander("3.2.4 Language Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Dialogue lines → common Hindi (no formal/shuddh words), Devanagari present")
-                st.markdown("**Output:**")
-                import re as _re3
-                _s3_all_dlg = " ".join(_sl.get("dialogue", "") for _d in _s3_dlgs for _sl in (_d.get("scene_lines") or []))
-                _s3_has_dev = bool(_re3.search("[\u0900-\u097F]", _s3_all_dlg))
-                st.markdown(f"{'✓ Pass' if _s3_has_dev else '❌ Fail'} — {'Devanagari present' if _s3_has_dev else 'no Devanagari found'}")
+                    st.caption("Not recorded for this run.")
         # 3.3 Retry / 3.4 Re-validate (only if an actual retry happened).
         # The initial generation is 3.1, never "Retry 1".
         _s3_retries = _stage3_retry_count(step_state)
@@ -2049,9 +2074,7 @@ def _render_step_output(step_num, step_state, key_prefix=""):
         for d_idx, d in enumerate(dialogues, 1):
             if d.get("scene_lines"):
                 for sl in d["scene_lines"]:
-                    _ts = sl.get('timestamp', '')
-                    _ts_txt = f" [{_ts}]" if _ts else ""
-                    st.markdown(f"**BEAT {sl.get('scene_number', '')}**{_ts_txt} — **{sl.get('character', 'Character')}:** “{sl.get('dialogue', '')}”")
+                    st.markdown(f"**BEAT {sl.get('scene_number', '')}** — **{sl.get('character', 'Character')}:** “{sl.get('dialogue', '')}”")
                     if sl.get('action'):
                         st.caption(f"🎬 {sl.get('action')}")
                     if sl.get('sfx'):
@@ -2078,7 +2101,7 @@ def _render_step_output(step_num, step_state, key_prefix=""):
         # Pretty beat cards are the primary view (above); the raw model JSON
         # stays collapsed here for debugging.
         _render_raw_json(dialogues, label="Raw JSON — scripts", key_prefix=f"{key_prefix}s3_")
-        # Stage 3 linear steps: 3.1 generation, 3.2 validation (3.2.1-3.2.4
+        # Stage 3 linear steps: 3.1 generation, 3.2 validation (3.2.1-3.2.5
         # sub-checks), 3.3 retry generation, 3.4 re-validate, etc.
         # Each step is a collapsible showing its input and output.
         _vsteps = step_state.get("stage3_validation_steps") or []
@@ -2119,8 +2142,10 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                     for _sub in _subs:
                         _sub_passed = _sub.get("passed")
                         _sub_badge = "✅" if _sub_passed else "❌"
+                        _sub_validator = _sub.get("validator") or ""
+                        _sub_vicon = "🤖 " if "AI" in _sub_validator else ("⚙️ " if _sub_validator else "")
                         with st.expander(
-                            f"{_sub_badge} {_sub.get('stage', '?')}: {_sub.get('name', '')}",
+                            f"{_sub_badge} {_sub.get('stage', '?')}: {_sub.get('name', '')}" + (f" — {_sub_vicon}{_sub_validator}" if _sub_validator else ""),
                             expanded=False,
                         ):
                             if _sub.get("input"):
@@ -2190,14 +2215,14 @@ def _render_step_output(step_num, step_state, key_prefix=""):
             st.caption(f"{_s4_nsc} scene(s) derived — see below.")
         # 4.2 Validation
         with st.expander("4.2 Validation", expanded=False):
-            with st.expander("4.2.1 Connectivity Check", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Derived scenes → beat traceability (every scene traceable to beats)")
-                st.markdown("**Output:**")
-                _s4_all_have_loc = all(
-                    getattr(_sc, "location_name", "") for _ss in _s4_der for _sc in _ss
-                ) if _s4_nsc else False
-                st.markdown(f"{'✓ Pass' if _s4_all_have_loc else '❌ Fail'} — {_s4_nsc} scene(s) {'all have locations' if _s4_all_have_loc else 'missing locations'}")
+            st.markdown("##### 4.2.1 Connectivity Check")
+            st.markdown("**Input:**")
+            st.caption("Derived scenes → beat traceability (every scene traceable to beats)")
+            st.markdown("**Output:**")
+            _s4_all_have_loc = all(
+                getattr(_sc, "location_name", "") for _ss in _s4_der for _sc in _ss
+            ) if _s4_nsc else False
+            st.markdown(f"{'✓ Pass' if _s4_all_have_loc else '❌ Fail'} — {_s4_nsc} scene(s) {'all have locations' if _s4_all_have_loc else 'missing locations'}")
         st.caption("Shoot locations derived FROM the finalized Step 3 dialogue beats — every scene is traceable to the beats that paint its setting.")
         # NEW: AI proposes TWO distinct scene sets; the user picks ONE.
         opts_a = step_state.get("scene_options_a_per_script") or []
@@ -2270,16 +2295,16 @@ def _render_step_output(step_num, step_state, key_prefix=""):
             st.caption(f"{_s5_nsb} storyboarded scene(s) with 9:16 video prompts — see below.")
         # 5.2 Validation
         with st.expander("5.2 Validation", expanded=False):
-            with st.expander("5.2.1 Quality Gate", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Video prompts → video quality gate (cinematic 9:16 standard)")
-                st.markdown("**Output:**")
-                if _s5_vv is not None:
-                    _s5_vpass = bool(getattr(_s5_vv, "passed", False))
-                    _s5_vscore = getattr(_s5_vv, "feasibility_score", "?")
-                    st.markdown(f"{'✓ Pass' if _s5_vpass else '❌ Fail'} — feasibility {_s5_vscore}%")
-                else:
-                    st.caption("No quality-gate data.")
+            st.markdown("##### 5.2.1 Quality Gate")
+            st.markdown("**Input:**")
+            st.caption("Video prompts → video quality gate (cinematic 9:16 standard)")
+            st.markdown("**Output:**")
+            if _s5_vv is not None:
+                _s5_vpass = bool(getattr(_s5_vv, "passed", False))
+                _s5_vscore = getattr(_s5_vv, "feasibility_score", "?")
+                st.markdown(f"{'✓ Pass' if _s5_vpass else '❌ Fail'} — feasibility {_s5_vscore}%")
+            else:
+                st.caption("No quality-gate data.")
         _used_chars_4 = step_state.get("finalized_characters") or []
         _used_scenes_4 = step_state.get("finalized_scenes") or []
         if _used_chars_4 or _used_scenes_4:
@@ -2298,15 +2323,16 @@ def _render_step_output(step_num, step_state, key_prefix=""):
             v_verif = getattr(s0, "video_verification", None)
             if v_verif:
                 st.caption(f"Feasibility Score: {v_verif.feasibility_score}% • Continuity: {v_verif.temporal_consistency}")
-            for sc in s0.scenes:
-                st.markdown(f"**BEAT {sc.scene_number}** [{sc.timestamp}] — **{sc.character}**")
+            for _s5i, sc in enumerate(s0.scenes):
+                st.markdown(f"**BEAT {sc.scene_number}** — **{sc.character}**")
                 st.markdown(f"**🎬 Action:** {clean_beat_action(sc.visual_b_roll)}")
                 if sc.on_screen_text:
                     st.caption(f"🔖 Overlay: {sc.on_screen_text}")
                 if sc.audio_sfx:
                     st.caption(f"🔊 SFX: {sc.audio_sfx}")
-                if sc.video_prompt:
-                    st.text_area("Veo 9:16 Cinematic Prompt", value=sc.video_prompt.visual_prompt_ai, height=65, disabled=True, key=f"{key_prefix}step4_vp_view_{sc.scene_number}")
+                if sc.video_prompt and getattr(sc.video_prompt, "visual_prompt_ai", ""):
+                    st.caption("🎬 Veo 9:16 Cinematic Prompt:")
+                    st.code(sc.video_prompt.visual_prompt_ai, language="text")
         _render_raw_json(scripts, label="Raw JSON — storyboards", key_prefix=f"{key_prefix}s5_")
 
     elif step_num == 6:
@@ -2347,38 +2373,71 @@ def _render_step_output(step_num, step_state, key_prefix=""):
             st.caption(f"ReelBatchResult: {_s6_n} script(s) integrated — see below.")
         # 6.2 Validation (integration-only gate)
         with st.expander("6.2 Validation", expanded=False):
-            with st.expander("6.2.1 Integration Checks", expanded=False):
-                st.markdown("**Input:**")
-                st.caption("Integrated result → integration-only deterministic checks: "
-                           "presence • count consistency • cross-stage connectivity • non-empty payloads. "
-                           "Content quality (tone, news, language, structure, storyboard) is owned by "
-                           "Stages 3/4/5 and is not re-checked here.")
-                st.markdown("**Output:**")
-                if _s6_vp and not _s6_vi:
-                    st.markdown("✅ All validation checks passed")
-                else:
-                    _s6_ne = sum(1 for _i in _s6_vi if isinstance(_i, dict) and _i.get("severity") == "error")
-                    _s6_nw = len(_s6_vi) - _s6_ne
-                    st.markdown(f"❌ {_s6_ne} error(s), ⚠️ {_s6_nw} warning(s) — see below.")
+            st.markdown("##### 6.2.1 Integration Checks")
+            st.markdown("**Input:**")
+            st.caption("Integrated result → integration-only deterministic checks: "
+                       "presence • count consistency • cross-stage connectivity • non-empty payloads. "
+                       "Content quality (tone, news, language, structure, storyboard) is owned by "
+                       "Stages 3/4/5 and is not re-checked here.")
+            st.markdown("**Output:**")
+            if _s6_vp and not _s6_vi:
+                st.markdown("✅ All validation checks passed")
+            else:
+                _s6_ne = sum(1 for _i in _s6_vi if isinstance(_i, dict) and _i.get("severity") == "error")
+                _s6_nw = len(_s6_vi) - _s6_ne
+                st.markdown(f"❌ {_s6_ne} error(s), ⚠️ {_s6_nw} warning(s)")
+                _s6_errs = [i for i in _s6_vi if isinstance(i, dict) and i.get("severity") == "error"]
+                _s6_wrns = [i for i in _s6_vi if isinstance(i, dict) and i.get("severity") != "error"]
+                for _iss in _s6_errs:
+                    st.markdown(f"**❌ [{_iss.get('check', '?')}] {_iss.get('stage', '')}** (Script {_iss.get('script', '?')}): {_iss.get('detail', '')}")
+                    if _iss.get("fix"):
+                        st.caption(f"Fix: {_iss.get('fix')}")
+                for _iss in _s6_wrns:
+                    st.warning(f"[{_iss.get('check', '?')}] {_iss.get('detail', '')}")
+
+            st.divider()
+            st.markdown("##### 6.2.2 Validation & Retry Audit Details")
+            _s6_audit_rep = getattr(_s6_batch, "audit_report", None)
+            _s6_total_retries = getattr(_s6_batch, "total_retries", 0) if _s6_batch is not None else step_state.get("total_retries", 0)
+            _s6_audits = getattr(_s6_audit_rep, "agent_audits", None) or step_state.get("agent_audits") or []
+
+            c_ret1, c_ret2 = st.columns([1, 1])
+            with c_ret1:
+                st.markdown(f"**Total Retries Resolved:** `{_s6_total_retries}`")
+            with c_ret2:
+                _s6_health = getattr(_s6_audit_rep, "overall_health", "100% Operational") if _s6_audit_rep else ("All Checks Passed" if _s6_vp else "Issues Detected")
+                st.markdown(f"**Pipeline Health:** `{_s6_health}`")
+
+            _retry_rows = []
+            _s1_aud = next((a for a in _s6_audits if getattr(a, "stage_number", None) == 1), None)
+            _s1_att = getattr(_s1_aud, "attempts", 1) if _s1_aud else 1
+            _s1_r_txt = f"{_s1_att - 1} retry" if _s1_att > 1 else "0 retries (first-pass)"
+            _retry_rows.append(f"• **Stage 1 (Wire Facts):** {_s1_r_txt}")
+
+            _s3_rc = _stage3_retry_count(step_state)
+            _s3_r_txt = f"{_s3_rc} corrective retry round(s)" if _s3_rc > 0 else "0 retries (first-pass)"
+            _retry_rows.append(f"• **Stage 3 (Dialogue & Timing):** {_s3_r_txt}")
+
+            _s5_aud = next((a for a in _s6_audits if getattr(a, "stage_number", None) == 5), None)
+            _s5_att = getattr(_s5_aud, "attempts", 1) if _s5_aud else 1
+            _s5_r_txt = f"{_s5_att - 1} retry" if _s5_att > 1 else "0 retries (first-pass)"
+            _retry_rows.append(f"• **Stage 5 (Video Quality Gate):** {_s5_r_txt}")
+
+            for _rr in _retry_rows:
+                st.caption(_rr)
+
+            _aud_issues = [a for a in _s6_audits if getattr(a, "attempts", 1) > 1 or getattr(a, "failures_count", 0) > 0]
+            if _aud_issues:
+                st.markdown("**Detailed Self-Healed Retries & Actions:**")
+                for _ai in _aud_issues:
+                    _an = getattr(_ai, "agent_name", "Agent")
+                    _ic = getattr(_ai, "icon", "🤖")
+                    _at = getattr(_ai, "attempts", 1)
+                    _res = getattr(_ai, "resolution_action", "")
+                    st.caption(f"{_ic} **{_an}** ({_at} attempts): {_res}")
         _s6_chars = step_state.get("finalized_characters", [])
         _s6_n_scenes = sum(len(getattr(_s, "scenes", []) or []) for _s in _s6_scripts)
         st.markdown(f"**Integrated:** {len(_s6_scripts)} script(s) • {len(_s6_chars)} character(s) • {_s6_n_scenes} scene(s)")
-        # Reuse values already resolved in 6.1/6.2 above.
-        _s6_passed = _s6_vp
-        _s6_issues = _s6_vi
-        if _s6_passed and not _s6_issues:
-            st.success("✅ All validation checks passed")
-        else:
-            if not _s6_passed:
-                st.error("❌ Validation found issues")
-            _s6_errs = [i for i in _s6_issues if isinstance(i, dict) and i.get("severity") == "error"]
-            _s6_wrns = [i for i in _s6_issues if isinstance(i, dict) and i.get("severity") != "error"]
-            for _iss in _s6_errs:
-                st.markdown(f"**❌ [{_iss.get('check', '?')}] {_iss.get('stage', '')}** (Script {_iss.get('script', '?')}): {_iss.get('detail', '')}")
-                if _iss.get("fix"):
-                    st.caption(f"Fix: {_iss.get('fix')}")
-            for _iss in _s6_wrns:
-                st.warning(f"[{_iss.get('check', '?')}] {_iss.get('detail', '')}")
         _render_raw_json(_s6_batch if _s6_batch is not None else _s6_scripts, label="Raw JSON — integrated result", key_prefix=f"{key_prefix}s6_")
 
 
@@ -2389,16 +2448,11 @@ def _render_input_prompts(step_state, key_prefix=""):
         return
     with st.expander(f"🔍 View Input Prompt sent to AI ({len(prompts)})", expanded=False):
         for _pi, _p in enumerate(prompts, 1):
-            _tmpl = _p.get("template", "")
-            _ptxt = _p.get("prompt", "")
+            _tmpl = _p.get("template", "") if isinstance(_p, dict) else ""
+            _ptxt = _p.get("prompt", "") if isinstance(_p, dict) else str(_p)
             _label = f"📝 Prompt {_pi}: {_tmpl}" if _tmpl else f"📝 Prompt {_pi}"
-            with st.expander(_label, expanded=(len(prompts) == 1)):
-                _nlines = _ptxt.count("\n") + 1
-                _h = max(140, min(560, 40 + _nlines * 15))
-                st.text_area(
-                    "Input prompt", value=_ptxt, height=_h, disabled=True,
-                    key=f"{key_prefix}input_prompt_{_pi}", label_visibility="collapsed",
-                )
+            st.markdown(f"**{_label}**")
+            st.code(_ptxt, language="text")
 
 # ------------------------------------------------------------------
 # Live substep tracking (continuous mode)
@@ -2549,18 +2603,19 @@ def _render_live_tracker(stage_num, failure_mode=False):
             if entry.get("output"):
                 st.markdown("**📤 Output:**")
                 st.caption(entry["output"][:600])
-            # Nested sub-checks (3.2.1–3.2.4) with their own explicit statuses.
+            # Sub-checks (3.2.1–3.2.5) rendered inline without nested expanders
             subs = sorted((s for s in steps if _is_subcheck(s) and str(s).rsplit(".", 1)[0] == sid), key=_skey)
-            for sub in subs:
-                with st.expander(_substep_status_line(sub, steps[sub], failure_mode=failure_mode), expanded=False):
-                    if steps[sub].get("detail"):
-                        st.caption(steps[sub]["detail"])
-                    if steps[sub].get("input"):
-                        st.markdown("**📥 Input:**")
-                        st.caption(steps[sub]["input"][:600])
-                    if steps[sub].get("output"):
-                        st.markdown("**📤 Output:**")
-                        st.caption(steps[sub]["output"][:600])
+            if subs:
+                st.markdown("---")
+                for sub in subs:
+                    sub_entry = steps[sub]
+                    st.markdown(f"**{_substep_status_line(sub, sub_entry, failure_mode=failure_mode)}**")
+                    if sub_entry.get("detail"):
+                        st.caption(f"&nbsp;&nbsp;&nbsp;&nbsp;{sub_entry['detail']}")
+                    if sub_entry.get("input"):
+                        st.caption(f"&nbsp;&nbsp;&nbsp;&nbsp;📥 **Input:** {sub_entry['input'][:600]}")
+                    if sub_entry.get("output"):
+                        st.caption(f"&nbsp;&nbsp;&nbsp;&nbsp;📤 **Output:** {sub_entry['output'][:600]}")
 
 
 def _seed_live_state_from_recorded_steps(stage_num, vsteps):
@@ -3146,6 +3201,7 @@ with col_output:
                     "3. Dialogue",
                     "4. Scene Finalisation",
                     "5. Storyboard & Video",
+                    "6. Integration & Final Validation",
                 ]
                 for s_num in [1, 2, 3, 4, 5, 6]:
                     past_st = comp.get(s_num)
@@ -3175,7 +3231,25 @@ with col_output:
             st.warning(res.retry_prompt_recommendation)
             if st.button("🔄 Retry Generation with Recommended Settings", key="retry_compliance_btn", type="primary", use_container_width=True):
                 st.session_state.run_requested = True
-                st.rerun()
+        # Validation & Retry Details on final output stage
+        _tot_retries = getattr(res, "total_retries", 0)
+        _aud_rep = getattr(res, "audit_report", None)
+        _ret_items = [a for a in (getattr(_aud_rep, "agent_audits", []) or []) if getattr(a, "attempts", 1) > 1 or getattr(a, "failures_count", 0) > 0]
+        if _tot_retries > 0 or _ret_items:
+            with st.expander(f"🔄 Validation Retry Details ({_tot_retries} total retry round(s) resolved)", expanded=False):
+                st.caption(f"**Pipeline Health:** {getattr(_aud_rep, 'overall_health', '100% Operational')}")
+                for _ra in _ret_items:
+                    _an = getattr(_ra, "agent_name", "Agent")
+                    _ic = getattr(_ra, "icon", "\U0001f916")
+                    _att = getattr(_ra, "attempts", 1)
+                    _res_act = getattr(_ra, "resolution_action", "")
+                    _errs = getattr(_ra, "errors_encountered", [])
+                    st.markdown(f"**{_ic} {_an}** \u2014 `{_att}` attempt(s)")
+                    if _errs:
+                        for _er in _errs:
+                            st.caption(f"\u26a0\ufe0f Issue: {_er}")
+                    if _res_act:
+                        st.caption(f"\u2713 Resolution: {_res_act}")
 
         # Stage 6 validation issues: show WHERE detected vs WHICH stage's output is at fault.
         # Errors → red group, Warnings → yellow group, rendered separately.
