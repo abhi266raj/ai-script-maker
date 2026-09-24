@@ -19,8 +19,10 @@ class NewsArticle(BaseModel):
 class NewsVerificationReport(BaseModel):
     """Step 1: News Verification Report & Story Research Dossier."""
     headline: str = ""
-    is_verified: bool = True
-    confidence_score: int = 90  # 0 to 100
+    # Fail-loud: no default "verified" — the Stage 1 validator must always
+    # supply these explicitly. A missing verdict must raise, never read True/90.
+    is_verified: bool
+    confidence_score: int  # 0 to 100
     verification_summary: str = ""
     verified_facts: List[str] = Field(default_factory=list)
     flagged_claims: List[str] = Field(default_factory=list)
@@ -63,28 +65,33 @@ class VideoScenePrompt(BaseModel):
     scene_number: int
     timestamp: str  # e.g. "0:00 - 0:03"
     visual_prompt_ai: str  # Highly detailed prompt for Google Veo/Flow
-    camera_movement: str = "Dynamic push-in"
-    lighting_and_mood: str = "Cinematic golden hour / high contrast"
-    aspect_ratio: str = "9:16"
-    motion_level: str = "Medium-High"
-    ai_engine: str = "Google Flow / Veo"
+    # Fail-loud: no invented camera/lighting/motion/engine defaults — the video
+    # prompt engineer must supply every field from the model output.
+    camera_movement: str
+    lighting_and_mood: str
+    aspect_ratio: str
+    motion_level: str
+    ai_engine: str
 
 
 class VideoPassVerification(BaseModel):
     """Feasibility & Quality Gate Verification for AI Video Generation."""
-    passed: bool = True
-    feasibility_score: int = 95  # 0-100
+    # Fail-loud: no default "passed" — the gate must always supply its verdict
+    # explicitly. A missing verdict must raise, never read as passed/95.
+    passed: bool
+    feasibility_score: int  # 0-100
     safety_compliance: str = "Passed"
     temporal_consistency: str = "Passed"
     visual_clarity_check: str = "Passed"
-    feedback: str = "Prompt complies with AI video generation guidelines."
+    feedback: str = ""
 
 
 class SceneItem(BaseModel):
     """Timestamped 9:16 screenplay scene with visual direction and spoken dialogue."""
     scene_number: int
-    act_name: str = "Act 1: Hook"
-    character: str = "🎙️ Presenter (मुख्य वक्ता)"
+    # Fail-loud: no invented act/persona — neutral empties, never a fake identity.
+    act_name: str = ""
+    character: str = ""
     dialogue: str = ""
     timestamp: str
     visual_b_roll: str
@@ -134,7 +141,8 @@ class ReelScript(BaseModel):
 
     # Step 5: Clarity & Self-Healing Retry Tracking
     clarity_score: int = 95
-    music_vibe: str = "Trending High-Energy Beat"
+    # Fail-loud: no invented soundtrack — neutral empty until a real pick exists.
+    music_vibe: str = ""
     retry_count: int = 0
     self_healing_notes: List[str] = Field(default_factory=list)
     engine_used: str = "Local FM"
@@ -151,11 +159,12 @@ class AgentAuditItem(BaseModel):
     agent_name: str
     icon: str
     stage_number: int
-    status: str = "Success"  # "Success", "Self-Healed", "Warning", "Fallback"
+    # Fail-loud: no default "Success" — the pipeline must record the real outcome.
+    status: str = ""  # "Success", "Self-Healed", "Warning", "Fallback"
     attempts: int = 1
     failures_count: int = 0
     errors_encountered: List[str] = Field(default_factory=list)
-    resolution_action: str = "Passed on initial run"
+    resolution_action: str = ""
     execution_time_sec: float = 0.0
 
 
@@ -165,7 +174,8 @@ class PipelineAuditReport(BaseModel):
     total_agents: int = 7
     total_failures_detected: int = 0
     total_retries_resolved: int = 0
-    overall_health: str = "100% Operational"
+    # Fail-loud: no default "100% Operational" — health is computed, never assumed.
+    overall_health: str = ""
     agent_audits: List[AgentAuditItem] = Field(default_factory=list)
 
 
@@ -184,4 +194,6 @@ class ReelBatchResult(BaseModel):
     sample_story: Optional[str] = None
     compliance_passed: bool = True
     retry_prompt_recommendation: Optional[str] = None
+    validation_passed: bool = True
+    validation_issues: list = Field(default_factory=list)
     created_at: str = Field(default_factory=lambda: datetime.now().strftime("%B %d, %Y - %H:%M"))

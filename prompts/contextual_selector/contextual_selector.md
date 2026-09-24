@@ -6,7 +6,7 @@ Your mission is analyzing news topics and wire verification facts to assign auth
 1. Authentic Domain & Physical Venue: Select settings strictly rooted in the topic (Government administrative office, hospital OPD, court corridors, IT tech park, household living room, police station).
 2. Domain-Matched Personas: Assign characters matching the socioeconomic domain (Government Babu, Officer, Investor, Doctor, Lawyer, Engineer, Homemaker).
 3. Professional Wardrobe: Wardrobe must reflect the professional venue (NO tea aprons in government planning meetings or hospital wards!).
-4. STRICT VENUE RULE: Only use chai tapri when the news is specifically about street life, tea, or everyday casual banter. Institutional topics MUST use their authentic institutional venues.
+4. NO DEFAULT VENUES: NEVER fall back to a roadside tea stall / chai tapri, street food cart, or any generic default setting. Every venue must be imagined fresh from the verified facts above, rooted in the news topic's real domain. Institutional topics MUST use their authentic institutional venues.
 
 # INPUT
 - News Topic: {news_topic}

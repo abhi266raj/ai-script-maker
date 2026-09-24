@@ -61,7 +61,8 @@ def test_character_personas_mapping():
     # Indian Politics / Election / Netaji
     p_election = get_character_personas("Dialogue", 2, "Funny", "Funny", topic_or_script="Municipal election Netaji rally and voting")
     assert any("Netaji" in p or "Corporator" in p or "पार्षद" in p for p in p_election)
-    assert any("Chai" in p or "टपरी" in p for p in p_election)
+    # Tapri personas were removed: election topics must not default to chai-tapri characters
+    assert not any("tapri" in p.lower() or "टपरी" in p or "chai" in p.lower() for p in p_election)
 
     # Tech / WFO Mandate
     p_tech = get_character_personas("Dialogue", 2, "Funny", "Funny", topic_or_script="Tech companies mandate 5-day WFO biometric punch-in")
@@ -108,13 +109,13 @@ def test_professional_screenplay_scene_description_and_clean_beats():
 
 
     # 1. clean_beat_action removes camera/location preamble
-    raw_1 = "Handheld dynamic 9:16 shot at a vibrant Indian street chai tapri; Priya delivers a hilarious opening quip with expressive comedic gestures"
+    raw_1 = "Handheld dynamic 9:16 shot at a vibrant Indian street market; Priya delivers a hilarious opening quip with expressive comedic gestures"
     clean_1 = clean_beat_action(raw_1)
     assert clean_1 == "Priya delivers a hilarious opening quip with expressive comedic gestures"
     assert "Handheld dynamic 9:16 shot" not in clean_1
-    assert "chai tapri" not in clean_1
+    assert "street market" not in clean_1
 
-    raw_2 = "Low-angle vertical (9:16) establishing hook shot at a rustic wooden bench of a roadside tea tapri, nestled beneath a leafy banyan tree. Priya aggressively slaps her smartphone."
+    raw_2 = "Low-angle vertical (9:16) establishing hook shot at a rustic wooden bench of a roadside market, nestled beneath a leafy banyan tree. Priya aggressively slaps her smartphone."
     clean_2 = clean_beat_action(raw_2)
     assert clean_2 == "Priya aggressively slaps her smartphone."
 
@@ -132,7 +133,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 character="👩 Priya (Tech Founder / Friend 1)",
                 dialogue="रोहन सुनो! 5-दिन WFO अनिवार्य कर दिया, आज़ादी छिन गई यार!",
                 timestamp="0:00 - 0:03",
-                visual_b_roll="Handheld dynamic 9:16 shot at a vibrant Indian street chai tapri; Priya aggressively slaps her smartphone onto the bench",
+                visual_b_roll="Handheld dynamic 9:16 shot at a vibrant Indian street market; Priya aggressively slaps her smartphone onto the bench",
                 on_screen_text="आज़ादी छिन गई! 😭",
                 audio_sfx="Cutting Chai Clink",
             ),
@@ -190,7 +191,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 scene_number=1,
                 character="Ananya",
                 timestamp="0:00 - 0:03",
-                visual_b_roll="Fast whip-pan to Ananya slamming a book on the tapri counter.",
+                visual_b_roll="Fast whip-pan to Ananya slamming a book on the library counter.",
                 on_screen_text="No Jobs?",
                 audio_sfx="Fast whoosh + heavy book slam.",
                 dialogue="डिग्री ले ली, नौकरी कहाँ है?",
@@ -220,7 +221,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
     )
     pro10 = format_professional_screenplay(s10)
     assert "Very fast-paced, high-energy vibe to fit the 10-second limit." in pro10
-    assert "Camera Focus & Action: Fast whip-pan to Ananya slamming a book on the tapri counter." in pro10
+    assert "Camera Focus & Action: Fast whip-pan to Ananya slamming a book on the library counter." in pro10
     assert "Camera Focus & Action: Quick pan to Vikram shoving his phone screen into the frame." in pro10
     assert "Camera Focus & Action: Fast pull back to frame both. Ananya mockingly tosses her book aside." in pro10
     assert 'ANANYA: "डिग्री ले ली, नौकरी कहाँ है?"' in pro10
@@ -243,8 +244,11 @@ def test_professional_screenplay_scene_description_and_clean_beats():
 def test_creative_guidelines():
     """Verify that angle provides imaginary scene setup and comedy mandates genuine humor."""
     guidelines = get_creative_guidelines("Dialogue", 2, "😂 Comedy & Sarcastic Banter (ह्यूमर)", "Funny & Relatable")
-    assert "THIS MUST BE GENUINELY FUNNY" in guidelines
-    assert "chai tapri" in guidelines
+    assert "GENUINELY FUNNY" in guidelines
+    assert "JOKE MANDATE" in guidelines
+    # The chai-tapri comedy example was removed from all guidance
+    assert "chai tapri" not in guidelines
+    assert "tapri" not in guidelines.lower()
     assert "Do NOT just report dry news" in guidelines
     assert "INSTAGRAM STORY" in guidelines
     assert "GENDER DIVERSITY" in guidelines
@@ -268,7 +272,10 @@ def test_tailored_instruction_matrix():
                 assert "30 seconds" in inst
                 assert "Recommended" in inst
                 assert "SAMPLE STORY" in inst
-                assert "HIGHEST PRECEDENCE" in inst
+                # Sample is a style reference only: never copied, never takes precedence
+                assert "STYLE REFERENCE ONLY" in inst
+                assert "DO NOT copy" in inst
+                assert "HIGHEST PRECEDENCE" not in inst
 
 
 def test_configuration_compliance_gate():
@@ -344,7 +351,7 @@ def test_end_to_end_comedy_dialogue_pipeline():
         scene_style="Dialogue",
         preferred_tone="😂 Comedy & Sarcastic Banter (ह्यूमर)",
         preferred_angle="Funny & Relatable",
-        sample_story="दो दोस्त चाय की दुकान पर बैठे हैं और 5 दिन ऑफिस जाने की खबर सुनकर रोने की एक्टिंग करते हैं।",
+        sample_story="दो दोस्त 5 दिन ऑफिस जाने की खबर सुनकर रोने की एक्टिंग करते हैं।",
     )
 
     result = None
@@ -369,9 +376,10 @@ def test_end_to_end_comedy_dialogue_pipeline():
     assert "Friend" in char_names[0] or "दोस्त" in char_names[0]
     assert "Friend" in char_names[1] or "दोस्त" in char_names[1]
 
-    # 3. Visuals & Prompts reflect creative imaginary situation
+    # 3. Visuals & Prompts reflect creative imaginary situation (never a default tapri)
     v1 = script.scenes[0].visual_b_roll
-    assert "tapri" in v1.lower() or "comedic" in v1.lower() or "street" in v1.lower() or "friend" in v1.lower() or "priya" in v1.lower() or "chai" in v1.lower() or len(v1) > 10
+    assert "tapri" not in v1.lower() and "टपरी" not in v1
+    assert "comedic" in v1.lower() or "street" in v1.lower() or "friend" in v1.lower() or "priya" in v1.lower() or len(v1) > 10
 
     # 4. Google Flow / Veo Prompt synthesized
     assert script.scenes[0].video_prompt is not None
@@ -420,23 +428,30 @@ def test_sadness_tone_angle_and_lament_style():
 
 
 def test_dead_configs_purged_and_update_instruction():
-    """Verify that dead configs are removed and instruction generator is 100% synced with visible UI."""
+    """Verify dead configs are removed; instruction generator syncs only creative fields.
+
+    batch_count/max_retries are operational pipeline settings and must NOT leak
+    into the generated creative instruction. source_mode/news_category were merged
+    into a single story_source dropdown.
+    """
     from core.config import DEFAULT_CONFIG, load_config
 
     # Ensure dead configs are removed
     assert "enable_self_healing" not in DEFAULT_CONFIG
     assert "studio_layout" not in DEFAULT_CONFIG
     assert "frame_count" not in DEFAULT_CONFIG
+    assert "source_mode" not in DEFAULT_CONFIG
+    assert "news_category" not in DEFAULT_CONFIG
 
     # Ensure active configs exist
     expected_keys = {
         "default_engine", "default_tone", "default_duration", "batch_count",
-        "max_retries", "source_mode", "news_category", "selected_headline", "selected_script_index",
+        "max_retries", "story_source", "selected_headline", "selected_script_index",
         "default_angle", "character_count", "scene_style"
     }
     assert expected_keys.issubset(set(DEFAULT_CONFIG.keys()))
 
-    # Verify tailored instruction includes all non-engine UI parameters
+    # Verify tailored instruction includes only creative parameters
     inst = build_tailored_instruction(
         topic="Varanasi Dev Deepawali celebration",
         duration_sec=20,
@@ -444,8 +459,6 @@ def test_dead_configs_purged_and_update_instruction():
         angle="Dramatic Storytelling",
         scene_style="Narration",
         character_count=1,
-        batch_count=2,
-        max_retries=4,
         sample_story="Ghats glow with millions of diyas.",
     )
     assert "20 seconds" in inst
@@ -454,6 +467,9 @@ def test_dead_configs_purged_and_update_instruction():
     assert "Narration" in inst
     assert "1 speaking character(s)" in inst
     assert "Ghats glow with millions of diyas" in inst
+    # Operational pipeline settings must not leak into the creative instruction
+    assert "script version" not in inst
+    assert "retry attempt" not in inst
     # Unwanted frame scenes and engine are strictly excluded from instruction
     assert "scene frame" not in inst
     assert "first_local_then_agy" not in inst
@@ -550,11 +566,13 @@ def test_argument_style_and_relational_characters():
     assert "corporate" in attire_colleague.lower() or "smart-casual" in attire_colleague.lower() or "lanyard" in attire_colleague.lower() or "shirt" in attire_colleague.lower()
 
 
-def test_sample_story_character_and_relationship_precedence():
-    """Verify that sample story/script character definitions and relationships take highest precedence."""
+def test_sample_story_is_style_reference_not_copied():
+    """Verify the sample story is a STYLE REFERENCE ONLY: its names, locations,
+    and situations are never copied into characters or scenes."""
     from core.screenplay_formatter import format_industry_screenplay
 
-    # 1. Sample script with explicit CHARACTERS & CLOTHING block
+    # 1. Sample script with explicit CHARACTERS & CLOTHING block — names and
+    #    tapri location must NOT be copied into the selected personas.
     sample_script_block = """
 [Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]
 SCENE DETAIL:
@@ -569,8 +587,11 @@ VIKRAM: "सिस्टम को स्टूडेंट नहीं, अं
 """
     p_block = get_character_personas("Dialogue", 2, "Funny", "Funny", sample_story=sample_script_block)
     assert len(p_block) == 2
-    assert "Ananya" in p_block[0]
-    assert "Vikram" in p_block[1]
+    # Sample names are NOT copied — personas are grounded afresh
+    assert "Ananya" not in p_block[0] and "Ananya" not in p_block[1]
+    assert "Vikram" not in p_block[0] and "Vikram" not in p_block[1]
+    # Sample tapri location is NOT copied into personas
+    assert not any("tapri" in p.lower() or "टपरी" in p or "chai" in p.lower() for p in p_block)
 
     # 2. Sample story with dialogue cues (Wife: ... Husband: ...)
     sample_dialogue_cues = """
@@ -589,14 +610,29 @@ Husband: "कमाई वही है और खर्चे दोगुन�
     assert any("Father" in p or "पिता" in p for p in p_fs)
     assert any("Son" in p or "बेटा" in p for p in p_fs)
 
-    # 4. Narrative relationship mention (Doctor & Patient)
-    sample_doc_pat = "Doctor and patient discuss unexpected hospital bill and medicine costs."
+    # 4. Narrative domain mention (hospital/doctor) — the system picks a grounded
+    #    socioeconomic pair for the domain; it does NOT copy roles from the sample.
+    sample_doc_pat = "Hospital doctor discusses medicine costs with a visitor."
     p_dp = get_character_personas("Dialogue", 2, "Funny", "Funny", sample_story=sample_doc_pat)
     assert len(p_dp) == 2
-    assert any("Doctor" in p or "चिकित्सक" in p for p in p_dp)
-    assert any("Patient" in p or "मरीज" in p for p in p_dp)
+    assert any("Doctor" in p or "चिकित्सक" in p or "डॉक्टर" in p for p in p_dp)
+    assert any("Construction Worker" in p or "मजदूर" in p for p in p_dp)
 
     # 5. Screenplay Formatter custom clothing and scene detail extraction from sample script
+    #    (neutral sample block — the formatter honors the user's own draft detail,
+    #    but generation never defaults to a tapri)
+    sample_neutral_block = """
+[Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]
+SCENE DETAIL:
+⚬ A bustling college campus courtyard. Very fast-paced, high-energy vibe to fit the 10-second limit.
+CHARACTERS & CLOTHING:
+⚬ ANANYA: Casual college-going attire (e.g., jeans and a simple kurti).
+⚬ VIKRAM: Everyday street casual wear (e.g., t-shirt and jeans).
+[Time: 0:00 - 0:03]
+ANANYA: "डिग्री ले ली, नौकरी कहाँ है?"
+[Time: 0:03 - 0:06]
+VIKRAM: "सिस्टम को स्टूडेंट नहीं, अंधभक्त चाहिए!"
+"""
     test_script = ReelScript(
         id=99,
         title="10s Fast Reel Sample",
@@ -604,13 +640,13 @@ Husband: "कमाई वही है और खर्चे दोगुन�
         hook_hindi="डिग्री ले ली!",
         narration_hindi="डिग्री ले ली, नौकरी कहाँ है?",
         call_to_action="",
-        sample_story_used=sample_script_block,
+        sample_story_used=sample_neutral_block,
         scenes=[
             SceneItem(
                 scene_number=1,
                 character="Ananya",
                 timestamp="0:00 - 0:03",
-                visual_b_roll="Fast whip-pan to Ananya slamming a book on the tapri counter.",
+                visual_b_roll="Fast whip-pan to Ananya slamming a book on the library counter.",
                 dialogue="डिग्री ले ली, नौकरी कहाँ है?",
                 on_screen_text="No Jobs?",
                 audio_sfx="Whoosh",
@@ -634,7 +670,7 @@ Husband: "कमाई वही है और खर्चे दोगुन�
     assert "ANANYA: Casual college-going attire (e.g., jeans and a simple kurti)." in formatted
     assert "VIKRAM: Everyday street casual wear (e.g., t-shirt and jeans)." in formatted
     # Verify custom scene detail from sample script is 100% honored
-    assert "A bustling local Indian street chai tapri. Very fast-paced, high-energy vibe to fit the 10-second limit." in formatted
+    assert "A bustling college campus courtyard. Very fast-paced, high-energy vibe to fit the 10-second limit." in formatted
 
 
 def test_script_continuity_and_setting_analyzer():
@@ -747,11 +783,13 @@ def test_script_continuity_and_setting_analyzer():
         target_duration_sec=10,
     )
     harmonized_setting = harmonize_setting_description(mismatch_script)
-    # The setting should reconcile to tea stall directly outside hospital casualty entrance
-    assert "roadside tea stall" in harmonized_setting.lower() or "tea stall" in harmonized_setting.lower()
+    # Tapri-guard: the setting must stay news-grounded (hospital) and must NOT
+    # be relocated to a tea stall / tapri just because the script has chai props.
     assert "hospital" in harmonized_setting.lower()
-    # It should NOT be the interior casualty waiting area
-    assert "casualty waiting area." not in harmonized_setting
+    assert "tea stall" not in harmonized_setting.lower()
+    assert "tapri" not in harmonized_setting.lower()
+    # Institutional setting is kept as-is.
+    assert "casualty waiting area" in harmonized_setting.lower()
 
 
 def test_common_sense_validator_step_and_retry_feedback():
@@ -1177,9 +1215,9 @@ if __name__ == "__main__":
     test_argument_style_and_relational_characters()
     print("✅ test_argument_style_and_relational_characters passed")
 
-    print("Testing sample story character and relationship precedence...")
-    test_sample_story_character_and_relationship_precedence()
-    print("✅ test_sample_story_character_and_relationship_precedence passed")
+    print("Testing sample story is style reference, not copied...")
+    test_sample_story_is_style_reference_not_copied()
+    print("✅ test_sample_story_is_style_reference_not_copied passed")
 
     print("Testing script continuity, setting analyzer, and dialogue targets...")
     test_script_continuity_and_setting_analyzer()

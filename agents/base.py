@@ -21,7 +21,10 @@ class BaseAgent:
         self.role = role
         self.icon = icon
         if prompt_file:
-            self.instructions = load_prompt(prompt_file, default=instructions or "")
+            # Strict: the declared prompt file MUST exist and be readable.
+            # A missing prompt file fails loudly here instead of silently
+            # running the agent on stale embedded instructions.
+            self.instructions = load_prompt(prompt_file)
         else:
             self.instructions = instructions or ""
 

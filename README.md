@@ -34,45 +34,89 @@ Equipped with a collaborative team of specialized AI sub-agents, autonomous self
 
 ---
 
+## 🔄 Pipeline (6 Stages)
+
+| Stage | Name | What it does |
+| :--- | :--- | :--- |
+| 1 | **Facts & Verification** | News validation, verified facts, confidence scoring |
+| 2 | **Character Finalisation** | Characters grounded in verified news |
+| 3 | **Dialogue** | Hindi dialogue with validation (structure, news coverage, tone, language) |
+| 4 | **Scene Finalisation** | 2 scenes derived from dialogue |
+| 5 | **Storyboards & AI Video Prompts** | Visuals + integration validation |
+| 6 | **Integration & Final Validation** | Presence, counts, cross-stage connectivity only |
+
+---
+
+## 🧭 Key Architectural Principles
+
+- **Fail-fast validation:** Sub-checks are ordered by failure likelihood (most prone first). The first failure skips the remaining checks and goes straight to retry. Skipped checks are shown explicitly as ⏸️ — never silently omitted.
+- **News coverage:** Validated by AI judge only — no token matching. The judge checks against the short news title / basic content. Verdict + reason are surfaced in the UI.
+- **Fail loudly:** No silent fallbacks anywhere. Every failure raises an error with stage + what failed + why.
+- **Verified facts piping:** Stage 1 verified facts reach all downstream stages (2, 3, 4, 5). No stage works on the headline alone.
+- **Validation ownership:** Each stage validates only what it creates. Stage 6 is integration-only (presence, counts, connectivity) — it never re-runs content checks owned by earlier stages.
+- **Cumulative preview:** The preview shows all completed stages' output, in both continuous and stepwise generation modes.
+- **Verifiability:** Every substep shows input → output in collapsible sections. Every status is explicit: ✅ passed, ❌ failed, 🔄 running, ⏳ waiting, ⏸️ skipped / not reached.
+
+---
+
+## 🔢 Stage Numbering
+
+Every stage follows the same linear sub-stage scheme:
+
+```text
+N.1 Generation    → input → output
+N.2 Validation    → N.2.1, N.2.2, N.2.3, N.2.4 sub-checks (each: input → output)
+N.3 Retry         → only if validation fails
+N.4 Re-validation → all checks run fresh
+N.5 Retry 2       → only if re-validation fails
+N.6 Re-validation 2 → only if retry 2 occurred
+```
+
+Retry sections never appear as executed unless a retry actually happened.
+
+---
+
 ## 🏗️ Multi-Agent Architecture
 
 ```mermaid
 flowchart TD
     User([👤 User Input: News Topic + Scenario + Duration + Style]) --> Coordinator[👑 Chief Editor Coordinator Agent]
-    
-    subgraph Stage 1: Verification
-        Coordinator --> NewsAgent[🔍 News Validation Agent]
+
+    subgraph S1["Stage 1: Facts & Verification"]
+        Coordinator --> NewsAgent[🔍 News Validator]
         NewsAgent --> RSS[(Live News Wire / RSS)]
-        NewsAgent --> FactReport[📋 Verified Facts & Entities]
+        NewsAgent --> FactReport[📋 Verified Facts + Confidence]
     end
 
-    subgraph Stage 2: Strategy
-        FactReport --> HookAgent[🎯 Hook & Angle Strategist Agent]
-        HookAgent --> AngleHooks[⚡ 10 Viral Hindi Hooks & Angles]
+    subgraph S2["Stage 2: Character Finalisation"]
+        FactReport --> HookAgent[🎯 Hook Strategist]
+        HookAgent --> Characters[🎭 Finalized Characters]
     end
 
-    subgraph Stage 3: Scriptwriting & Pacing
-        AngleHooks --> WriterAgent[✍️ Dialogue & Narration Writer Agent]
-        WriterAgent --> TimingAgent[⏱️ Timing & Pacing Auditor Agent]
-        TimingAgent -->|Word Budget Exceeded| WriterAgent
-        TimingAgent --> CalibratedScripts[📝 Calibrated Hindi Scripts]
+    subgraph S3["Stage 3: Dialogue"]
+        Characters --> S31["3.1 Dialogue Generation"]
+        S31 --> S32["3.2 Validation: Structure → News → Tone → Language"]
+        S32 -->|Fail| S33["3.3 Retry"]
+        S33 --> S34["3.4 Re-validation"]
+        S32 -->|Pass| Dialogues[📝 Validated Hindi Dialogues]
+        S34 -->|Pass| Dialogues
     end
 
-    subgraph Stage 4: Visual Storyboarding
-        CalibratedScripts --> ContextAgent[🎭 Contextual Scene & Character Selector]
-        ContextAgent --> DirectorAgent[🎬 Scene Visuals Director Agent]
-        DirectorAgent --> PromptAgent[🎥 AI Video Prompt Engineer - Veo/Flow]
-        PromptAgent --> QualityAgent[🛡️ Video Quality Gate Auditor]
+    subgraph S4["Stage 4: Scene Finalisation"]
+        Dialogues --> Scenes[🏞️ 2 Scenes Derived from Dialogue]
     end
 
-    subgraph Stage 5: Realism Audit & Coherence
-        QualityAgent --> CommonSense[⚖️ Common Sense Realism Validator]
-        CommonSense --> CoherenceAgent[🎯 Screenplay Coherence Sub-Agent]
-        CoherenceAgent -->|Mismatches Detected| CommonSense
-        CommonSense --> Formatter[📜 Industry Screenplay Formatter]
+    subgraph S5["Stage 5: Storyboards & Video Prompts"]
+        Scenes --> Storyboards[🎨 Storyboards]
+        Storyboards --> Prompts[🎥 AI Video Prompts]
     end
 
-    Formatter --> WebUI([💻 Streamlit Studio / Teleprompter / Export])
+    subgraph S6["Stage 6: Integration & Final Validation"]
+        Prompts --> Integration[🧩 Integration Gate: Presence, Counts, Connectivity]
+        Integration --> Final[✅ Final Output]
+    end
+
+    Final --> WebUI([💻 Streamlit Studio / Teleprompter / Export])
 ```
 
 ---

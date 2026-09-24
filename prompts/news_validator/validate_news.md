@@ -28,8 +28,12 @@ Strictly structure your response using the following headers:
 ## CONFIDENCE SCORE: [75-98]%
 ## SUMMARY: (1-2 tight sentences stating ONLY the confirmed, usable facts the reel will be built on. Never describe the verification process, never mention what is unconfirmed, never hedge about sources or excerpts.)
 ## VERIFIED FACTS:
-- (Fact 1 with key entities/dates)
-- (Fact 2 with key entities/dates)
+(3-5 SHORT bullets MAX. Each bullet must be REEL-USABLE — concise enough to be spoken as dialogue in a 10-second reel. Include ONLY what the reel needs:)
+- WHO: 1-2 key names (person, organisation) — e.g. "Elon Musk announced..."
+- WHAT: The core event in ONE clear line — e.g. "Tesla will build a $5B factory in Gujarat"
+- KEY NUMBER: Only if it is the point of the story — e.g. "$5B investment, 10,000 jobs"
+- WHY IT MATTERS: One line, only if space — e.g. "India's largest EV investment yet"
+(DO NOT write a full news report. DO NOT include background history, minor details, exhaustive context, or timelines. If a fact cannot be spoken naturally in reel dialogue, it does not belong here.)
 ## PHYSICAL PROPS & VISUAL ELEMENTS:
 - (Real objects FROM THE NEWS STORY ONLY, e.g. Smartphone displaying the viral hiring post. No invented signage, no generic filler.)
 ## KEY LOCATIONS & SETTINGS:

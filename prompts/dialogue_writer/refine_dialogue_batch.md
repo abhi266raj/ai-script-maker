@@ -22,11 +22,13 @@ You are refining a finalized Hindi reel dialogue draft based on a user's custom 
 - This is a SURGICAL REFINEMENT, not a rewrite. Change ONLY what the custom instruction targets. Keep every line, beat, joke, and character moment that already works.
 - Preserve ALL locked decisions above exactly: same characters, same count, same angle, same dialogue-type structure, same word budget.
 - PURE spoken Hindi (Devanagari) only — a COMMON PERSON'S Hindi: everyday colloquial words, never formal/linguistic/shuddh vocabulary (BANNED). Translate English terms into everyday Hindi ('penal action' → 'सज़ा की कार्रवाई'), transliterate proper names ('Amazon' → 'अमेज़न'). NEVER quote headlines, hooks, or input text verbatim — paraphrase with the same meaning, in the characters' own everyday words.
+- NEWS CLARITY: the refined dialogue must CLEARLY state the actual news — key event, people/entities involved, core verified facts. Vague allusions without naming the actual event are BANNED.
+- CREATIVITY: be a creative screenwriter — fresh, specific, non-generic lines grounded in the verified facts. If a beat feels interchangeable with any other reel, make it unmistakably THIS story.
 - Every line must earn its place: a verified fact, a specific question, a direct answer/rebuttal, or a news-grounded punchline. No generic filler. Characters react to each other (ping-pong), speaking as REAL PEOPLE from their listed roles — never as newsreaders.
 - Stay within the word budget above.
 
 # OUTPUT FORMAT
-[Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]
+[Format Requirement: All scene descriptions in English, Dialogues strictly in Hindi]
 
 Output the COMPLETE refined dialogue (same number of beats as the previous draft), structured EXACTLY like this. Beats run in order — do NOT write timestamps:
 

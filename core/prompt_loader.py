@@ -2,12 +2,20 @@
 
 Loads agent system instructions and method prompt templates from external Markdown files
 under prompts/<subagent_name>/<method_or_system>.md.
-Includes template formatting, in-memory caching, and optional default fallback.
+Includes template formatting and in-memory caching.
+
+Contract: a declared prompt file MUST exist, be readable, and be non-empty.
+Missing/unreadable/empty files fail loudly — they are never silently replaced
+with a fallback. Callers that explicitly pass `default=` opt into a fallback
+and get a logged warning when it is used.
 """
 
+import logging
 from pathlib import Path
 from typing import Optional, Any
 import string
+
+logger = logging.getLogger(__name__)
 
 # Base directory for prompt files
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -79,19 +87,42 @@ def load_prompt(agent_or_filename: str, default: Optional[str] = None) -> str:
         # 5. prompts/<stem>.txt
         candidates.append(PROMPTS_DIR / f"{stem}.txt")
 
+    last_error: Optional[Exception] = None
     for candidate in candidates:
         try:
             if candidate.is_file():
                 content = candidate.read_text(encoding="utf-8").strip()
+                if not content:
+                    # An empty prompt file is a broken contract, not a fallback trigger.
+                    last_error = ValueError(f"Prompt file is empty: {candidate}")
+                    break
                 _PROMPT_CACHE[key] = content
                 return content
-        except Exception:
+        except (ValueError, OSError) as e:
+            # Fail loudly: a present-but-unreadable prompt file is a broken
+            # contract, never a reason to silently use a fallback.
+            last_error = e
+            break
+        except Exception as e:  # defensive: keep read details for the error below
+            last_error = e
             continue
 
     if default is not None:
+        if last_error is not None:
+            logger.warning(
+                "Prompt file for %r unreadable (%s); using caller-supplied default.",
+                agent_or_filename, last_error,
+            )
         return default.strip()
 
-    raise FileNotFoundError(f"Prompt file not found for '{agent_or_filename}' in {PROMPTS_DIR}")
+    if last_error is not None:
+        raise RuntimeError(
+            f"Prompt file for '{agent_or_filename}' exists but could not be read: {last_error}"
+        ) from last_error
+    raise FileNotFoundError(
+        f"Prompt file not found for '{agent_or_filename}'. "
+        f"Searched under {PROMPTS_DIR}: {[str(c) for c in candidates]}"
+    )
 
 
 def render_prompt(prompt_path: str, default_template: Optional[str] = None, **kwargs: Any) -> str:
@@ -112,8 +143,9 @@ def render_prompt(prompt_path: str, default_template: Optional[str] = None, **kw
     try:
         from core.prompt_recorder import record
         record(prompt_path, rendered)
-    except Exception:
-        pass
+    except Exception as e:
+        # Recording is observability-only: log the failure, never break generation.
+        logger.warning("Prompt recording failed for %s: %s", prompt_path, e)
     return rendered
 
 

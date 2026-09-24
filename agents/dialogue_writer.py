@@ -42,15 +42,18 @@ def clean_hook_for_dialogue(hook: str) -> str:
     if not hook:
         return ""
     h = re.sub(r"[\U0001F300-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF\uFE0F\u200d]+", "", hook)
-    h = re.sub(r"\s*को\s+लेकर\s+बड़\w*\s*(?:अपडेट|खबर)\s*!?\s*$", "", h).strip()
-    h = re.sub(r"\s+", " ", h).strip(" -–—:;,")
-    return h
+    # Strip "X को लेकर बड़ा अपडेट/खबर!" template filler on EVERY line
+    # (MULTILINE: without it only the last line was cleaned).
+    h = re.sub(r"\s*को\s+लेकर\s+बड़[ािीे]*\s*(?:अपडेट|खबर)\s*!?\s*$", "", h, flags=re.MULTILINE)
+    # Collapse spaces/tabs within each line, drop emptied lines, keep line breaks.
+    lines = [re.sub(r"[ \t]+", " ", ln).strip(" -–—:;,") for ln in h.split("\n")]
+    return "\n".join(ln for ln in lines if ln)
 
 
 def get_sentence_guidance(duration_sec: int, rec_w: int, max_w: int, tone: str = "", angle: str = "") -> str:
     """Return explicit structural sentence advice calibrated to target reel duration with Fun-First support."""
     combined = f"{tone} {angle}".lower()
-    is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "roast", "relatable"])
+    is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "roast", "relatable", "joke"])
 
     if duration_sec <= 8:
         return (
@@ -170,7 +173,7 @@ class ScriptDialogue(str):
 RELATIONSHIP_PAIRS = [
     # Colleagues / Office Co-workers
     ("👩 Priya (Senior Office Colleague / Colleague 1 - सीनियर कलीग)", "🧑 Rohan (Office Colleague / Colleague 2 - जूनियर कलीग)"),
-    # Close Friends / Tapri Buddies
+    # Close Friends
     ("👩 Ananya (College Friend 1 - कॉलेज दोस्त)", "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)"),
     # Husband & Wife (पति-पत्नी)
     ("👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)", "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)"),
@@ -208,8 +211,8 @@ DIVERSE_SOCIOECONOMIC_PAIRS = [
     ("👩 Priya (Rich Tech Founder / Friend 1 - अमीर टेक फाउंडर)", "🧑 Rohan (Working-Class Auto Driver / Friend 2 - मेहनती ऑटो चालक)"),
     # Police & Gig Worker / Common Citizen
     ("👮 Sub-Inspector Sunita (Traffic Police / Friend 1 - पुलिस दरोगा)", "🛵 Rohan (Gig Delivery Partner / Friend 2 - डिलीवरी राइडर)"),
-    # Local Fictional Politician / Ward Corporator & Tapri Vendor
-    ("🏛️ Netaji Tiwari (Ward Corporator / Friend 1 - स्थानीय पार्षद)", "☕ Rohan (Street Chai Tapri Owner / Friend 2 - टपरी वाला)"),
+    # Local Fictional Politician / Ward Corporator & Common Citizen
+    ("🏛️ Netaji Tiwari (Ward Corporator / Friend 1 - स्थानीय पार्षद)", "🧑 Rohan (Common Citizen / Friend 2 - आम नागरिक)"),
     # Government Servant (Babu) & Young Citizen / Student
     ("👔 Sharma Ji (Government Clerk / Friend 1 - सरकारी बाबू)", "🧑 Rohan (UPSC Aspirant / Friend 2 - छात्र)"),
     # SIR / Special Investment Region / Government Officer & Industrial Investor
@@ -236,7 +239,7 @@ DIVERSE_SOCIOECONOMIC_TRIOS = [
     (
         "🏛️ Netaji Tiwari (Local Corporator / Friend 1 - स्थानीय पार्षद)",
         "🧑 Rohan (Auto Driver / Friend 2 - ऑटो चालक)",
-        "☕ Mohan (Chai Tapri Owner / Elder - टपरी वाला बुजुर्ग)",
+        "📰 Mohan (Newspaper Vendor / Elder - अखबार वाला)",
     ),
     (
         "💼 Ananya (Rich Corporate VP / Friend 1 - अमीर बैंकर)",
@@ -273,8 +276,6 @@ def select_script_grounded_solo(topic_or_script: str) -> str:
         return "😂 Desi Creator Sharma Ji (Government Clerk / Babu - देसी क्रिएटर सरकारी बाबू)"
     if any(k in text for k in ["election", "नेता", "netaji", "पार्षद", "corporator", "party", "vote"]):
         return "😂 Desi Creator Netaji Tiwari (Local Corporator - देसी क्रिएटर पार्षद)"
-    if any(k in text for k in ["chai", "चाय", "tapri", "टपरी", "पोहा", "poha"]):
-        return "😂 Desi Creator Mohan (Chai Tapri Owner - देसी क्रिएटर टपरी वाला)"
     if any(k in text for k in ["auto", "ऑटो", "रिक्शा", "cab", "driver"]):
         return "😂 Desi Creator Rohan (Outspoken Auto Driver / Creator - देसी क्रिएटर रोहन)"
 
@@ -298,7 +299,7 @@ def select_script_grounded_pair(topic_or_script: str) -> Tuple[str, str]:
         return RELATIONSHIP_PAIRS[0]  # Priya (Senior Colleague) & Rohan (Junior Colleague)
     if any(k in text for k in ["neighbor", "neighbour", "padosi", "पड़ोसी", "mohalla", "मोहल्ला", "society", "सोसाइटी", "colony", "कॉलोनी", "parking", "gossip"]):
         return RELATIONSHIP_PAIRS[5]  # Verma Ji & Gupta Ji (Neighbors)
-    if any(k in text for k in ["friend", "dost", "yaar", "दोस्त", "यार", "tapri"]):
+    if any(k in text for k in ["friend", "dost", "yaar", "दोस्त", "यार"]):
         return RELATIONSHIP_PAIRS[1]  # Ananya & Vikram (Friends)
 
     # 0.5 SIR / Special Investment Region / Dholera / Industrial Corridor / Government Administrative Office
@@ -316,7 +317,7 @@ def select_script_grounded_pair(topic_or_script: str) -> Tuple[str, str]:
 
     # 3. Politics / Election / Netaji / Corporator / Municipal / Government / Scheme
     if any(k in text for k in ["election", "चुनाव", "नेता", "netaji", "पार्षद", "corporator", "party", "पार्टी", "सरकार", "government", "mantri", "मंत्री", "योजना", "scheme", "नगर निगम"]):
-        return DIVERSE_SOCIOECONOMIC_PAIRS[2]  # Ward Corporator Netaji vs Chai Tapri Owner
+        return DIVERSE_SOCIOECONOMIC_PAIRS[2]  # Ward Corporator Netaji vs Common Citizen
 
     # 4. Government Servant / Babu / Clerk / Exam / UPSC / Pension
     if any(k in text for k in ["babu", "बाबू", "clerk", "सरकारी बाबू", "upsc", "pension", "दफ्तर", "सरकारी"]):
@@ -364,7 +365,7 @@ def select_script_grounded_trio(topic_or_script: str) -> Tuple[str, str, str]:
         return RELATIONSHIP_TRIOS[0]  # Family Trio: Father, Mother, Son
     if any(k in text for k in ["office", "colleague", "boss", "manager", "सहकर्मी", "कलीग"]):
         return RELATIONSHIP_TRIOS[1]  # Office Trio: Manager, Colleague 1, Colleague 2
-    if any(k in text for k in ["friend", "dost", "दोस्त", "यार", "tapri"]):
+    if any(k in text for k in ["friend", "dost", "दोस्त", "यार"]):
         return RELATIONSHIP_TRIOS[2]  # Friends Trio: Ananya, Vikram, Rohan
 
     # SIR / Government Planning Office Trio
@@ -375,8 +376,8 @@ def select_script_grounded_trio(topic_or_script: str) -> Tuple[str, str, str]:
             "👩 Priya (Land Planning Assistant - सहायक योजनाकार)"
         )
 
-    if any(k in text for k in ["election", "नेता", "netaji", "पार्षद", "corporator", "party", "सरकार", "chai", "चाय"]):
-        return DIVERSE_SOCIOECONOMIC_TRIOS[0]  # Netaji, Auto Driver, Chai Tapri Elder
+    if any(k in text for k in ["election", "नेता", "netaji", "पार्षद", "corporator", "party", "सरकार"]):
+        return DIVERSE_SOCIOECONOMIC_TRIOS[0]  # Netaji, Auto Driver, Newspaper Vendor Elder
     if any(k in text for k in ["police", "दरोगा", "tech", "corporate", "delivery", "राइडर"]):
         return DIVERSE_SOCIOECONOMIC_TRIOS[1]  # Corporate VP, Delivery Rider, Inspector
     if any(k in text for k in ["babu", "बाबू", "clerk", "सरकारी", "citizen", "पेंशन", "छात्र"]):
@@ -570,8 +571,8 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👔 Manager Mehra (Corporate Boss - मैनेजर)"
         ], character_count)
 
-    # F. Friends / Tapri Buddies / दोस्त
-    if any(k in lower_text for k in ["two friends", "friends", "दो दोस्त", "मित्र", "tapri buddies"]):
+    # F. Friends / दोस्त
+    if any(k in lower_text for k in ["two friends", "friends", "दो दोस्त", "मित्र"]):
         return format_sample_personas([
             "👩 Ananya (College Friend 1 - कॉलेज दोस्त)",
             "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)",
@@ -645,11 +646,11 @@ def get_character_personas(
     import random
     combined = f"{tone} {angle}".lower()
     context_text = f"{topic_or_script} {sample_story or ''}"
-    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic"])
-    is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "रोस्ट", "edgy", "relatable"])
-    is_culture = any(w in combined for w in ["culture", "heritage", "pride", "गौरव", "धरोहर", "traditional", "wisdom"])
+    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic", "emotional"])
+    is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "रोस्ट", "edgy", "relatable", "joke"])
+    is_culture = any(w in combined for w in ["culture", "heritage", "pride", "गौरव", "धरोहर", "traditional", "wisdom", "desi", "swag"])
     style_lower = scene_style.lower()
-    is_argument = style_lower == "argument" or any(w in combined for w in ["argument", "बहस", "तकरार", "clash"])
+    is_argument = style_lower == "argument" or any(w in combined for w in ["argument", "बहस", "तकरार", "clash", "heated"])
 
     if character_count <= 1:
         if is_sad or style_lower == "lament":
@@ -754,46 +755,97 @@ NARRATIVE_MODES = [
 ]
 
 
-def get_dialogue_type_directive(scene_style: str, character_count: int) -> str:
+# Styles where exactly ONE voice may speak (each with a distinct structure).
+_SOLO_STYLES = {"speech", "monologue", "narration", "solo"}
+# All styles with deterministic structural rules (everything except freeform dialogue).
+_STRUCTURAL_STYLES = {"debate", "interview", "argument", "lament"} | _SOLO_STYLES
+
+
+def _clean_speaker_names(speaker_names) -> list:
+    names = [sanitize_persona_name(n or "").strip().upper() for n in (speaker_names or [])]
+    return [n for n in names if n]
+
+
+def get_dialogue_type_directive(scene_style: str, character_count: int, speaker_names=None) -> str:
     """Structural directive forcing the dialogue to honor the user's chosen dialogue type.
 
-    scene_style is the user's input (Dialogue / Argument / Interview / Debate /
-    Speech / Lament / Monologue). The model must shape every beat accordingly."""
+    Eight structurally distinct styles (never merged):
+    - dialogue: reactive ping-pong conversation
+    - argument: heated escalation, direct reactions
+    - speech: ONE public speaker addressing a CROWD/audience (stage, rally, mic)
+    - narration: ONE narrator telling a coherent third-person STORY
+    - interview: fixed host/guest Q&A
+    - debate: opposing positions, alternating rebuttals, final verdict
+    - monologue: ONE speaker addressing the CAMERA/viewer intimately
+    - lament: grief-focused, no jokes or laughter
+    Roles are pinned to actual character names so the model never guesses who does what.
+    """
     style = (scene_style or "dialogue").strip().lower()
+    real = _clean_speaker_names(speaker_names)
+    names = list(real)
+    while len(names) < 2:
+        names.append(f"SPEAKER {len(names) + 1}")
+    A, B = names[0], names[1]
+    solo_note = ""
+    if len(real) < 2:
+        solo_note = (
+            "\n- Only one character is available: voice BOTH sides yourself, "
+            "clearly switching stance from beat to beat."
+        )
+
     if style == "interview":
         return (
-            "DIALOGUE TYPE: INTERVIEW (strict Q&A format)\n"
-            "- One character is the HOST who ONLY asks sharp, short questions.\n"
-            "- The other character is the GUEST who answers using the verified news facts.\n"
-            "- Strictly alternate question \u2192 answer \u2192 question \u2192 answer. "
-            "The host never lectures; the guest never asks questions."
+            "DIALOGUE TYPE: INTERVIEW (strict Q&A)\n"
+            f"- {A} is the HOST: asks ONLY sharp, short questions. Every host line MUST end with '?'.\n"
+            f"- {B} is the GUEST: answers using the verified facts. The guest NEVER asks a question (no '?' in guest lines).\n"
+            "- Beat order is law: odd beats (1, 3, 5) = host question; even beats (2, 4) = guest answer. No exceptions."
+            + solo_note
         )
     if style == "debate":
         return (
             "DIALOGUE TYPE: DEBATE (structured for-vs-against)\n"
-            "- Two opposing sides: one defends the news development, the other attacks it.\n"
-            "- Every beat must contain a claim AND a direct rebuttal of the previous claim.\n"
-            "- No agreement, no neutral filler \u2014 keep the clash alive till the final verdict line."
+            f"- {A} DEFENDS the news development; {B} ATTACKS it. Sides NEVER swap, NEVER agree.\n"
+            "- ONE speaker per beat. Beats strictly alternate: "
+            f"{A}, {B}, {A}, {B}, ...\n"
+            f"- Beat 1 ({A}): bold opening claim built on one verified fact.\n"
+            "- Every later beat must FIRST directly rebut the previous beat's point, THEN add its own claim or fact.\n"
+            "- Final beat: knockout verdict line for your side. No neutral filler, no changing the subject."
+            + solo_note
         )
     if style == "argument":
         return (
             "DIALOGUE TYPE: HEATED ARGUMENT\n"
-            "- Fast, interruptive, high-energy clash with personal stakes.\n"
-            "- Every line must react to and escalate what the previous speaker just said.\n"
-            "- Short punchy lines, overlapping energy \u2014 no calm exposition."
+            f"- {A} and {B} alternate strictly, one speaker per beat.\n"
+            "- Every line must DIRECTLY react to and escalate what the previous speaker just said.\n"
+            "- Short, punchy, interruptive lines with high personal stakes. No calm exposition, no subject changes."
+            + solo_note
         )
-    if style in ("speech", "monologue", "solo"):
+    if style == "speech":
         return (
-            "DIALOGUE TYPE: SOLO SPEECH (single speaker, direct to camera)\n"
-            "- Exactly ONE character speaks directly to the viewer.\n"
-            "- No second voice, no dialogue exchange \u2014 one tight, punchy monologue.\n"
-            "- Rhetorical questions and direct address are encouraged."
+            "DIALOGUE TYPE: SPEECH (one public speaker, live audience)\n"
+            f"- ONLY {A} speaks \u2014 every single beat. This is a PUBLIC ADDRESS: a stage, rally, or gathering with a live crowd.\n"
+            "- Address the CROWD ('doston', 'bhaiyon-behenon'), not the camera. Use rally cadence: slogans, pauses for applause, call-and-response.\n"
+            "- Camera/action may show the cheering crowd; SFX may include applause/cheers. No second speaker, no dialogue exchange."
+        )
+    if style == "narration":
+        return (
+            "DIALOGUE TYPE: NARRATION (one storyteller, third-person story)\n"
+            f"- ONLY {A} speaks \u2014 every single beat. {A} is a NARRATOR telling a coherent STORY about the news, in third person.\n"
+            "- Story arc across beats: setup (what happened) \u2192 rising action (twist/impact) \u2192 payoff (what it means).\n"
+            "- The narrator describes events and people ('phir kya hua...', 'wahan maujood log...'); never breaks into first-person direct address."
+        )
+    if style == "monologue":
+        return (
+            "DIALOGUE TYPE: MONOLOGUE (one speaker, intimate direct-to-camera)\n"
+            f"- ONLY {A} speaks \u2014 every single beat, looking straight into the lens. This is PERSONAL, not a public rally.\n"
+            "- Speak to the viewer as a confidant: open with a hook, use rhetorical questions as setups, land punchy payoffs.\n"
+            "- First-person voice ('main aapko bata raha hoon...'). No crowd, no second voice, nobody answering back."
         )
     if style == "lament":
         return (
-            "DIALOGUE TYPE: LAMENT (somber and grief-stricken)\n"
-            "- Slow, heavy, emotional lines honoring loss.\n"
-            "- Absolutely NO jokes, banter, or punchlines."
+            "DIALOGUE TYPE: LAMENT (somber grief)\n"
+            "- Slow, heavy lines of sorrow and solidarity about the news.\n"
+            "- Absolutely NO jokes, banter, punchlines, or laughter \u2014 not in dialogue, not in SFX, nowhere."
         )
     return (
         "DIALOGUE TYPE: NATURAL CONVERSATION\n"
@@ -802,13 +854,352 @@ def get_dialogue_type_directive(scene_style: str, character_count: int) -> str:
     )
 
 
-_COMEDY_KEYWORDS = ["funny", "humor", "humour", "humorous", "comedy", "comic", "sarcasm", "satire", "satirical", "witty", "fun", "\u0939\u094d\u092f\u0942\u092e\u0930", "\u0926\u0947\u0938\u0940", "\u092e\u091c\u093e\u0915", "\u0939\u0902\u0938\u0940"]
+def _norm_speaker(name) -> str:
+    return re.sub(r"\s*\(.*$", "", name or "").strip().upper()
+
+
+def validate_dialogue_structure(scene_lines, scene_style: str, speaker_names=None) -> list:
+    """Deterministic structural check of parsed beats against the dialogue type.
+
+    Returns human-readable issue strings; empty means compliant. Only checks
+    what is verifiable in code (speaker order, coverage, question marks,
+    solo-voice, lament laughter ban) \u2014 never tone or wit.
+    """
+    style = (scene_style or "dialogue").strip().lower()
+    if style == "dialogue":
+        return []
+    if not scene_lines:
+        return ["no dialogue beats were parsed"]
+    known = [_norm_speaker(n) for n in (speaker_names or [])]
+    known = [k for k in known if k]
+    beats = [(_norm_speaker(s.get("character")), (s.get("dialogue") or "").strip())
+             for s in scene_lines]
+    issues: list = []
+
+    for i, (spk, _dlg) in enumerate(beats):
+        if not spk:
+            issues.append(f"beat {i + 1} has no speaker label")
+        # NOTE: Unknown speaker names are NOT errors — the model is allowed
+        # creative naming. We only require that every beat HAS a speaker.
+        # The actual names are collected and propagated to downstream stages.
+
+    if style in _SOLO_STYLES:
+        uniq = [u for u in dict.fromkeys(b[0] for b in beats) if u]
+        if len(uniq) > 1:
+            issues.append(
+                f"solo style '{style}' uses {len(uniq)} speakers ({', '.join(uniq)}); only ONE voice may speak"
+            )
+        return issues
+
+    if style in ("debate", "interview", "argument", "lament"):
+        if len(beats) > 1 and len(known) >= 2:
+            for i in range(1, len(beats)):
+                if beats[i][0] and beats[i][0] == beats[i - 1][0]:
+                    issues.append(
+                        f"beats {i} and {i + 1} are both spoken by {beats[i][0]}; "
+                        f"'{style}' requires strict speaker alternation"
+                    )
+            if len(beats) >= len(known):
+                # Check speaker COUNT, not specific names — the model may use
+                # creative names. We need the right NUMBER of distinct voices.
+                _uniq_speakers = set(b[0] for b in beats if b[0])
+                if len(_uniq_speakers) < len(known):
+                    issues.append(
+                        f"only {len(_uniq_speakers)} distinct speaker(s) found, "
+                        f"but {len(known)} characters required for '{style}'"
+                    )
+        if style == "interview":
+            for i, (_spk, dlg) in enumerate(beats):
+                is_q = dlg.rstrip().endswith("?")
+                if i % 2 == 0 and not is_q:
+                    issues.append(f"beat {i + 1} must be a HOST question ending with '?'")
+                elif i % 2 == 1 and is_q:
+                    issues.append(f"beat {i + 1} must be a GUEST answer and must not ask a question")
+        if style == "lament":
+            for i, (_spk, dlg) in enumerate(beats):
+                # Latin laughter needs word boundaries; Devanagari vowel signs
+                # (U+093E etc.) are not \w chars so \b fails there — match
+                # the Devanagari runs directly instead.
+                _laugh = re.search(r"(?i)\b(h[ae]){2,}\b", dlg)
+                _laugh_hi = re.search(r"(\u0939\u093e){2,}|\u0939\u0902\u0938\u0940", dlg)
+                if _laugh or _laugh_hi:
+                    issues.append(f"beat {i + 1} contains laughter; lament forbids all jokes and laughter")
+    return issues
+
+
+# ---------------------------------------------------------------------------
+# FORMAL-HINDI DETECTION (deterministic) + ONE corrective model pass.
+# The model is instructed to write common-person Hindi, but it still slips in
+# shuddh/bureaucratic phrasing (e.g. "अधिकार निर्गम" for "rights issue").
+# find_formal_hindi() DETECTS those tokens. It never rewrites anything itself:
+# blind global substitutions are unsafe (e.g. "युद्ध" -> "जंग" can corrupt a
+# proper noun or fixed phrase). Instead, one corrective model pass receives the
+# EXACT failed draft plus the flagged tokens, and rewrites ONLY the flagged
+# lines in common-person Hindi while preserving everything else.
+# ---------------------------------------------------------------------------
+_FORMAL_HINDI_TOKENS = [
+    # Literal shuddh translations of English terms -> what people actually say
+    "अधिकार निर्गम", "प्राथमिकी", "आरोपपत्र", "अनुबंध",
+    # Newsreader passive voice -> active spoken Hindi
+    "जारी किया गया", "घोषणा की गई", "किया गया", "की गई", "किए गए",
+    "दिया गया", "दी गई", "दिए गए", "बताया गया", "बताई गई",
+    "लिया गया", "ली गई", "के द्वारा",
+    # Bureaucratic connectors and connectors
+    "के अंतर्गत", "का निधन हो गया", "के निधन", "हेतु", "एवं",
+    "तथा", "परंतु", "किंतु", "तथापि", "यद्यपि", "अथवा", "अतः",
+    "अतएव", "चूंकि", "इत्यादि", "फलस्वरूप", "परिणामस्वरूप",
+    # Shuddh nouns common people replace with everyday words
+    "दंडात्मक", "अर्थदंड", "धनराशि", "प्रारम्भ", "प्रारंभ",
+    "स्वीकृति", "आवश्यकता", "महत्वपूर्ण", "अत्यंत", "अत्यधिक",
+    "समाचारपत्र", "पुस्तकालय", "दूरभाष", "गृह मंत्रालय",
+    "प्रदान करना", "उपयोग", "अनुमति", "नागरिक", "निवासी",
+    "दुर्घटना", "घटनाक्रम", "विफल", "शीघ्र", "मात्र", "संपूर्ण",
+    "प्रत्येक", "विभिन्न", "समीप", "निकट", "महोदय", "अनुरोध",
+    "निवेदन", "सूचना", "मृतक", "शव", "चिकित्सक", "औषधि",
+    "शल्य", "परीक्षा", "परिणाम", "विद्यालय", "महाविद्यालय",
+    "वेतन", "रोज़गार", "कार्यालय", "सहकर्मी", "ऋण", "आयकर",
+    "अर्थव्यवस्था", "उपभोक्ता", "गुणवत्ता", "विक्रेता",
+]
+
+_HI_LEFT = r"(?:(?<=^)|(?<=[\s\"\'\"\'(\[\-—]))"
+_HI_RIGHT = r"(?=$|[\s\"\'\"\'.,!?।…\[\]\-:;)\-—])"
+
+_formal_hindi_res = None
+
+
+def _formal_hindi_patterns():
+    global _formal_hindi_res
+    if _formal_hindi_res is None:
+        toks = sorted(_FORMAL_HINDI_TOKENS, key=len, reverse=True)
+        _formal_hindi_res = [re.compile(_HI_LEFT + re.escape(t) + _HI_RIGHT) for t in toks]
+    return _formal_hindi_res
+
+
+def find_formal_hindi(text: str) -> list:
+    """Return the distinct formal/bureaucratic Hindi tokens present in text.
+
+    Detection only \u2014 never rewrites. The caller triggers one corrective
+    model pass with the exact failed draft when this returns non-empty.
+    """
+    found = []
+    if not text:
+        return found
+    for rx in _formal_hindi_patterns():
+        for m in rx.finditer(text):
+            if m.group(0) not in found:
+                found.append(m.group(0))
+    return found
+
+
+_COMEDY_KEYWORDS = ["funny", "humor", "humour", "humorous", "comedy", "comic", "sarcasm", "satire", "satirical", "witty", "fun", "joke", "\u0939\u094d\u092f\u0942\u092e\u0930", "\u0926\u0947\u0938\u0940", "\u092e\u091c\u093e\u0915", "\u0939\u0902\u0938\u0940"]
 
 
 def is_comedy_request(tone: str, angle: str) -> bool:
     """True when the requested tone/angle demands comedy — jokes become mandatory, not optional."""
     combined = f"{tone or ''} {angle or ''}".lower()
     return any(w in combined for w in _COMEDY_KEYWORDS)
+
+
+# --- Generic clothing ban list (code-enforced, not just prompt) ---
+_GENERIC_CLOTHING_PHRASES = [
+    "everyday wear",
+    "casual clothes",
+    "t-shirt and jeans",
+    "street casual wear",
+    "everyday street casual",
+    "normal clothes",
+    "regular clothes",
+    "daily wear",
+]
+
+
+def validate_clothing_specificity(characters: list) -> list:
+    """Code-enforced: reject generic clothing descriptions.
+
+    Checks each character's attire field for banned generic phrases.
+    Returns issue strings; empty means all clothing is specific.
+    """
+    issues = []
+    for idx, char in enumerate(characters or []):
+        attire = ""
+        if isinstance(char, dict):
+            attire = str(char.get("attire", "") or char.get("clothing", ""))
+        else:
+            attire = str(getattr(char, "attire", "") or getattr(char, "clothing", ""))
+        attire_lower = attire.lower()
+        for banned in _GENERIC_CLOTHING_PHRASES:
+            if banned in attire_lower:
+                name = char.get("name", f"Character {idx + 1}") if isinstance(char, dict) else getattr(char, "name", f"Character {idx + 1}")
+                issues.append(
+                    f"{name}: clothing is generic ('{banned}'). "
+                    "Must be situation-specific: job + news situation + scene, with colors, fabric, accessories."
+                )
+                break
+    return issues
+
+
+# --- SFX tone mismatch ban (code-enforced) ---
+_COMEDIC_SFX_IN_SERIOUS = [
+    "party horn",
+    "slide whistle",
+    "boing",
+    "womp womp",
+    "sad trombone",
+    "record scratch",
+    "fart",
+]
+_SERIOUS_TONES = ["sad", "sorrow", "grief", "tragic", "heartbreaking", "lament", "serious", "urgent", "breaking", "emotional"]
+
+
+def validate_sfx_tone_match(scene_lines: list, tone: str) -> list:
+    """Code-enforced: SFX must match the tone.
+
+    Comedic SFX in serious/sad tones is a mismatch.
+    Returns issue strings; empty means SFX tone is OK.
+    """
+    tone_lower = (tone or "").lower()
+    is_serious = any(t in tone_lower for t in _SERIOUS_TONES)
+    if not is_serious:
+        return []
+    issues = []
+    for idx, beat in enumerate(scene_lines or []):
+        sfx = ""
+        if isinstance(beat, dict):
+            sfx = str(beat.get("sfx", "") or beat.get("audio", ""))
+        else:
+            sfx = str(getattr(beat, "sfx", "") or getattr(beat, "audio", ""))
+        sfx_lower = sfx.lower()
+        for banned_sfx in _COMEDIC_SFX_IN_SERIOUS:
+            if banned_sfx in sfx_lower:
+                issues.append(
+                    f"Beat {idx + 1}: SFX '{banned_sfx}' mismatches serious tone '{tone}'. "
+                    "Use tone-appropriate SFX: somber ambience, silence, or subtle dramatic beats."
+                )
+                break
+    return issues
+
+
+
+def ai_judge_news_coverage(
+    agent,
+    scene_lines: List[Dict[str, str]],
+    news_topic: str,
+    hook: str,
+    engine_mode: str = "first_local_then_agy",
+) -> Tuple[bool, str]:
+    """Ask the AI directly: does this dialogue state the news?
+
+    This is the SOLE news-coverage validator (FR-16.1). There is NO
+    token/regex matching: the judge reads ONLY the short news title /
+    basic news content plus the dialogue, and verdicts whether a viewer
+    can understand what happened in the news. The full verified-facts
+    list is deliberately NOT passed here — facts belong to the writer's
+    prompt and retry feedback, not to this basic-content check.
+
+    Returns (verdict_ok, reason). The REASON is surfaced in the 3.2.2 UI
+    output so the decision is verifiable, never a hidden black box.
+
+    If the judge engine errors, returns (False, "\u26a0\ufe0f ...") — a
+    visible warning carrying the error detail. It never silently passes
+    and never silently fails: the check reports the warning, and the
+    user decides whether to retry or accept via the normal retry/failure
+    UI.
+    """
+    dialogue_text = "\n".join(
+        f"Beat {i+1} ({sl.get('character', '?')}): {sl.get('dialogue', '')}"
+        for i, sl in enumerate(scene_lines or [])
+    )
+    prompt = (
+        "You are a news coverage validator. Determine if the dialogue below clearly communicates the news.\n\n"
+        f"NEWS: {news_topic}\n"
+        f"ANGLE: {hook}\n\n"
+        f"DIALOGUE:\n{dialogue_text}\n\n"
+        "QUESTION: Would a viewer who ONLY hears this dialogue (no visuals, no captions) understand WHAT news this is about — "
+        "the key event and what happened?\n\n"
+        "Consider: short-form mentions (e.g. 'Ola' for 'Ola Electric'), paraphrases, and Hindi transliterations all COUNT as stating the news. "
+        "Generic filler ('\u092f\u0947 \u092c\u0921\u093c\u0940 \u0916\u092c\u0930 \u0939\u0948', '\u0939\u0932\u091a\u0932 \u0939\u094b \u0930\u0939\u0940 \u0939\u0948') with no specific event does NOT count.\n\n"
+        "Answer in exactly this format:\n"
+        "VERDICT: YES or NO\n"
+        "REASON: one sentence explaining why"
+    )
+    try:
+        response = agent.execute(prompt, engine_mode=engine_mode)
+        # Parse verdict: look for "VERDICT: YES" or "VERDICT: NO"
+        verdict_match = re.search(r"VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
+        reason_match = re.search(r"REASON:\s*(.+)", response, re.IGNORECASE)
+        reason = reason_match.group(1).strip() if reason_match else "No reason given by the judge"
+        if verdict_match:
+            is_ok = verdict_match.group(1).upper() == "YES"
+            return is_ok, f"AI judge: VERDICT={'YES' if is_ok else 'NO'} \u2014 {reason}"
+        # Fallback: check if response starts with YES/affirmative
+        first_line = response.strip().split("\n")[0].upper()
+        fallback_ok = "YES" in first_line and "NO" not in first_line.split("YES")[0]
+        return fallback_ok, f"AI judge (free-form response, no VERDICT line): {reason}"
+    except Exception as e:
+        # Engine error: visible warning, never a silent pass or silent fail.
+        # The calling check fails with this reason so the user sees exactly
+        # what happened and decides whether to retry or accept.
+        return False, (
+            f"\u26a0\ufe0f AI news-coverage judge engine error ({type(e).__name__}: {e}). "
+            "Coverage could not be verified \u2014 retry or accept manually."
+        )
+
+
+def ai_judge_tone_compliance(
+    agent,
+    scene_lines: List[Dict[str, str]],
+    tone: str,
+    angle: str,
+    engine_mode: str = "first_local_then_agy",
+) -> Tuple[bool, str]:
+    """Ask the AI directly: does this dialogue maintain the required tone?
+
+    Keyword matching for tone (funny/sad/etc.) is brittle — the AI judge
+    understands humor, emotion, and tone semantically.
+
+    Returns (is_compliant, feedback). If not compliant, feedback describes
+    the specific issue so it can be fed back to the AI for regeneration.
+    """
+    dialogue_text = "\n".join(
+        f"Beat {i+1} ({sl.get('character', '?')}): {sl.get('dialogue', '')}"
+        for i, sl in enumerate(scene_lines or [])
+    )
+    total_beats = len(scene_lines or [])
+    required_beats = (total_beats * 7 + 9) // 10  # 70% rounded up
+
+    prompt = (
+        "You are a tone compliance validator for short Hindi comedy/drama reels.\n\n"
+        f"REQUIRED TONE: {tone}\n"
+        f"ANGLE: {angle}\n"
+        f"TOTAL BEATS: {total_beats} (at least {required_beats} beats must clearly embody the tone)\n\n"
+        f"DIALOGUE:\n{dialogue_text}\n\n"
+        "QUESTION: Does this dialogue maintain the required tone?\n\n"
+        "For FUNNY/HUMOROUS tone: at least 70% of beats must have genuine humor — "
+        "a real setup and punchline, witty observations, funny exaggerations, relatable comedy. "
+        "Mild amusement or neutral fact-delivery does NOT count as funny.\n"
+        "For SAD/LAMENT/SORROW tone: at least 70% of beats must be CLEARLY emotional, "
+        "grief-stricken, sorrowful, or heartbreaking — not just neutral or informational. "
+        "A beat that is merely 'hopeful' or 'informational' does NOT count as sad. "
+        "ZERO jokes, ZERO laughter, ZERO comedic beats. Somber throughout.\n"
+        "For other tones: the emotional quality must be present in most beats, never contradicted.\n\n"
+        "Answer in exactly this format:\n"
+        "VERDICT: YES or NO\n"
+        "FUNNY_BEATS: <count> out of <total> (for funny tone; else N/A)\n"
+        "ISSUE: <one sentence describing the specific problem, or 'None' if compliant>"
+    )
+    try:
+        response = agent.execute(prompt, engine_mode=engine_mode)
+        verdict_match = re.search(r"VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
+        is_ok = verdict_match.group(1).upper() == "YES" if verdict_match else False
+        issue_match = re.search(r"ISSUE:\s*(.+)", response, re.IGNORECASE)
+        issue = issue_match.group(1).strip() if issue_match else "Tone not maintained"
+        if is_ok:
+            return True, ""
+        return False, issue
+    except Exception:
+        # If AI judge fails, fall back to assuming non-compliance so the
+        # corrective pass can attempt a fix rather than shipping silently.
+        return False, "Tone compliance could not be verified"
 
 
 def get_role_identity(scene_style: str, tone: str, angle: str) -> str:
@@ -825,7 +1216,7 @@ def get_role_identity(scene_style: str, tone: str, angle: str) -> str:
 def get_creative_guidelines(scene_style: str, character_count: int, tone: str, angle: str) -> str:
     """Generate explicit directives to ensure AI respects Angle (creative situation), Tone (jokes/emotions), and Style."""
     combined = f"{tone} {angle}".lower()
-    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic"])
+    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic", "emotional"])
 
     # Angle Guidance
     angle_guidance = (
@@ -867,12 +1258,12 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
             f"🔥 TONE DIRECTIVE ({tone}):\n"
             f"- High-voltage excitement! Deliver shock-value hooks, explosive energy, and dramatic pacing."
         )
-    elif any(w in combined for w in ["culture", "heritage", "pride", "गौरव"]):
+    elif any(w in combined for w in ["culture", "heritage", "pride", "desi", "swag", "गौरव"]):
         tone_guidance = (
             f"🪔 TONE DIRECTIVE ({tone}):\n"
             f"- Celebrate timeless Indian heritage, deep cultural pride, and respectful desi swag with authentic idioms."
         )
-    elif any(w in combined for w in ["argument", "बहस", "तकरार", "clash"]):
+    elif any(w in combined for w in ["argument", "बहस", "तकरार", "clash", "heated"]):
         tone_guidance = (
             f"⚔️ TONE DIRECTIVE ({tone}):\n"
             f"- High-voltage heated argument & verbal clash! Characters passionately disagree, trade sharp witty counter-punches,\n"
@@ -914,10 +1305,17 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
             "📢 SCENE STYLE DIRECTIVE: SPEECH:\n"
             "- A charismatic public address delivered directly to an audience with rhetorical questions and impact."
         )
+    elif style_lower == "monologue":
+        style_guidance = (
+            "🎙️ SCENE STYLE DIRECTIVE: MONOLOGUE:\n"
+            "- Intimate direct-to-camera address: ONE speaker talking to the viewer as a confidant, "
+            "first-person voice, hook → build → payoff."
+        )
     else:
         style_guidance = (
-            "🎙️ SCENE STYLE DIRECTIVE: MONOLOGUE / NARRATION:\n"
-            "- Direct-to-camera storytelling with punchy, energetic delivery addressing the viewer directly."
+            "📖 SCENE STYLE DIRECTIVE: NARRATION:\n"
+            "- ONE narrator telling a coherent third-person STORY about the news: setup → twist → payoff. "
+            "The narrator describes events and people; never breaks into first-person direct address."
         )
 
     insta_story_guidance = (
@@ -952,6 +1350,82 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
     return f"{angle_guidance}\n\n{tone_guidance}\n\n{style_guidance}\n\n{insta_story_guidance}\n\n{diversity_guidance}\n\n{no_commenting_rule}\n\n{single_video_flow_rule}"
 
 
+def run_validation_checks_fail_fast(check_specs, stage_prefix, val_num, emit=None):
+    """Generic fail-fast ordered validation runner.
+
+    check_specs: list of dicts, each with:
+        "sub": str          - sub-check number, e.g. "1" -> key "3.2.1"
+        "name": str         - display name, e.g. "Structure check"
+        "input": str        - input description shown in the UI
+        "start_detail": str - optional live detail emitted on start
+        "run": callable     - () -> {"problems": [str], "pass_output": str,
+                                     "feedback": str}
+    stage_prefix: e.g. "3" -> check keys "3.2.1".."3.2.4".
+    val_num: validation step number, e.g. 2.
+    emit: optional callable(stage, name, phase, **details) for live progress.
+
+    Checks run in list order -- the caller orders them by failure likelihood,
+    most failure-prone first, so fail-fast catches the likeliest problem
+    immediately. On the first failure the remaining checks are NOT executed:
+    they are recorded as skipped ("passed": None, "skipped": True,
+    "skipped_due_to": "<stage key> <name>") and the caller should proceed
+    directly to retry. Re-validation then runs all checks fresh.
+
+    Returns (sub_checks, feedback_parts): recorded check dicts
+    (passed True / False / None for skipped) and retry feedback for the
+    FIRST failure only.
+    """
+    sub_checks = []
+    feedback_parts = []
+    failed_ref = None
+    for spec in check_specs:
+        stage_key = f"{stage_prefix}.{val_num}.{spec['sub']}"
+        name = spec["name"]
+        if failed_ref is not None:
+            # Fail-fast: do not execute -- record explicitly as skipped.
+            skip_note = f"Skipped ({failed_ref} failed)"
+            sub_checks.append({
+                "stage": stage_key,
+                "name": name,
+                "input": spec.get("input", ""),
+                "output": skip_note,
+                "passed": None,
+                "skipped": True,
+                "skipped_due_to": failed_ref,
+            })
+            if emit is not None:
+                emit(stage_key, name, "complete", status="skipped",
+                     detail=f"{failed_ref} failed",
+                     input=spec.get("input", "")[:300],
+                     output=skip_note)
+            continue
+        if emit is not None:
+            _start_kw = {"detail": spec["start_detail"]} if spec.get("start_detail") else {}
+            emit(stage_key, name, "start", **_start_kw)
+        result = spec["run"]() or {}
+        problems = result.get("problems") or []
+        passed = not problems
+        output = result.get("pass_output", "Passed") if passed else "; ".join(problems)
+        sub_checks.append({
+            "stage": stage_key,
+            "name": name,
+            "input": spec.get("input", ""),
+            "output": output,
+            "passed": passed,
+        })
+        if emit is not None:
+            emit(stage_key, name, "complete",
+                 status="pass" if passed else "fail",
+                 detail=output[:200],
+                 input=spec.get("input", "")[:300],
+                 output=output[:300])
+        if not passed:
+            failed_ref = f"{stage_key} {name}"
+            if result.get("feedback"):
+                feedback_parts.append(result["feedback"])
+    return sub_checks, feedback_parts
+
+
 class DialogueNarrationAgent(BaseAgent):
     def __init__(self):
         super().__init__(
@@ -961,6 +1435,50 @@ class DialogueNarrationAgent(BaseAgent):
             instructions=DIALOGUE_INSTRUCTIONS,
             prompt_file="dialogue_writer/write_dialogue.md",
         )
+
+    def _enrich_new_speakers(self, new_names, narrations, news_input):
+        """Generate character profiles for speaker names the model invented.
+        Uses deterministic defaults (no blocking AI calls) to avoid hangs.
+        Downstream stages get complete profiles immediately."""
+        if not hasattr(self, '_enriched_profiles'):
+            self._enriched_profiles = {}
+        for _name in new_names:
+            # Use the name as-is with sensible defaults — no AI call, no hang risk.
+            self._enriched_profiles[_name] = {
+                "name": _name,
+                "role_or_job": "Key Character / Speaker",
+                "attire": "Authentic everyday attire",
+                "emotional_stance": "Engaged & authentic",
+            }
+
+    def _emit_substep(self, on_substep, substep, name, phase, **details):
+        """Emit a live Stage 3 substep event (no-op when on_substep is None)."""
+        if on_substep is None:
+            return
+        try:
+            on_substep({"substep": substep, "name": name, "phase": phase,
+                        "stage": 3, **details})
+        except Exception:
+            pass
+
+    def _record_stage_step(self, stage, name, input_text, output_text, passed, sub_checks=None):
+        """Record a Stage 3 step with linear numbering (3.1, 3.2, 3.3...).
+
+        - 3.1, 3.3, 3.5... = generation steps (odd numbers)
+        - 3.2, 3.4, 3.6... = validation steps (even numbers)
+        - Validation steps contain sub_checks: 3.2.1, 3.2.2, 3.2.3, 3.2.4
+        Each step records its input and output for UI display.
+        """
+        if not hasattr(self, 'last_validation_steps') or self.last_validation_steps is None:
+            self.last_validation_steps = []
+        self.last_validation_steps.append({
+            "stage": stage,
+            "name": name,
+            "input": input_text or "",
+            "output": output_text or "",
+            "passed": passed,
+            "sub_checks": sub_checks or [],
+        })
 
     def write_dialogue(
         self,
@@ -1005,12 +1523,21 @@ class DialogueNarrationAgent(BaseAgent):
             raw_output = self.execute(prompt, engine_mode=engine_mode)
             cleaned = clean_hindi_dialogue(raw_output)
             final_text = smart_trim_dialogue(cleaned, budget["max_words"], budget["recommended_words"], cta)
-            return final_text or f"{hook} {news_input}. {cta}"
+            if not final_text:
+                raise ModelGenerationError(
+                    f"Stage 3 dialogue generation failed: model returned empty output. "
+                    f"Raw output snippet: {(raw_output or '')[:500]!r}",
+                    partial_output=raw_output or "",
+                )
+            return final_text
         except ModelGenerationError:
             raise
-        except Exception:
-            fallback = f"{hook} {news_input}. {cta}"
-            return smart_trim_dialogue(fallback, budget["max_words"], budget["recommended_words"], cta)
+        except Exception as e:
+            # Fail loudly: never silently fall back to hook+topic concatenation.
+            raise ModelGenerationError(
+                f"Stage 3 dialogue generation failed: {type(e).__name__}: {e}",
+                partial_output="",
+            )
 
     def write_dialogues_batch(
         self,
@@ -1031,8 +1558,25 @@ class DialogueNarrationAgent(BaseAgent):
         finalized_characters: Optional[List[CharacterProfile]] = None,
         finalized_scenes: Optional[List[SceneSettingOption]] = None,
         story_steps: Optional[List[StoryBeatStep]] = None,
+        _retry_round: int = 0,
+        _max_retries: int = 3,
+        attempt_history: Optional[List[str]] = None,
+        on_substep=None,
     ) -> List[ScriptDialogue]:
-        """Craft spoken Hindi dialogues for all items scene-by-scene respecting character count, style, tone, and angle."""
+        """Craft spoken Hindi dialogues for all items scene-by-scene respecting character count, style, tone, and angle.
+
+        Linear retry flow with three-level numbering:
+        - 3.1, 3.3, 3.5... = generation steps (odd)
+        - 3.2, 3.4, 3.6... = validation steps (even), each with 3.x.1-3.x.4 sub-checks
+        """
+        # Retry tracking: attempt_history collects every attempt's raw_output.
+        # last_validation_steps collects linear 3.1/3.2/3.3... steps for UI.
+        if attempt_history is None:
+            attempt_history = []
+            # Outermost call: reset linear step tracking.
+            self.last_validation_steps = []
+        self.last_attempt_history = list(attempt_history)
+        self.last_retry_count = _retry_round
         budget = get_duration_budget(duration_sec)
         guidance = get_sentence_guidance(duration_sec, budget["recommended_words"], budget["max_words"])
 
@@ -1112,9 +1656,11 @@ class DialogueNarrationAgent(BaseAgent):
         locs_text = ", ".join(verification.key_locations) if (verification and verification.key_locations) else ""
         conflict_text = verification.core_conflict_or_irony if (verification and verification.core_conflict_or_irony) else ""
 
-        # --- Real Stage 2 connection: finalized scenes drive the dialogue setting ---
-        # StoryBeatStep carries no location info, so without this the dialogue
-        # setting falls back to raw verification locations and ignores Stage 2.
+        # --- New pipeline order: scenes are DERIVED from the dialogue afterwards ---
+        # When finalized_scenes is provided (legacy path) the dialogue setting uses
+        # them; when it is None (current pipeline) no locations are fixed yet and
+        # the model is instructed to paint concrete, filmable settings in every
+        # beat so the scene-derivation stage has real material to extract.
         beat_scene_settings: List[Dict[str, str]] = []
         if finalized_scenes:
             for sc in finalized_scenes:
@@ -1135,10 +1681,23 @@ class DialogueNarrationAgent(BaseAgent):
             ])
             setting_location_text = "; ".join(s["location"] for s in beat_scene_settings)
         else:
-            scene_setting_lines = f"- Beat setting: {setting_location_text}"
+            scene_setting_lines = (
+                "- SCENE DERIVATION NOTICE: No shoot locations are fixed yet. A scene designer "
+                "will build the shoot locations FROM your dialogue beats after this step. Therefore "
+                "every beat's Camera Focus & Action line MUST paint a CONCRETE, specific, filmable "
+                "location (a particular shop, office cabin, street corner, home room - never vague like "
+                "'the setting') with visible props and character actions. Vague settings will be "
+                "flagged as errors in validation."
+            )
 
         # --- Respect the user's chosen dialogue type (scene_style) structurally ---
-        dialogue_type_directive = get_dialogue_type_directive(scene_style, character_count)
+        # Extract speaker names from personas so the directive pins roles to real names.
+        _speaker_names = []
+        for _p in personas:
+            _m = re.match(r"\s*([^(\n]+)", _p or "")
+            if _m and _m.group(1).strip():
+                _speaker_names.append(_m.group(1).strip())
+        dialogue_type_directive = get_dialogue_type_directive(scene_style, character_count, _speaker_names)
 
         # --- Role priming: funny screenwriter identity when comedy is requested ---
         _eff_angle = (items[0].get("angle") if items else "") or preferred_angle or ""
@@ -1262,7 +1821,7 @@ class DialogueNarrationAgent(BaseAgent):
             for p in personas[:character_count]
         )
         sample_scenes = (
-            "[Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]\n\n"
+            "[Format Requirement: All scene descriptions in English, Dialogues strictly in Hindi]\n\n"
             "SCENE DETAIL:\n"
             f"\u26ac [{setting_location_text} \u2014 vivid English description of the location, vibe and energy]\n\n"
             "CHARACTERS & CLOTHING:\n"
@@ -1356,13 +1915,29 @@ class DialogueNarrationAgent(BaseAgent):
                           else "Improve character interconnectedness and reactive flow."),
             )
 
+        _gen_num_early = 2 * _retry_round + 1
+        _gen_name_early = "Dialogue generation" if _retry_round == 0 else f"Retry generation {_retry_round}"
+        self._emit_substep(on_substep, f"3.{_gen_num_early}", _gen_name_early, "start",
+                           detail=f"Writing dialogue (attempt {_retry_round + 1})",
+                           input=f"News: {(news_input or '')[:150]}\nVibe: {tone} | Style: {scene_style}")
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
         except ModelGenerationError:
             raise
         except Exception as e:
-            logger.warning(f"Dialogue generation execution failed ({e}), initiating intelligent Hindi fallback")
-            raw_output = ""
+            # Fail loudly: never substitute silent synthetic output for a
+            # model failure. The stage reports the error and the UI keeps
+            # the previous stages' output visible for retry.
+            raise ModelGenerationError(
+                f"Stage 3 dialogue generation failed (engine={engine_mode}): "
+                f"{type(e).__name__}: {e}"
+            ) from e
+
+        # Record this attempt's raw output. Recursive retry calls re-enter this
+        # function, so attempt_history accumulates [attempt1, attempt2, ...].
+        if raw_output:
+            attempt_history.append(raw_output)
+        self.last_attempt_history = list(attempt_history)
 
         parsed_map = {}
         # Parse blocks by SCRIPT header (supporting markdown like **SCRIPT 1:**, ### SCRIPT 1, etc.)
@@ -1503,73 +2078,344 @@ class DialogueNarrationAgent(BaseAgent):
                             "dialogue": line_text,
                         })
 
+                # Code-enforced: never allow 0-beat output to slip through.
+                # If scene_lines is empty, fail loudly immediately.
+                if not scene_lines:
+                    _snippet = (raw_output or "")[:500]
+                    raise ModelGenerationError(
+                        f"Stage 3 dialogue generation failed: 0 beats parsed for "
+                        f"Script {i + 1} of {len(items)} (style={scene_style}). "
+                        f"Raw output snippet: {_snippet!r}",
+                        partial_output=raw_output or "",
+                    )
                 narrations.append(ScriptDialogue(final_text, scene_lines=scene_lines))
             else:
-                # Intelligent Hindi fallback: NEVER use raw English headlines as spoken dialogue!
-                fact_detail = ""
-                if verification and verification.verified_facts:
-                    fact_detail = verification.verified_facts[0]
-                elif verification and verification.verification_summary:
-                    fact_detail = verification.verification_summary
+                # Fail loudly: the model returned no usable dialogue for this
+                # script. Never substitute silent synthetic scenes — the stage
+                # reports the error and the UI keeps previous stages visible.
+                _snippet = (raw_output or "")[:500]
+                raise ModelGenerationError(
+                    f"Stage 3 dialogue generation failed: model returned no usable "
+                    f"dialogue for Script {i + 1} of {len(items)} (style={scene_style}). "
+                    f"Raw output snippet: {_snippet!r}",
+                    partial_output=raw_output or "",
+                )
 
-                # Construct authentic, meaningful Hindi dialogue lines aligned with narrative mode.
-                # Never let raw hook template text (emojis, "bada update" boilerplate) leak into spoken lines.
-                clean_hook = clean_hook_for_dialogue(it.get("hook") or "") or "अरे सुनो भाई! आज की सबसे बड़ी खबर सामने आ गई है।"
+        # === STAGE 3.x GENERATION STEP (3.1, 3.3, 3.5... odd numbers) ===
+        # Record what went in and what came out for UI display.
+        _gen_num = 2 * _retry_round + 1
+        _gen_name = "Dialogue generation" if _retry_round == 0 else f"Retry generation {_retry_round}"
+        _gen_input = (
+            f"News: {(news_input or '')[:150]}\n"
+            f"Vibe: {tone} | Angle: {preferred_angle or '—'}\n"
+            f"Style: {scene_style} | Characters: {character_count} | Duration: {duration_sec}s\n"
+            f"Speakers: {', '.join(_speaker_names) if _speaker_names else 'N/A'}"
+        )
+        if _retry_round > 0 and feedback:
+            _gen_input += f"\n\nRetry feedback applied:\n{(feedback or '')[:500]}"
+        self._record_stage_step(
+            stage=f"3.{_gen_num}",
+            name=_gen_name,
+            input_text=_gen_input,
+            output_text=raw_output or "",
+            passed=True,
+        )
+        self._emit_substep(on_substep, f"3.{_gen_num}", _gen_name, "complete",
+                           status="pass",
+                           detail=f"Draft {_retry_round + 1} written ({len(raw_output or '')} chars)",
+                           input=_gen_input[:400],
+                           output=(raw_output or "")[:600])
 
-                if n_mode == "fun_first":
-                    beat_pool = [
-                        "अरे भाई सुनो, आज तो गजब ही ड्रामा हो गया, यकीन नहीं करोगे!",
-                        f"अरे ड्रामा छोड़ो, असली बात तो ये है कि {fact_detail or 'इस मामले का सबसे बड़ा सच अब सबके सामने आ चुका है।'}",
-                        "कागजातों और सबूतों से साफ है कि कहानी में जो दिख रहा है, बात उससे कहीं ज्यादा गहरी है।",
-                        "सड़कों पर लोगों और सोशल मीडिया पर अब इसी बात की जोरदार चर्चा चल रही है।",
-                        "अब देखना ये होगा कि इस पूरे सियासी घटनाक्रम का क्या मजेदार असर होता है!",
-                    ]
-                elif n_mode == "mid_conversation":
-                    beat_pool = [
-                        "रोज़-रोज़ की वही भागदौड़ और वही झंझट, इंसान करे तो क्या करे!",
-                        f"अरे रुको! ज़रा फोन पर ये खबर तो देखो—{clean_hook}",
-                        f"इस मामले में सबसे बड़ा मोड़ ये है कि {fact_detail or 'सारी सच्चाई अब सबके सामने खुल चुकी है।'}",
-                        "सड़कों से लेकर सोशल मीडिया तक अब इसी का शोर है!",
-                        "लो कर लो बात! अब तो पूरा खेल ही पलट गया!",
-                    ]
-                elif n_mode == "curiosity_first":
-                    beat_pool = [
-                        "भाई ज़रा इधर देखो, आज अचानक हर तरफ इतनी हलचल क्यों मची हुई है?",
-                        f"तुम्हें नहीं पता? सबसे बड़ी वजह ये है कि {clean_hook}",
-                        f"असली पेंच ये है कि {fact_detail or 'सबूतों के बाद अब प्रशासन में हड़कंप मच गया है।'}",
-                        "लोग हैरान हैं कि आखिर ये सब इतनी जल्दी कैसे हो गया!",
-                        "अब सबकी नज़र इस पर है कि इस खबर का असली असर किस पर पड़ेगा!",
-                    ]
-                else:  # news_first
-                    beat_pool = [
-                        clean_hook,
-                        "इस पूरे मामले में सबसे बड़ा मोड़ ये आया है कि सच्चाई अब सबके सामने खुल चुकी है।",
-                        f"कागजातों और सबूतों से साफ है कि {fact_detail or 'बात उससे कहीं ज्यादा गहरी है।'}",
-                        "सड़कों पर लोगों और सोशल मीडिया पर अब इसी बात की जोरदार चर्चा चल रही है।",
-                        "अब देखना ये होगा कि इस पूरे घटनाक्रम का क्या नतीजा निकलता है!",
-                    ]
+        # === STAGE 3.x VALIDATION STEP (3.2, 3.4, 3.6... even numbers) ===
+        # FAIL-FAST, ordered by failure likelihood (most failure-prone first):
+        #   3.x.1 Structure -> 3.x.2 News coverage -> 3.x.3 Tone -> 3.x.4 Language
+        # The first failure stops the remaining checks: they are recorded as
+        # "Skipped (<failed check> failed)" -- never executed -- and the
+        # single retry fixes only the first failure. Re-validation then runs
+        # all checks fresh. This saves time and model calls (news/tone use
+        # the AI judge). One combined retry after the first failure, not one
+        # retry per validation type.
+        _val_num = 2 * _retry_round + 2
+        _val_name = "Validation checks" if _retry_round == 0 else f"Re-validate {_retry_round}"
+        self._emit_substep(on_substep, f"3.{_val_num}", _val_name, "start",
+                           detail=f"Running checks on draft {_retry_round + 1} (fail-fast: Structure, News, Tone, Language)")
 
-                fallback_scenes = []
-                if actual_scenes == 1:
-                    fallback_scenes.append({"scene_number": 1, "character": personas[0], "dialogue": clean_hook})
-                else:
-                    for s_i in range(actual_scenes):
-                        c_p = personas[s_i % len(personas)]
-                        if s_i == 0:
-                            d_p = beat_pool[0]
-                        elif s_i == actual_scenes - 1:
-                            d_p = beat_pool[4]
-                        elif s_i == 1:
-                            d_p = beat_pool[1]
-                        elif s_i == 2:
-                            d_p = beat_pool[2]
-                        else:
-                            d_p = beat_pool[3]
-                        fallback_scenes.append({"scene_number": s_i + 1, "character": c_p, "dialogue": d_p})
+        # --- Check runners: each returns
+        #     {"problems": [...], "pass_output": str, "feedback": str} ---
+        def _check_structure():
+            _problems = []
+            if raw_output and raw_output.strip():
+                for _idx, _nar in enumerate(narrations):
+                    _sl = getattr(_nar, "scene_lines", None) or []
+                    _iss = validate_dialogue_structure(_sl, scene_style, _speaker_names)
+                    if _iss:
+                        _problems.append(f"Script {_idx + 1}: " + "; ".join(_iss))
+            _fb = ""
+            if _problems:
+                _fb = (
+                    "STRUCTURE FIX (HIGHEST PRIORITY — the draft below violates the chosen dialogue type):\n"
+                    + "\n".join(f"- {p}" for p in _problems)
+                    + "\nRepair ONLY the structure so every beat obeys the dialogue type below. "
+                      "Keep the same facts, jokes, characters, and word budget; change nothing else.\n"
+                    + get_dialogue_type_directive(scene_style, character_count, _speaker_names)
+                )
+            return {"problems": _problems, "pass_output": "Passed", "feedback": _fb}
 
-                combined_fallback = " ".join(s["dialogue"] for s in fallback_scenes)
-                trimmed_default = smart_trim_dialogue(combined_fallback, budget["max_words"], budget["recommended_words"], it["cta"])
-                narrations.append(ScriptDialogue(trimmed_default, scene_lines=fallback_scenes))
+        def _check_language():
+            # Detection is deterministic (find_formal_hindi). Blind global
+            # substitutions are banned: they corrupt proper nouns and fixed phrases.
+            _problems = []
+            if raw_output and raw_output.strip():
+                for _idx, _nar in enumerate(narrations):
+                    _text = str(_nar)
+                    _found = find_formal_hindi(_text)
+                    if _found:
+                        _problems.append(f"Script {_idx + 1} flagged formal tokens: {', '.join(_found)}")
+            _fb = ""
+            if _problems:
+                _fb = (
+                    "COMMON-HINDI FIX (HIGHEST PRIORITY — some spoken lines use formal/bureaucratic Hindi):\n"
+                    + "\n".join(f"- {p}" for p in _problems)
+                    + "\nRewrite ONLY the lines containing those flagged words, replacing them with the "
+                      "words a common person would actually say. "
+                      "Keep every other line, fact, joke, character, and the word budget EXACTLY as-is; "
+                      "change nothing except the flagged formal words."
+                )
+            return {"problems": _problems, "pass_output": "Passed - common Hindi", "feedback": _fb}
+
+        def _check_news():
+            # News coverage is validated by the AI judge ONLY (FR-16.1) — no
+            # token/regex matching. The judge sees ONLY the short news title /
+            # basic news content + the dialogue (never the full facts list).
+            # Its VERDICT + REASON are surfaced in the 3.2.2 output so the
+            # decision is verifiable, never a hidden black box.
+            _problems = []
+            _judge_notes = []
+            if raw_output and raw_output.strip():
+                for _idx, _nar in enumerate(narrations):
+                    _sl = getattr(_nar, "scene_lines", None) or []
+                    _it = items[_idx] if _idx < len(items) else {}
+                    _ith = (_it.get("hook") if isinstance(_it, dict) else "") or ""
+                    _hook = clean_hook_for_dialogue(_ith)
+                    _ok, _reason = ai_judge_news_coverage(
+                        self, _sl, news_input, _hook,
+                        engine_mode=engine_mode,
+                    )
+                    _judge_notes.append(f"Script {_idx + 1}: {_reason}")
+                    if not _ok:
+                        _problems.append(f"Script {_idx + 1}: {_reason}")
+            _pass_output = "Passed - news clearly stated"
+            if _judge_notes:
+                _pass_output += ". " + " | ".join(_judge_notes)
+            _fb = ""
+            if _problems:
+                _must_state: list = []
+                for _it2 in (items or []):
+                    _h2 = clean_hook_for_dialogue((_it2.get("hook") if isinstance(_it2, dict) else "") or "")
+                    if _h2 and _h2 not in _must_state:
+                        _must_state.append(_h2)
+                _vvf = getattr(verification, "verified_facts", None) if verification else None
+                for _f in (_vvf or [])[:2]:
+                    _fs = str(_f or "").strip()
+                    if _fs and _fs not in _must_state:
+                        _must_state.append(_fs)
+                _facts_block = ("\nThe verified facts that MUST be understandable from the dialogue:\n"
+                                + "\n".join(f"- {_f}" for _f in _must_state)) if _must_state else ""
+                _fb = (
+                    "NEWS COVERAGE FIX (HIGHEST PRIORITY — the draft below never states the news):\n"
+                    + "\n".join(f"- {p}" for p in _problems)
+                    + "\nThe viewer must understand WHAT happened from the dialogue alone. "
+                      "Rewrite so the beats state these verified facts in the characters' own words. "
+                      "State the core what-happened in the FIRST beat."
+                    + _facts_block
+                    + "\nIMPORTANT: Do NOT write a new script from scratch. Take the previous draft and "
+                      "UPDATE ONLY the beats that fail to state the news. Keep what works, fix what doesn't."
+                )
+            return {"problems": _problems, "pass_output": _pass_output, "feedback": _fb}
+
+        def _check_tone():
+            # AI judge verifies the tone is maintained (keyword matching is brittle).
+            _problems = []
+            if raw_output and raw_output.strip():
+                for _idx, _nar in enumerate(narrations):
+                    _sl = getattr(_nar, "scene_lines", None) or []
+                    _t_ok, _t_issue = ai_judge_tone_compliance(
+                        self, _sl, tone, preferred_angle,
+                        engine_mode=engine_mode,
+                    )
+                    if not _t_ok:
+                        _problems.append(f"Script {_idx + 1}: {_t_issue}")
+            _fb = ""
+            if _problems:
+                _fb = (
+                    "TONE CORRECTION REQUIRED:\n"
+                    + "\n".join(f"- {p}" for p in _problems)
+                    + f"\n\nThe required tone is '{tone}'. "
+                      f"At least 70% of beats must clearly embody this tone. "
+                      "\nIMPORTANT: Do NOT write a new script from scratch. Take the previous draft and "
+                      "UPDATE ONLY the beats that failed. Keep what works, fix what doesn't."
+                )
+            return {"problems": _problems, "pass_output": "Passed - tone maintained", "feedback": _fb}
+
+        # Fail-fast spec list: ORDER IS THE CONTRACT -- Structure, News, Tone,
+        # Language (most failure-prone first). The helper stops at the first
+        # failure; later checks are recorded as skipped, never executed.
+        _news_input_desc = f"News: {(news_input or '')[:120]} (judge sees title + dialogue only, FR-16.1)"
+        _check_specs = [
+            {"sub": "1", "name": "Structure check", "run": _check_structure,
+             "input": f"Dialogue type: {scene_style} | Speakers: {', '.join(_speaker_names) if _speaker_names else 'N/A'}"},
+            {"sub": "2", "name": "News coverage check", "run": _check_news,
+             "input": _news_input_desc},
+            {"sub": "3", "name": "Tone check", "run": _check_tone,
+             "input": f"Required vibe: {tone} | Angle: {preferred_angle or '—'} (70% of beats must embody it)",
+             "start_detail": f"Required vibe: {tone}"},
+            {"sub": "4", "name": "Language check", "run": _check_language,
+             "input": "Scanned dialogue for formal/bureaucratic Hindi (common-person Hindi required)"},
+        ]
+        _sub_checks, _retry_feedback_parts = run_validation_checks_fail_fast(
+            _check_specs,
+            stage_prefix="3",
+            val_num=_val_num,
+            emit=lambda _s, _n, _p, **_kw: self._emit_substep(on_substep, _s, _n, _p, **_kw),
+        )
+
+        # === Record validation step, then decide: retry / fail / proceed ===
+        # Fail-fast: skipped checks (passed is None) are recorded but do NOT
+        # count as failures for reporting; the stage still fails overall
+        # because the first executed check failed.
+        _val_passed = all(c.get("passed") for c in _sub_checks)
+        _failed_names = [c["name"] for c in _sub_checks if c.get("passed") is False]
+        self._record_stage_step(
+            stage=f"3.{_val_num}",
+            name=_val_name,
+            input_text=f"Validating draft {_retry_round + 1} ({len(raw_output or '')} chars, {len(narrations)} script(s))",
+            output_text=(
+                "All 4 checks passed" if _val_passed
+                else f"Failed: {', '.join(_failed_names)}"
+            ),
+            passed=_val_passed,
+            sub_checks=sorted(_sub_checks, key=lambda c: c["stage"]),
+        )
+        self._emit_substep(on_substep, f"3.{_val_num}", _val_name, "complete",
+                           status="pass" if _val_passed else "fail",
+                           detail=("All 4 checks passed" if _val_passed
+                                   else f"Failed: {', '.join(_failed_names)}"))
+
+        if not _val_passed:
+            if _retry_round < _max_retries:
+                # Single retry with combined feedback for ALL failed checks.
+                _combined_fb = ((feedback or "").strip() + "\n\n" + "\n\n".join(_retry_feedback_parts)).strip()
+                return self.write_dialogues_batch(
+                    news_input=news_input,
+                    items=items,
+                    tone=tone,
+                    duration_sec=duration_sec,
+                    verification=verification,
+                    character_count=character_count,
+                    scene_style=scene_style,
+                    preferred_angle=preferred_angle,
+                    sample_story=sample_story,
+                    sub_instruction=sub_instruction,
+                    engine_mode=engine_mode,
+                    num_scenes=num_scenes,
+                    previous_draft=raw_output,
+                    feedback=_combined_fb,
+                    finalized_characters=finalized_characters,
+                    finalized_scenes=finalized_scenes,
+                    story_steps=story_steps,
+                    _retry_round=_retry_round + 1,
+                    _max_retries=_max_retries,
+                    attempt_history=attempt_history,
+                    on_substep=on_substep,
+                )
+            # Retry budget exhausted — fail loudly with evidence.
+            _attempt_evidence = ""
+            if attempt_history:
+                _attempt_evidence = " | ".join(
+                    f"Attempt {i + 1} ({len(a or '')} chars)" for i, a in enumerate(attempt_history)
+                )
+            raise ModelGenerationError(
+                f"Stage 3 dialogue validation failed after {_retry_round} retr{'y' if _retry_round == 1 else 'ies'}: "
+                + "; ".join(f"{c['name']}: {c['output']}" for c in _sub_checks if not c.get("passed"))
+                + (" | " + _attempt_evidence if _attempt_evidence else ""),
+                partial_output=raw_output or "",
+            )
+
+        # --- Final gate: fail loudly, never ship silently-broken output ---
+        # All 4 validations passed above. Final gate double-checks plus
+        # clothing/SFX (not part of the numbered 3.x checks).
+        #
+        # For news coverage: the AI judge is the sole validator (FR-16.1).
+        # It reads only the short news title / basic news content + dialogue
+        # and verdicts whether the viewer can understand what happened.
+        _final_problems: list = []
+        for _idx, _nar in enumerate(narrations):
+            _sl = getattr(_nar, "scene_lines", None) or []
+            _s_iss = validate_dialogue_structure(_sl, scene_style, _speaker_names)
+            if _s_iss:
+                _final_problems.append(f"Script {_idx + 1} structure: " + "; ".join(_s_iss))
+            _h_found = find_formal_hindi(str(_nar))
+            if _h_found:
+                _final_problems.append(f"Script {_idx + 1} formal Hindi: " + ", ".join(_h_found))
+            _it = items[_idx] if _idx < len(items) else {}
+            _ith = (_it.get("hook") if isinstance(_it, dict) else "") or ""
+            # News coverage: the AI judge is the sole validator (FR-16.1) —
+            # no token/regex matching. It reads only the short news title /
+            # basic news content + the dialogue, and its VERDICT + REASON are
+            # recorded so the decision stays verifiable.
+            _n_ok, _n_reason = ai_judge_news_coverage(
+                self, _sl, news_input, clean_hook_for_dialogue(_ith),
+                engine_mode=engine_mode,
+            )
+            if not _n_ok:
+                _final_problems.append(f"Script {_idx + 1} news coverage: {_n_reason}")
+            # Tone compliance: ask the AI judge directly (keyword matching is brittle).
+            # The judge understands humor, emotion, and tone semantically.
+            _tone_ok, _tone_issue = ai_judge_tone_compliance(
+                self, _sl, tone, preferred_angle,
+                engine_mode=engine_mode,
+            )
+            if not _tone_ok:
+                _final_problems.append(f"Script {_idx + 1} tone ({tone}): {_tone_issue}")
+            # Code-enforced: generic clothing ban
+            _chars = getattr(_nar, "characters", None) or []
+            _c_iss = validate_clothing_specificity(_chars)
+            if _c_iss:
+                _final_problems.append(f"Script {_idx + 1} clothing: " + "; ".join(_c_iss))
+            # Code-enforced: SFX tone match
+            _sfx_iss = validate_sfx_tone_match(_sl, tone)
+            if _sfx_iss:
+                _final_problems.append(f"Script {_idx + 1} SFX: " + "; ".join(_sfx_iss))
+        if _final_problems:
+            # Attach all attempt outputs as evidence: the user wants to see
+            # what attempt 1, 2, 3 produced. Snippets only — full outputs
+            # are already visible via self.last_attempt_history in the UI.
+            _attempt_evidence = ""
+            if attempt_history:
+                _attempt_evidence = " | ".join(
+                    f"Attempt {i + 1} ({len(a or '')} chars): {(a or '')[:200]!r}"
+                    for i, a in enumerate(attempt_history)
+                )
+            raise ModelGenerationError(
+                "Stage 3 dialogue validation failed after automatic correction: "
+                + " | ".join(_final_problems)
+                + (" | " + _attempt_evidence if _attempt_evidence else ""),
+                partial_output=raw_output or "",
+            )
+
+        # Enrich: for any speaker name the model used that wasn't in the
+        # finalized list, generate a full character profile (job, attire, etc.)
+        # so downstream stages (4, 5) have complete character details.
+        _known_names = set(_norm_speaker(n) for n in _speaker_names if n)
+        _used_names = set()
+        for _nar in narrations:
+            for _sl in (getattr(_nar, "scene_lines", None) or []):
+                _sn = _norm_speaker(_sl.get("character"))
+                if _sn:
+                    _used_names.add(_sn)
+        _new_names = _used_names - _known_names
+        if _new_names and hasattr(self, '_enrich_new_speakers'):
+            self._enrich_new_speakers(list(_new_names), narrations, news_input)
 
         return narrations
 

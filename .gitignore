@@ -8,6 +8,9 @@ venv/
 # Logs
 *.log
 
+# Stage 1 verification cache (24h, machine-local -- never commit)
+.verification_cache.json
+
 # macOS
 .DS_Store
 

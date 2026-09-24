@@ -1,8 +1,11 @@
 """Configuration persistence manager for studio and project preferences."""
 
 import json
+import logging
 import os
 from typing import Any, Dict
+
+logger = logging.getLogger(__name__)
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 STUDIO_CONFIG_FILE = os.path.join(BASE_DIR, "studio_config.json")
@@ -14,8 +17,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "default_duration": 10,
     "batch_count": 1,
     "max_retries": 5,
-    "source_mode": "📡 Live News",
-    "news_category": "🇮🇳 India Top Stories & Breaking",
+    "story_source": "🇮🇳 India Top Stories & Breaking",  # merged Source+Category dropdown
     "selected_headline": "",
     "selected_script_index": 0,
     "default_angle": "Funny & Relatable",
@@ -43,8 +45,9 @@ def load_config() -> Dict[str, Any]:
                 data = json.load(f)
                 cfg.update(data)
                 return cfg
-        except Exception:
-            pass
+        except Exception as e:
+            # Config defaults are legitimate, but a corrupt file must be visible.
+            logger.warning("Ignoring corrupt studio config %s (%s); using defaults.", STUDIO_CONFIG_FILE, e)
 
     # Fallback to project_config.json if available
     if os.path.exists(PROJECT_CONFIG_FILE):
@@ -55,8 +58,8 @@ def load_config() -> Dict[str, Any]:
                     if k in pdata:
                         cfg[k] = pdata[k]
                 return cfg
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning("Ignoring corrupt project config %s (%s); using defaults.", PROJECT_CONFIG_FILE, e)
 
     save_all_config(cfg)
     return cfg

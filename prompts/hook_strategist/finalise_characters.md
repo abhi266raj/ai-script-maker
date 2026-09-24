@@ -53,14 +53,14 @@ CHARACTERS:
 CHARACTER 1:
 Name: [Character Name]
 Job: [Specific Profession / Role]
-Attire: [Specific clothing and physical appearance]
+Attire: [SITUATION & SCENE-SPECIFIC clothing — what they wear must match the news situation, their job, and the imagined scene location. BE SPECIFIC and IMAGINATIVE: mention colors, style, fabric, accessories. NEVER write generic "everyday wear" or "casual clothes". Examples: "Faded blue delivery uniform with reflective strips, helmet under arm" (for a delivery worker at night), "Bright yellow raincoat over salwar, holding an umbrella" (monsoon street scene)]
 Emotion: [Emotional stance and attitude]
 Relationship: [Relationship to other character or story]
 
 CHARACTER 2:
 Name: [Character Name]
 Job: [Specific Profession / Role]
-Attire: [Specific clothing and physical appearance]
+Attire: [SITUATION & SCENE-SPECIFIC clothing — must match the news situation, job, and imagined scene. BE SPECIFIC and IMAGINATIVE with colors, style, fabric, accessories. NEVER generic "everyday wear"]
 Emotion: [Emotional stance and attitude]
 Relationship: [Relationship to other character or story]
 

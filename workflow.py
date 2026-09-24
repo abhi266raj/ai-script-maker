@@ -138,7 +138,7 @@ class ReelWorkflow:
         extra_instruction: Optional[str] = None,
         preferred_frames: Optional[int] = None,
     ) -> Dict[str, Any]:
-        """Execute Step 4 of the pipeline (Scene Storyboard & AI Video Prompts)."""
+        """Execute Step 4 of the pipeline (Scene Finalisation from Finalized Dialogue)."""
         dual_engine.validate_mode(engine_mode)
         return _capture_prompts(
             chief_editor_coordinator.execute_stage_4,
@@ -154,10 +154,25 @@ class ReelWorkflow:
         engine_mode: str = "first_local_then_agy",
         extra_instruction: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """Execute Step 5 of the pipeline (Quality Gate & Chief Editor Sign-Off)."""
+        """Execute Step 5 of the pipeline (Scene Storyboard & AI Video Prompts)."""
         dual_engine.validate_mode(engine_mode)
         return _capture_prompts(
             chief_editor_coordinator.execute_stage_5,
+            state=state,
+            engine_mode=engine_mode,
+            extra_instruction=extra_instruction,
+        )
+
+    def run_step_6(
+        self,
+        state: Dict[str, Any],
+        engine_mode: str = "first_local_then_agy",
+        extra_instruction: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Execute Step 6 of the pipeline (Integration & Final Validation)."""
+        dual_engine.validate_mode(engine_mode)
+        return _capture_prompts(
+            chief_editor_coordinator.execute_stage_6,
             state=state,
             engine_mode=engine_mode,
             extra_instruction=extra_instruction,

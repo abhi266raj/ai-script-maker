@@ -2,7 +2,6 @@
 
 import re
 import copy
-import json
 import streamlit as st
 import sys
 from core.constants import (
@@ -299,6 +298,60 @@ def sanitize_character_name(name: str) -> str:
 def clean_beat_action(text: str) -> str:
     """Strip camera framing and prompt jargon, returning pure physical actor action."""
     return clean_physical_action(text)
+
+
+
+def extract_scene_context(script):
+    """Extract slugline, environment, camera setup, and characters for the unified scene."""
+    chars = []
+    seen = set()
+    for sc in script.scenes:
+        c_clean = sanitize_character_name(sc.character)
+        c_base = c_clean.split("/")[0].split("(")[0].strip()
+        if c_base and c_base not in seen:
+            seen.add(c_base)
+            chars.append(c_clean)
+    s1_vis = script.scenes[0].visual_b_roll if script.scenes else ""
+    loc = ""
+    # Extract specific setting from Scene 1 preamble if present
+    m = re.search(r"(?:at|outside|inside|near)\s+([^;.]+?)(?:\s*;\s*|\.\s+)", s1_vis, re.IGNORECASE)
+    if m:
+        candidate = m.group(1).strip()
+        candidate = re.sub(r"^(?:a|an)\s+", "", candidate, flags=re.IGNORECASE)
+        if len(candidate) > 10 and not candidate.lower().startswith("shot"):
+            loc = candidate[0].upper() + candidate[1:]
+
+    if not loc:
+        for lk in ["tea stall", "street", "wall", "college", "court", "station", "shop", "market", "office", "hospital", "सड़क", "दीवार"]:
+            if lk in s1_vis.lower():
+                loc = f"Vibrant Indian street / public setting ({lk.title()})"
+                break
+    if not loc:
+        loc = "Vibrant Indian public setting and surrounding neighborhood, warm natural sunlight"
+
+    slugline = "EXT. PUBLIC SETTING - DAY"
+    loc_lower = (loc + " " + s1_vis).lower()
+    if "court" in loc_lower:
+        slugline = "EXT. HIGH COURT STEPS - DAY"
+    elif "office" in loc_lower or "desk" in loc_lower or "corporate" in loc_lower:
+        slugline = "INT. CORPORATE TECH OFFICE - DAY"
+    elif "hospital" in loc_lower:
+        slugline = "INT./EXT. GOVERNMENT HOSPITAL - DAY"
+    elif "school" in loc_lower or "college" in loc_lower:
+        slugline = "EXT. SCHOOL CAMPUS - DAY"
+    elif "market" in loc_lower or "shop" in loc_lower:
+        slugline = "EXT. LOCAL INDIAN BAZAAR - DAY"
+    elif "village" in loc_lower or "panchayat" in loc_lower or "khet" in loc_lower:
+        slugline = "EXT. RURAL VILLAGE CHOPAL - DAY"
+    elif "station" in loc_lower or "metro" in loc_lower:
+        slugline = "EXT. METRO STATION ENTRY - DAY"
+
+    return {
+        "slugline": slugline,
+        "location": loc,
+        "camera_setup": "Single continuous handheld dynamic 9:16 vertical take; smooth reframing and character pivots without scene cuts.",
+        "characters": chars or ["👩 Priya (प्रिया)", "🧑 Rohan (रोहन)"],
+    }
 
 
 def format_professional_screenplay(script, topic_name: str = "", include_overlays: bool = True, include_sfx: bool = True) -> str:
@@ -878,9 +931,8 @@ with col_settings:
                         try:
                             _trend_arts = news_fetcher._fetch_google_trends_trending(limit=15)
                             st.session_state.trending_hashtags = _build_hashtag_entries(_trend_arts)
-                        except Exception as _gt_err:
+                        except Exception:
                             st.session_state.trending_hashtags = []
-                            st.warning(f"Could not load Google Trends hashtags: {_gt_err}")
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("trending_hashtag_dropdown")
@@ -921,9 +973,8 @@ with col_settings:
                         try:
                             _trend_arts = news_fetcher._fetch_google_trends_trending(limit=15)
                             st.session_state.trending_hashtags = _build_hashtag_entries(_trend_arts)
-                        except Exception as _gt_err:
+                        except Exception:
                             st.session_state.trending_hashtags = []
-                            st.warning(f"Could not load Google Trends hashtags: {_gt_err}")
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("instagram_hashtag_dropdown")
@@ -1026,8 +1077,8 @@ with col_settings:
                         save_config("cached_headlines_hashtag", st.session_state.get("active_hashtag", ""))
                         import time as _time_mod2
                         save_config("cached_headlines_ts", _time_mod2.time())
-                    except Exception as _cache_e:
-                        print(f"[headline-cache] save failed (non-fatal): {_cache_e}")
+                    except Exception:
+                        pass
 
             if is_feed_mode:
                 # Headline dropdown from live feed — persists selection and avoids re-fetching unless refreshed
@@ -1438,385 +1489,6 @@ def _stage3_retry_count(step_state):
         return 0
 
 
-def _stage_output_retry_badge(stage_num, data):
-    """Return ' 🔄 Retry N' for a stage expander label, or '' when no retry ran."""
-    try:
-        if stage_num == 3:
-            _r = _stage3_retry_count(data)
-        elif isinstance(data, dict):
-            _r = data.get("stage_retry_count", 0) or data.get("retry_count", 0) or 0
-        else:
-            _r = 0
-        _r = int(_r)
-    except (TypeError, ValueError):
-        _r = 0
-    return f" 🔄 Retry {_r}" if _r > 0 else ""
-
-
-def _to_jsonable(obj):
-    """Recursively convert pydantic/dataclass/plain objects to JSON-serializable structures.
-
-    Raw model output is kept machine-readable in collapsed expanders; the
-    human-facing views are always the pretty rendered cards/sections."""
-    if obj is None or isinstance(obj, (str, int, float, bool)):
-        return obj
-    if isinstance(obj, dict):
-        return {str(_k): _to_jsonable(_v) for _k, _v in obj.items()}
-    if isinstance(obj, (list, tuple, set)):
-        return [_to_jsonable(_x) for _x in obj]
-    if hasattr(obj, "model_dump"):  # pydantic v2
-        try:
-            return _to_jsonable(obj.model_dump())
-        except Exception:
-            pass
-    if hasattr(obj, "dict"):  # pydantic v1
-        try:
-            return _to_jsonable(obj.dict())
-        except Exception:
-            pass
-    if hasattr(obj, "__dict__"):
-        try:
-            return _to_jsonable(vars(obj))
-        except Exception:
-            pass
-    return str(obj)
-
-
-def _render_raw_json(data, *, label="Raw JSON", key_prefix=""):
-    """Collapsed debugging view of raw model JSON. Always secondary, never the primary view.
-
-    The caller must render the pretty human view FIRST and call this after.
-    key_prefix keeps expander labels unique when the same stage renders in
-    both the main view and the history view."""
-    if data is None:
-        return
-    try:
-        _js = json.dumps(_to_jsonable(data), ensure_ascii=False, indent=2, default=str)
-    except Exception as _e:  # never break the page for a debugging view
-        st.caption(f"(Raw JSON unavailable: {_e})")
-        return
-    _suffix = f" [{key_prefix}]" if key_prefix else ""
-    with st.expander(f"🔎 {label}{_suffix}", expanded=False):
-        st.code(_js, language="json")
-
-
-def _model_field(obj, name, default=None):
-    """Read a field from a dict or a pydantic/plain object, uniformly."""
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
-
-
-def _render_verification_report(verif, *, key_prefix=""):
-    """Pretty human view of a NewsVerificationReport (dict or model).
-
-    Clean sections — summary, facts, key figures, locations, props, conflict,
-    actions, flags, sources — never a raw JSON blob. The JSON itself stays
-    behind a collapsed expander for debugging."""
-    _ok = bool(_model_field(verif, "is_verified", False))
-    _conf = _model_field(verif, "confidence_score", "?")
-    _vbadge = "✅ Verified" if _ok else "⚠️ Warning"
-    st.markdown(f"**{_vbadge}** — confidence {_conf}%")
-    _headline = _model_field(verif, "headline", "") or ""
-    if _headline:
-        st.markdown(f"**Headline:** {_headline}")
-    _vstat = _model_field(verif, "verification_status", "") or ""
-    if _vstat:
-        st.caption(f"Status: {_vstat}")
-    _summ = _model_field(verif, "verification_summary", "") or _model_field(verif, "summary", "") or ""
-    if _summ:
-        st.markdown("**Summary**")
-        st.write(_summ)
-    _facts = _model_field(verif, "verified_facts", None) or []
-    if _facts:
-        st.markdown(f"**✅ Verified facts ({len(_facts)})**")
-        for _f in _facts:
-            st.markdown(f"- {_f}")
-    _figs = _model_field(verif, "key_figures", None) or []
-    if _figs:
-        st.markdown(f"**👥 Key figures ({len(_figs)})**")
-        for _f in _figs:
-            st.markdown(f"- {_f}")
-    _locs = _model_field(verif, "key_locations", None) or []
-    if _locs:
-        st.markdown(f"**📍 Key locations ({len(_locs)})**")
-        for _l in _locs:
-            st.markdown(f"- {_l}")
-    _props = _model_field(verif, "physical_props", None) or []
-    if _props:
-        st.markdown(f"**🎒 Physical props ({len(_props)})**")
-        for _p in _props:
-            st.markdown(f"- {_p}")
-    _conflict = _model_field(verif, "core_conflict_or_irony", "") or ""
-    if _conflict:
-        st.markdown("**⚡ Core conflict / irony**")
-        st.write(_conflict)
-    _acts = _model_field(verif, "tangible_actions", None) or []
-    if _acts:
-        st.markdown(f"**🎬 Tangible actions ({len(_acts)})**")
-        for _a in _acts:
-            st.markdown(f"- {_a}")
-    _flags = list(_model_field(verif, "flagged_claims", None) or []) + list(_model_field(verif, "potential_flags", None) or [])
-    if _flags:
-        st.markdown(f"**🚩 Flags ({len(_flags)})**")
-        for _fl in _flags:
-            st.markdown(f"- {_fl}")
-    _srcs = _model_field(verif, "sources", None) or []
-    if _srcs:
-        st.markdown(f"**📰 Sources ({len(_srcs)})**")
-        for _s in _srcs:
-            _snm = _model_field(_s, "source", "") or ""
-            _stl = _model_field(_s, "title", "") or ""
-            _url = _model_field(_s, "url", "") or _model_field(_s, "link", "") or ""
-            _lbl = f"{_snm}: {_stl}" if _snm and _stl else (_snm or _stl or str(_s))
-            st.markdown(f"- {_lbl}" + (f" ({_url})" if _url else ""))
-    _render_raw_json(verif, label="Raw JSON — verification", key_prefix=key_prefix)
-
-
-def _render_character_cards(chars, *, key_prefix=""):
-    """Pretty character cards (name, role, attire, emotional stance) + collapsed raw JSON."""
-    if not chars:
-        st.caption("No characters.")
-        return
-    st.caption(f"{len(chars)} character(s) finalized")
-    for _c in chars:
-        _nm = _model_field(_c, "name", "?")
-        _rl = _model_field(_c, "role_or_job", "") or _model_field(_c, "role", "")
-        _ap = _model_field(_c, "appearance", "")
-        _at = _model_field(_c, "attire", "")
-        _es = _model_field(_c, "emotional_stance", "")
-        _rd = _model_field(_c, "relationship_dynamic", "")
-        st.markdown(f"**{_nm}**" + (f" — {_rl}" if _rl else ""))
-        if _ap:
-            st.caption(f"👤 Appearance: {_ap}")
-        if _at:
-            st.caption(f"👔 Attire: {_at}")
-        if _es:
-            st.caption(f"😊 Emotional stance: {_es}")
-        if _rd:
-            st.caption(f"🤝 Dynamic: {_rd}")
-    _render_raw_json(chars, label="Raw JSON — characters", key_prefix=key_prefix)
-
-
-def _render_derived_scenes(derived_scenes_per_script, *, key_prefix=""):
-    """Pretty cards for Stage 4 derived scenes + collapsed raw JSON."""
-    if not derived_scenes_per_script:
-        st.caption("No derived scenes.")
-        return
-    _total = sum(len(_s) for _s in derived_scenes_per_script)
-    st.caption(f"{_total} scenes derived from dialogue")
-    for _si, _sl in enumerate(derived_scenes_per_script, 1):
-        with st.expander(f"🎬 Script {_si} — {len(_sl)} scene(s)", expanded=False):
-            for _sc in _sl:
-                _loc = _model_field(_sc, "location_name", "?")
-                _atm = _model_field(_sc, "atmosphere", "") or ""
-                _lit = _model_field(_sc, "lighting_mood", "") or ""
-                _pr = _model_field(_sc, "props", None) or []
-                _src = _model_field(_sc, "scene_source", "") or ""
-                st.markdown(f"**📍 {_loc}**")
-                if _atm:
-                    st.caption(f"Atmosphere: {_atm}")
-                if _lit:
-                    st.caption(f"Lighting: {_lit}")
-                if _pr:
-                    st.caption(f"Props: {', '.join(str(_p) for _p in _pr)}")
-                if _src:
-                    st.caption(f"Source: {_src}")
-    _render_raw_json(derived_scenes_per_script, label="Raw JSON — derived scenes", key_prefix=key_prefix)
-
-
-def _render_storyboard_cards(scripts, *, key_prefix=""):
-    """Pretty storyboard cards (scenes + AI video prompts) + collapsed raw JSON."""
-    if not scripts:
-        st.caption("No storyboards.")
-        return
-    st.caption(f"{len(scripts)} storyboard(s) ready")
-    for _bi2, _b in enumerate(scripts, 1):
-        _nsc = _model_field(_b, "scenes", None) or []
-        _ttl = _model_field(_b, "title", "") or ""
-        with st.expander(f"🎞️ Storyboard {_bi2} — {len(_nsc)} scene(s)", expanded=False):
-            if _ttl:
-                st.markdown(f"**{_ttl}**")
-            for _sc2 in _nsc:
-                _snum = _model_field(_sc2, "scene_number", "")
-                _sts = _model_field(_sc2, "timestamp", "") or ""
-                _sch = _model_field(_sc2, "character", "") or ""
-                _sloc = _model_field(_sc2, "scene_location", "") or _model_field(_sc2, "location_name", "")
-                _sbroll = _model_field(_sc2, "visual_b_roll", "") or ""
-                _sov = _model_field(_sc2, "on_screen_text", "") or ""
-                _ssfx = _model_field(_sc2, "audio_sfx", "") or ""
-                _svp = _model_field(_sc2, "video_prompt", None)
-                _stitle = f"Scene {_snum}" if _snum != "" else "Scene"
-                if _sts:
-                    _stitle += f" [{_sts}]"
-                if _sch:
-                    _stitle += f" — {_sch}"
-                st.markdown(f"**{_stitle}**")
-                if _sloc:
-                    st.caption(f"📍 Location: {_sloc}")
-                if _sbroll:
-                    st.caption(f"🎥 Action: {clean_beat_action(_sbroll)[:300]}")
-                if _sov:
-                    st.caption(f"🔖 Overlay: {_sov}")
-                if _ssfx:
-                    st.caption(f"🔊 SFX: {_ssfx}")
-                _vpa = _model_field(_svp, "visual_prompt_ai", "") if _svp else ""
-                if _vpa:
-                    st.text_area(
-                        "AI video prompt",
-                        value=str(_vpa),
-                        height=70,
-                        disabled=True,
-                        label_visibility="collapsed",
-                        key=f"{key_prefix}st5_vp_{_bi2}_{_snum}",
-                    )
-    _render_raw_json(scripts, label="Raw JSON — storyboards", key_prefix=key_prefix)
-
-
-def _render_dialogue_beats(narrations, *, show_raw_json=True, key_prefix=""):
-    """Render dialogue scripts + beats as readable cards. Shared by both preview modes.
-
-    Pretty view first: speaker name, the Hindi dialogue prominent, camera
-    action / SFX / overlay as labeled captions. Raw model JSON stays behind a
-    collapsed expander for debugging (never the primary view).
-
-    narrations: list of dicts or objects exposing scene_lines (each beat a
-    dict or object with character/dialogue/camera_action/action/sfx/overlay).
-    """
-    if not narrations:
-        return
-    st.caption(f"{len(narrations)} script(s) dialogue written")
-    for _ni, _nar in enumerate(narrations, 1):
-        if isinstance(_nar, dict):
-            _lines = _nar.get("scene_lines", []) or []
-        else:
-            _lines = getattr(_nar, "scene_lines", None) or []
-        with st.expander(f"📝 Script {_ni} — full dialogue ({len(_lines)} beats)", expanded=False):
-            for _bi, _sl in enumerate(_lines, 1):
-                # New Stage 3 JSON contract uses "speaker"; legacy data uses "character".
-                if isinstance(_sl, dict):
-                    _ch = _sl.get("speaker", "") or _sl.get("character", "?")
-                    _dg = _sl.get("dialogue", "")
-                    _ac = _sl.get("camera_action", "") or _sl.get("action", "")
-                    _sfx = _sl.get("sfx", "")
-                    _ov = _sl.get("overlay", "")
-                    _ts = _sl.get("timestamp", "")
-                    _bn = _sl.get("beat", "")
-                else:
-                    _ch = getattr(_sl, "speaker", None) or getattr(_sl, "character", "?")
-                    _dg = getattr(_sl, "dialogue", "")
-                    _ac = getattr(_sl, "camera_action", None) or getattr(_sl, "action", "")
-                    _sfx = getattr(_sl, "sfx", "")
-                    _ov = getattr(_sl, "overlay", "")
-                    _ts = getattr(_sl, "timestamp", "")
-                    _bn = getattr(_sl, "beat", "")
-                _beat_no = _bn or _bi
-                _ts_txt = f" [{_ts}]" if _ts else ""
-                st.markdown(f"**🎙️ Beat {_beat_no}**{_ts_txt} — **{_ch}**")
-                st.markdown(f"> {_dg}")
-                if _ac:
-                    st.caption(f"🎬 Camera / action: {_ac}")
-                if _sfx:
-                    st.caption(f"🔊 SFX: {_sfx}")
-                if _ov:
-                    st.caption(f"🔖 Overlay: {_ov}")
-                if _bi < len(_lines):
-                    st.divider()
-        if show_raw_json:
-            _render_raw_json(_nar, label=f"Raw JSON — Script {_ni}", key_prefix=key_prefix)
-
-
-def _render_stage_output_card(stage_num, data, key_prefix=""):
-    """Render ONE completed stage's output as a collapsible card.
-
-    THE shared per-stage renderer for the cumulative preview, used by both
-    continuous and stepwise modes. Continuous mode passes the slim per-stage
-    data dicts from the pipeline yields; stepwise mode passes full state
-    snapshots. Each card reads only its own stage's keys, so passing a full
-    pipeline state is safe.
-    """
-    if not isinstance(data, dict) or not data:
-        return
-    _sname = _STAGE_NAMES.get(stage_num, f"Stage {stage_num}")
-    _badge = _stage_output_retry_badge(stage_num, data)
-    with st.expander(f"✅ Stage {stage_num}: {_sname}{_badge}", expanded=False):
-        # --- Collapsible AI input (continuous: ai_input dict;
-        # stepwise: input_prompts list of {template, prompt})
-        _ai_in = data.get("ai_input") or {}
-        _ai_in = {k: v for k, v in _ai_in.items() if v} if isinstance(_ai_in, dict) else {}
-        _iprompts = data.get("input_prompts") or []
-        if _ai_in or _iprompts:
-            with st.expander(f"📥 Stage {stage_num} AI input", expanded=False):
-                for _ak, _av in _ai_in.items():
-                    st.markdown(f"**{_ak}**")
-                    st.code(str(_av)[:3000], language="text")
-                for _ip in _iprompts:
-                    _tmpl = _ip.get("template", "") if isinstance(_ip, dict) else ""
-                    _pr = _ip.get("prompt", "") if isinstance(_ip, dict) else str(_ip)
-                    if _tmpl:
-                        st.caption(f"Template: {_tmpl}")
-                    if _pr:
-                        st.code(str(_pr)[:3000], language="text")
-        # --- Stage-specific output (only this stage's own keys are read)
-        if stage_num == 1:
-            _ver = data.get("verification")
-            if _ver is not None:
-                if data.get("verification_from_cache"):
-                    _v_ch = data.get("cache_age_hours", 0) or 0
-                    st.caption(f"✓ Used cached verification from {_v_ch:.1f}h ago — API call skipped")
-                _render_verification_report(_ver, key_prefix=f"{key_prefix}st1_")
-            else:
-                st.caption("No verification data.")
-        elif stage_num == 2:
-            _render_character_cards(data.get("finalized_characters") or [], key_prefix=f"{key_prefix}st2_")
-        elif stage_num == 3:
-            _narrs = data.get("narrations") or data.get("script_dialogues") or []
-            if _narrs:
-                _render_dialogue_beats(_narrs, key_prefix=f"{key_prefix}st3_")
-            else:
-                st.caption("No dialogue.")
-        elif stage_num == 4:
-            _render_derived_scenes(data.get("derived_scenes_per_script") or [], key_prefix=f"{key_prefix}st4_")
-        elif stage_num == 5:
-            _render_storyboard_cards(data.get("scripts") or [], key_prefix=f"{key_prefix}st5_")
-        elif stage_num == 6:
-            _br = data.get("batch_result")
-            _tt = data.get("total_time", "?")
-            if _br is not None:
-                _nscr = len(getattr(_br, "scripts", None) or [])
-                st.caption(f"✅ Integration complete — {_nscr} final script(s) in {_tt}s")
-                _vi = (getattr(_br, "validation_issues", None) or []) or data.get("validation_issues") or []
-                if _vi:
-                    _errs = [i for i in _vi if isinstance(i, dict) and i.get("severity") == "error"]
-                    st.caption(f"{len(_errs)} error(s), {len(_vi) - len(_errs)} warning(s) in final validation")
-                _render_raw_json(_br, label="Raw JSON — batch result", key_prefix=f"{key_prefix}st6_")
-            else:
-                st.caption("Stage 6 complete.")
-
-
-def _render_cumulative_preview(stage_data, key_prefix="cum_"):
-    """Render the cumulative 'final output so far' — one card per completed stage.
-
-    THE shared preview renderer for both continuous and stepwise modes.
-    stage_data: {stage_num: data}. Stages render in numeric order; each newly
-    completed stage is ADDED — earlier stages are never replaced or dropped.
-    """
-    _clean = {}
-    for _k, _v in (stage_data or {}).items():
-        try:
-            _clean[int(_k)] = _v
-        except (TypeError, ValueError):
-            continue
-    _clean = {sn: sd for sn, sd in _clean.items() if sd}
-    if not _clean:
-        st.caption("No stage output yet — the preview fills in as each stage completes.")
-        return
-    st.markdown("#### 📦 Final output so far")
-    st.caption(f"{len(_clean)} of 6 stages complete")
-    for _sn in sorted(_clean):
-        _render_stage_output_card(_sn, _clean[_sn], key_prefix=f"{key_prefix}{_sn}_")
-
-
 def _render_step_output(step_num, step_state, key_prefix=""):
     """Render the full finalized output of a completed step (steps 1-4).
 
@@ -1888,8 +1560,21 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                 st.markdown(f"**Verification:** {'🟢 Confirmed' if verif.is_verified else '🟡 Warning'} ({verif.confidence_score}% Confidence)")
             with c_vf2:
                 st.markdown(f"**Target Format:** {step_state['target_seconds']}s • {format_display_name(step_state['scene_style'])}")
-            # Pretty rendered dossier first (all sections), raw JSON collapsed for debugging.
-            _render_verification_report(verif, key_prefix=f"{key_prefix}s1_")
+            topic_headline = getattr(verif, "headline", None) or step_state.get("news_input", "")
+            if topic_headline:
+                st.markdown(f"**Headline / Topic:** {topic_headline}")
+            if getattr(verif, "verification_summary", None):
+                st.caption(f"**Verification Summary:** {verif.verification_summary}")
+            if verif.verified_facts:
+                st.markdown("**Confirmed Wire Facts:**")
+                for f in verif.verified_facts[:4]:
+                    st.markdown(f"- {f}")
+            if verif.physical_props:
+                st.markdown(f"**Physical Props:** {', '.join(verif.physical_props)}")
+            if verif.key_locations:
+                st.markdown(f"**Key Locations:** {', '.join(verif.key_locations)}")
+            if verif.core_conflict_or_irony:
+                st.markdown(f"**Core Conflict / Irony:** {verif.core_conflict_or_irony}")
 
         if step_state.get("sub_instructions"):
             with st.expander("👑 Generated Sub-Instructions for Upcoming Agents"):
@@ -1958,7 +1643,6 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                         if ch.relationship_dynamic:
                             st.caption(f"🤝 Dynamic: {ch.relationship_dynamic}")
             st.caption("📍 Scenes are NOT finalized here — Step 4 derives shoot locations FROM the finalized Step 3 dialogue.")
-            _render_raw_json(step_state.get("finalized_characters") or [], label="Raw JSON — characters", key_prefix=f"{key_prefix}s2_")
         else:
             # Fallback for states created before groups existed
             avail_chars = step_state.get("available_characters", chars)
@@ -2075,9 +1759,6 @@ def _render_step_output(step_num, step_state, key_prefix=""):
             with st.expander("⏱️ Timing telemetry (internal details)", expanded=False):
                 for _row in _timing_rows:
                     st.caption(_row)
-        # Pretty beat cards are the primary view (above); the raw model JSON
-        # stays collapsed here for debugging.
-        _render_raw_json(dialogues, label="Raw JSON — scripts", key_prefix=f"{key_prefix}s3_")
         # Stage 3 linear steps: 3.1 generation, 3.2 validation (3.2.1-3.2.4
         # sub-checks), 3.3 retry generation, 3.4 re-validate, etc.
         # Each step is a collapsible showing its input and output.
@@ -2135,38 +1816,14 @@ def _render_step_output(step_num, step_state, key_prefix=""):
             if _attempts:
                 if len(_attempts) == 1:
                     st.info("✓ Succeeded on first attempt — no retries needed.")
-                st.markdown("#### 🔄 Stage 3 Attempts")
-                for _a_idx, _a_out in enumerate(_attempts, 1):
-                    _a_is_last = (_a_idx == len(_attempts))
-                    # The initial generation is "Attempt 1"; corrective runs
-                    # are labelled "Attempt N (Retry N-1)".
-                    _a_label = f"🔄 Attempt {_a_idx}" if _a_idx == 1 else f"🔄 Attempt {_a_idx} (Retry {_a_idx - 1})"
-                    if _a_is_last:
-                        _a_label += " (final)"
-                    with st.expander(_a_label, expanded=_a_is_last):
-                        if isinstance(_a_out, dict):
-                            _a_in = _a_out.get("input") or _a_out.get("prompt") or ""
-                            _a_raw = _a_out.get("raw_output") or _a_out.get("raw") or ""
-                            _a_parsed = _a_out.get("parsed_script") or _a_out.get("parsed") or []
-                            if _a_in:
-                                st.markdown("**📥 Input:**")
-                                st.caption(str(_a_in)[:2500])
-                            if _a_parsed:
-                                st.markdown("**✅ Parsed script:**")
-                                _a_pl = _a_parsed if isinstance(_a_parsed, list) else [_a_parsed]
-                                _render_dialogue_beats(_a_pl, show_raw_json=False)
-                            if _a_raw:
-                                st.markdown("**📤 Raw output:**")
-                                st.text_area(
-                                    f"Attempt {_a_idx} raw output",
-                                    value=str(_a_raw),
-                                    height=220,
-                                    disabled=True,
-                                    label_visibility="collapsed",
-                                    key=f"{key_prefix}step3_attempt_{_a_idx}",
-                                )
-                        else:
-                            st.markdown("**📤 Raw output:**")
+                else:
+                    st.markdown("#### 🔄 Stage 3 Attempts")
+                    for _a_idx, _a_out in enumerate(_attempts, 1):
+                        _a_is_last = (_a_idx == len(_attempts))
+                        with st.expander(
+                            f"🔄 Attempt {_a_idx}" + (" (final)" if _a_is_last else ""),
+                            expanded=_a_is_last,
+                        ):
                             st.text_area(
                                 f"Attempt {_a_idx} output",
                                 value=str(_a_out or ""),
@@ -2252,7 +1909,6 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                     _props = getattr(sc, "props", []) or []
                     if _props:
                         st.caption(f"📦 Props: {', '.join(_props) if isinstance(_props, list) else _props}")
-        _render_raw_json(step_state.get("derived_scenes_per_script") or [], label="Raw JSON — derived scenes", key_prefix=f"{key_prefix}s4_")
 
     elif step_num == 5:
         st.markdown("### 🎬 Step 5: Scene Storyboards & 9:16 Video Prompts")
@@ -2307,7 +1963,6 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                     st.caption(f"🔊 SFX: {sc.audio_sfx}")
                 if sc.video_prompt:
                     st.text_area("Veo 9:16 Cinematic Prompt", value=sc.video_prompt.visual_prompt_ai, height=65, disabled=True, key=f"{key_prefix}step4_vp_view_{sc.scene_number}")
-        _render_raw_json(scripts, label="Raw JSON — storyboards", key_prefix=f"{key_prefix}s5_")
 
     elif step_num == 6:
         st.markdown("### ✅ Step 6: Integration & Final Validation")
@@ -2379,7 +2034,6 @@ def _render_step_output(step_num, step_state, key_prefix=""):
                     st.caption(f"Fix: {_iss.get('fix')}")
             for _iss in _s6_wrns:
                 st.warning(f"[{_iss.get('check', '?')}] {_iss.get('detail', '')}")
-        _render_raw_json(_s6_batch if _s6_batch is not None else _s6_scripts, label="Raw JSON — integrated result", key_prefix=f"{key_prefix}s6_")
 
 
 def _render_input_prompts(step_state, key_prefix=""):
@@ -2470,12 +2124,7 @@ def _apply_live_substep(evt):
         if evt.get("detail"):
             entry["detail"] = str(evt["detail"])
     elif phase == "complete":
-        # Fail-fast: a "skipped" completion (a later check that never ran
-        # because an earlier one failed) is recorded as skipped, never as a
-        # failure -- and it must not move the failed_at pointer.
-        _ev_status = evt.get("status")
-        entry["status"] = ("pass" if _ev_status == "pass"
-                           else "skipped" if _ev_status == "skipped" else "fail")
+        entry["status"] = "pass" if evt.get("status") == "pass" else "fail"
         if evt.get("detail"):
             entry["detail"] = str(evt["detail"])
         if evt.get("input"):
@@ -2494,8 +2143,6 @@ def _substep_status_line(sid, entry, failure_mode=False):
 
     In failure_mode, substeps that never ran show "Not reached" instead of
     "Waiting" so the failure view reads exactly where the pipeline broke.
-    Fail-fast skipped checks show "Skipped"; their detail names the earlier
-    check that failed (e.g. "Skipped (3.2.1 Structure check failed)").
     """
     _waiting = ("⏸️", "Not reached") if failure_mode else ("⏳", "Waiting")
     st_map = {
@@ -2504,7 +2151,6 @@ def _substep_status_line(sid, entry, failure_mode=False):
         "running": ("🔄", "Running..."),
         "waiting": _waiting,
         "not_needed": ("⏸️", "Not needed"),
-        "skipped": ("⏸️", "Skipped"),
     }
     icon, text = st_map.get(entry.get("status"), ("❔", "Unknown"))
     return f"{icon} {sid} {entry.get('name', '')} — {text}"
@@ -2594,17 +2240,12 @@ def _seed_live_state_from_recorded_steps(stage_num, vsteps):
         }
         if status == "fail" and failed_at is None:
             failed_at = sid
-        _sub_failed_at = None
         for sub in stp.get("sub_checks") or []:
             sub_id = str(sub.get("stage", ""))
             if not sub_id:
                 continue
             _sp = sub.get("passed")
-            # Fail-fast: skipped checks (passed is None / skipped=True) never
-            # ran, so they are recorded as skipped -- not as failures -- and
-            # must not move the failed_at pointer.
-            sub_status = ("pass" if _sp
-                          else "skipped" if (_sp is None or sub.get("skipped")) else "fail")
+            sub_status = "pass" if _sp else "fail"
             steps[sub_id] = {
                 "name": sub.get("name", sub_id),
                 "status": sub_status,
@@ -2613,12 +2254,8 @@ def _seed_live_state_from_recorded_steps(stage_num, vsteps):
                 "output": str(sub.get("output", ""))[:600],
                 "conditional": False,
             }
-            if sub_status == "fail" and _sub_failed_at is None:
-                _sub_failed_at = sub_id
-        # Point the failure heading at the precise failed sub-check (3.2.1),
-        # not just its parent (3.2) -- same precision as the live path.
-        if _sub_failed_at is not None:
-            failed_at = _sub_failed_at
+            if sub_status == "fail" and failed_at is None:
+                failed_at = sub_id
     live_all[stage_num] = {"steps": steps, "current": None,
                            "done": False, "failed_at": failed_at}
 
@@ -2631,7 +2268,7 @@ def _render_partial_substep_summary():
         ├── ❌ N.2 {name} — Failed
         │   ├── ✅ N.2.1 {check} — Passed [collapsible]
         │   ├── ❌ N.2.2 {check} — Failed: {reason} [collapsible: input/output/error]
-        │   └── ⏸️ N.2.3 {check} — Skipped (fail-fast: N.2.2 failed first)
+        │   └── ⏸️ N.2.3 {check} — Not reached
         ├── ⏸️ N.3 {name} — Not reached
         └── ⏸️ N.4 {name} — Not reached
 
@@ -2735,15 +2372,83 @@ with col_output:
                     # yields with no data) so previous stages stay visible.
                     _sdata = step.get("data")
                     if _sdata:
-                        # Defensive copy: never alias the pipeline's mutable
-                        # state dict into session state.
-                        _sdata = dict(_sdata)
                         _sdata["retry_count"] = step.get("retry_count", 0)
                         st.session_state._stage_outputs[step_num] = _sdata
                     if st.session_state._stage_outputs:
                         with stage_output_box.container():
-                            _render_cumulative_preview(
-                                st.session_state._stage_outputs, key_prefix="live_")
+                            for _sn in sorted(st.session_state._stage_outputs):
+                                _sd = st.session_state._stage_outputs[_sn]
+                                _r = _stage3_retry_count(_sd) if _sn == 3 else (_sd.get("retry_count", 0) or 0)
+                                _rt = f" 🔄 Retry {_r}" if _r else ""
+                                with st.expander(f"✓ Stage {_sn} ({_STAGE_NAMES.get(_sn, '')}) output{_rt}", expanded=False):
+                                    # Collapsible AI input (instruction sent to the model).
+                                    _ai_in = _sd.get("ai_input") or {}
+                                    _ai_in = {k: v for k, v in _ai_in.items() if v}
+                                    if _ai_in:
+                                        with st.expander(f"📥 Stage {_sn} AI input", expanded=False):
+                                            for _ak, _av in _ai_in.items():
+                                                st.markdown(f"**{_ak}**")
+                                                st.code(str(_av)[:3000], language="text")
+                                    _ver = _sd.get("verification")
+                                    if _ver is not None:
+                                        _v_ok = bool(getattr(_ver, "is_verified", False))
+                                        _v_conf = getattr(_ver, "confidence_score", "?")
+                                        st.caption(f"{'✓ Verified' if _v_ok else '⚠️ Warning'} — confidence {_v_conf}%")
+                                        if _sd.get("verification_from_cache"):
+                                            _v_ch = _sd.get("cache_age_hours", 0) or 0
+                                            st.caption(f"✓ Used cached verification from {_v_ch:.1f}h ago — API call skipped")
+                                        _sum = getattr(_ver, "verification_summary", "") or ""
+                                        if _sum:
+                                            st.write(_sum[:500])
+                                        _facts = getattr(_ver, "verified_facts", None) or []
+                                        if _facts:
+                                            st.markdown("**✅ Verified facts:**")
+                                            for _f in _facts[:5]:
+                                                st.write(f"• {_f}")
+                                        _vsrcs = getattr(_ver, "sources", None) or []
+                                        if _vsrcs:
+                                            _snames = []
+                                            for _s in _vsrcs[:5]:
+                                                _snm = getattr(_s, "source", "") or ""
+                                                _stl = getattr(_s, "title", "") or ""
+                                                _snames.append(f"{_snm}: {_stl}" if _snm and _stl else (_snm or _stl))
+                                            if _snames:
+                                                st.caption("Sources: " + "; ".join(_snames))
+                                    _chars = _sd.get("finalized_characters")
+                                    if _chars:
+                                        st.caption(f"{len(_chars)} characters finalized")
+                                        for _c in _chars:
+                                            st.write(f"• **{getattr(_c, 'name', '?')}** — {getattr(_c, 'role_or_job', '')}")
+                                    # Dialogue beats only exist on narrations (Stage 3 output).
+                                    # Stage 5 'scripts' are ReelScript storyboards (no scene_lines)
+                                    # and are rendered in their own section below.
+                                    _nars = _sd.get("narrations")
+                                    if _nars:
+                                        st.caption(f"{len(_nars)} script(s) dialogue written")
+                                        for _ni, _nar in enumerate(_nars, 1):
+                                            # Fix: _nar can be dict OR object — handle both
+                                            if isinstance(_nar, dict):
+                                                _lines = _nar.get("scene_lines", []) or []
+                                            else:
+                                                _lines = getattr(_nar, "scene_lines", None) or []
+                                            with st.expander(f"📝 Script {_ni} — full dialogue ({len(_lines)} beats)", expanded=False):
+                                                for _bi, _sl in enumerate(_lines, 1):
+                                                    _ch = _sl.get("character", "?") if isinstance(_sl, dict) else getattr(_sl, "character", "?")
+                                                    _dg = _sl.get("dialogue", "") if isinstance(_sl, dict) else getattr(_sl, "dialogue", "")
+                                                    _ac = _sl.get("action", "") if isinstance(_sl, dict) else getattr(_sl, "action", "")
+                                                    st.markdown(f"**BEAT {_bi}** — **{_ch}**: \"{_dg}\"")
+                                                    if _ac:
+                                                        st.caption(f"🎬 {_ac[:150]}")
+                                    _dscenes = _sd.get("derived_scenes_per_script")
+                                    if _dscenes:
+                                        _total = sum(len(s) for s in _dscenes)
+                                        st.caption(f"{_total} scenes derived from dialogue")
+                                        for _si, _sl in enumerate(_dscenes[:2], 1):
+                                            for _sc in _sl:
+                                                st.write(f"• Script {_si}: **{getattr(_sc, 'location_name', '?')}**")
+                                    _sb = _sd.get("scripts")
+                                    if _sb and not _dscenes:
+                                        st.caption(f"{len(_sb)} storyboard(s) ready")
                     if step.get("completed"):
                         st.session_state.batch_result = step["data"]["batch_result"]
                         st.session_state.generation_error = None
@@ -2853,10 +2558,7 @@ with col_output:
                 # Store retry count for the collapsible history display.
                 _rc = st_res.get("stage3_retry_count", 0) if curr_step == 3 else st_res.get("retry_count", 0)
                 st_res["stage_retry_count"] = _rc
-                # Deep-copy: execute_stage_N mutates the state dict in place, so
-                # without a copy every history entry would alias the latest
-                # state and earlier stages' outputs would appear "lost".
-                st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = copy.deepcopy(st_res)
+                st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = st_res
                 st.session_state.stepwise_extra_instruction = ""
                 st.session_state.generation_error = None
                 s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
@@ -2974,11 +2676,35 @@ with col_output:
                     st.rerun()
         else:
             # Continuous mode: show completed stage outputs so Stage 1/2 views
-            # don't disappear on failure. Same shared cumulative preview as the
-            # live run — every completed stage stays visible and verifiable.
+            # don't disappear on failure.
             _stage_outs = st.session_state.get("_stage_outputs", {}) or {}
             if _stage_outs:
-                _render_cumulative_preview(_stage_outs, key_prefix="failhist_")
+                st.markdown("#### ✅ Completed stages (output preserved)")
+                for _sn in sorted(_stage_outs.keys()):
+                    _sd = _stage_outs[_sn]
+                    _r = _stage3_retry_count(_sd) if _sn == 3 else (_sd.get("retry_count", 0) or 0)
+                    _rt = f" 🔄 Retry {_r}" if _r else ""
+                    _sname = _STAGE_NAMES.get(_sn, "")
+                    with st.expander(f"✓ Stage {_sn} ({_sname}) output{_rt}", expanded=False):
+                        if _sn == 1 and _sd.get("facts"):
+                            st.write("**Verified facts:**")
+                            for _f in _sd["facts"][:6]:
+                                st.markdown(f"• {_f}")
+                        elif _sn == 2 and _sd.get("characters"):
+                            st.write("**Characters:**")
+                            for _c in _sd["characters"]:
+                                _cn = _c.get("name", "") if isinstance(_c, dict) else getattr(_c, "name", "")
+                                _cj = _c.get("role_or_job", "") if isinstance(_c, dict) else getattr(_c, "role_or_job", "")
+                                st.markdown(f"• **{_cn}** — {_cj}")
+                        elif _sn == 3 and _sd.get("dialogue_count"):
+                            st.write(f"**Dialogue beats:** {_sd['dialogue_count']}")
+                        _ai_in = _sd.get("ai_input") or {}
+                        _ai_in = {k: v for k, v in _ai_in.items() if v} if isinstance(_ai_in, dict) else {}
+                        if _ai_in:
+                            with st.expander(f"📥 Stage {_sn} AI input", expanded=False):
+                                for _k, _v in _ai_in.items():
+                                    st.caption(f"**{_k}:**")
+                                    st.code(str(_v)[:2000], language="text")
             st.caption("No script was generated. Resolve the model issue and try again.")
             if st.button("Try again", key="retry_failed_generation", use_container_width=True):
                 st.session_state.generation_error = None
@@ -3044,14 +2770,6 @@ with col_output:
                                             st.caption(f"Template: {_tmpl}")
                                         if _pr:
                                             st.code(_pr[:2000], language="text")
-
-            # Cumulative "final output so far" — the SAME shared preview used by
-            # continuous mode: every completed stage's output accumulates here
-            # as the user advances through the steps.
-            _cum_all = st.session_state.get("stepwise_completed_steps", {}) or {}
-            _cum_steps = {_n: _cum_all[_n] for _n in range(1, curr_step + 1) if _cum_all.get(_n)}
-            if _cum_steps:
-                _render_cumulative_preview(_cum_steps, key_prefix="stepwise_")
 
             st.markdown('<div class="ios-section-label" style="margin-top:14px;">Next Action &amp; Refinements</div>', unsafe_allow_html=True)
             with st.container(border=True):
@@ -3158,7 +2876,77 @@ with col_output:
             _stage_outs = st.session_state.get("_stage_outputs", {}) or {}
             if _stage_outs:
                 with st.expander("🪜 Review Stage-wise Outputs (Stages 1 to 6)", expanded=False):
-                    _render_cumulative_preview(_stage_outs, key_prefix="done_")
+                    for _sn in sorted(_stage_outs):
+                        _sd = _stage_outs[_sn]
+                        _r = _stage3_retry_count(_sd) if _sn == 3 else (_sd.get("retry_count", 0) or 0)
+                        _rt = f" 🔄 Retry {_r}" if _r else ""
+                        with st.expander(f"✓ Stage {_sn} ({_STAGE_NAMES.get(_sn, '')}) output{_rt}", expanded=False):
+                            _ai_in = _sd.get("ai_input") or {}
+                            _ai_in = {k: v for k, v in _ai_in.items() if v}
+                            if _ai_in:
+                                with st.expander(f"📥 Stage {_sn} AI input", expanded=False):
+                                    for _ak, _av in _ai_in.items():
+                                        st.markdown(f"**{_ak}**")
+                                        st.code(str(_av)[:3000], language="text")
+                            _ver = _sd.get("verification")
+                            if _ver is not None:
+                                _v_ok = bool(getattr(_ver, "is_verified", False))
+                                _v_conf = getattr(_ver, "confidence_score", "?")
+                                st.caption(f"{'✓ Verified' if _v_ok else '⚠️ Warning'} — confidence {_v_conf}%")
+                                if _sd.get("verification_from_cache"):
+                                    _v_ch = _sd.get("cache_age_hours", 0) or 0
+                                    st.caption(f"✓ Used cached verification from {_v_ch:.1f}h ago — API call skipped")
+                                _vsum = getattr(_ver, "verification_summary", "") or ""
+                                if _vsum:
+                                    st.write(_vsum[:500])
+                                _vfacts = getattr(_ver, "verified_facts", None) or []
+                                if _vfacts:
+                                    st.markdown("**✅ Verified facts:**")
+                                    for _ff in _vfacts[:5]:
+                                        st.write(f"• {_ff}")
+                                _vsrcs = getattr(_ver, "sources", None) or []
+                                if _vsrcs:
+                                    _snames = []
+                                    for _s in _vsrcs[:5]:
+                                        _snm = getattr(_s, "source", "") or ""
+                                        _stl = getattr(_s, "title", "") or ""
+                                        _snames.append(f"{_snm}: {_stl}" if _snm and _stl else (_snm or _stl))
+                                    if _snames:
+                                        st.caption("Sources: " + "; ".join(_snames))
+                            _chars = _sd.get("finalized_characters")
+                            if _chars:
+                                st.caption(f"{len(_chars)} characters finalized")
+                                for _c in _chars:
+                                    _cnm = _c.get("name", "?") if isinstance(_c, dict) else getattr(_c, "name", "?")
+                                    _crl = _c.get("role_or_job", "") if isinstance(_c, dict) else getattr(_c, "role_or_job", "")
+                                    st.write(f"• **{_cnm}** — {_crl}")
+                            # Dialogue beats only exist on narrations (Stage 3 output).
+                            # Stage 5 'scripts' are ReelScript storyboards (no scene_lines)
+                            # and must never be rendered as dialogue.
+                            _nars = _sd.get("narrations")
+                            if _nars:
+                                st.caption(f"{len(_nars)} script(s) dialogue written")
+                                for _ni, _nar in enumerate(_nars, 1):
+                                    # Fix: _nar can be dict OR object — handle both
+                                    if isinstance(_nar, dict):
+                                        _lines = _nar.get("scene_lines", []) or []
+                                    else:
+                                        _lines = getattr(_nar, "scene_lines", None) or []
+                                    with st.expander(f"📝 Script {_ni} — full dialogue ({len(_lines)} beats)", expanded=False):
+                                        for _bi, _sl in enumerate(_lines, 1):
+                                            _ch = _sl.get("character", "?") if isinstance(_sl, dict) else getattr(_sl, "character", "?")
+                                            _dg = _sl.get("dialogue", "") if isinstance(_sl, dict) else getattr(_sl, "dialogue", "")
+                                            _ac = _sl.get("action", "") if isinstance(_sl, dict) else getattr(_sl, "action", "")
+                                            st.markdown(f"**BEAT {_bi}** — **{_ch}**: \"{_dg}\"")
+                                            if _ac:
+                                                st.caption(f"🎬 {_ac[:150]}")
+                            _dscenes = _sd.get("derived_scenes_per_script")
+                            if _dscenes:
+                                _total = sum(len(s) for s in _dscenes)
+                                st.caption(f"{_total} scenes derived from dialogue")
+                                for _si, _sl in enumerate(_dscenes[:2], 1):
+                                    for _sc in _sl:
+                                        st.write(f"• Script {_si}: **{getattr(_sc, 'location_name', '?')}**")
         if len(res.scripts) > 1:
             sel_id = st.radio(
                 "Version",

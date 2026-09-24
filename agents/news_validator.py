@@ -36,6 +36,16 @@ class NewsValidationAgent(BaseAgent):
             status_callback(self.name, "Scanning live news wire feeds for source verification...")
 
         articles: List[NewsArticle] = news_fetcher.search_news(news_input, limit=5)
+        # Fail loudly: verification must be grounded in live wire sources.
+        # Telling the model to "verify using factual reasoning" with zero
+        # sources invites hallucination, so a source outage is a visible error.
+        if not articles:
+            raise ModelGenerationError(
+                "Stage 1 failed: the live wire feed returned no articles for this topic, "
+                "so there are no sources to verify against. "
+                f"News input: {news_input[:200]!r}. "
+                "Try a more specific headline or different topic wording."
+            )
 
         sources_text = ""
         for i, a in enumerate(articles, 1):
@@ -63,24 +73,30 @@ class NewsValidationAgent(BaseAgent):
             sub_directive=sub_directive,
             revision_directive=revision_directive,
             sources_count=len(articles),
-            sources_text=sources_text if sources_text else "No immediate wire feed found; verify using factual reasoning.",
+            sources_text=sources_text,
         )
 
-        raw_output = ""
         try:
             raw_output = self.execute(prompt, status_callback=status_callback, engine_mode=engine_mode)
         except ModelGenerationError:
             raise
-        except Exception:
-            raw_output = ""
+        except Exception as e:
+            # Fail loudly: never continue with empty output when the engine itself failed.
+            raise ModelGenerationError(
+                f"Stage 1 failed: news validation engine error ({type(e).__name__}): {e}. "
+                f"News input: {news_input[:200]!r}"
+            ) from e
 
-        score = 90
         score_match = re.search(r"CONFIDENCE SCORE:\s*\[?(\d{2,3})\]?%", raw_output, re.IGNORECASE)
-        if score_match:
-            try:
-                score = int(score_match.group(1))
-            except Exception:
-                pass
+        if not score_match:
+            # Fail loudly: the report format mandates a parseable confidence score.
+            # Never silently fall back to a default 90.
+            raise ModelGenerationError(
+                "Stage 1 failed: model returned no parseable CONFIDENCE SCORE. "
+                f"News input was: {news_input[:200]!r}. "
+                f"Raw output snippet: {(raw_output or '')[:400]!r}"
+            )
+        score = int(score_match.group(1))
 
         facts = []
         flags = []
@@ -131,7 +147,12 @@ class NewsValidationAgent(BaseAgent):
                     flags.append(line_str.lstrip("-* "))
 
         if not facts:
-            facts = [f"Core news claim examined: {news_input[:80]}..."]
+            # Fail loudly: never substitute a headline snippet as verified facts.
+            raise ModelGenerationError(
+                "Stage 1 fact extraction failed: model returned no VERIFIED FACTS section. "
+                f"News input was: {news_input[:200]!r}. "
+                "The model must output concise reel-usable facts (who, what happened, key number/figure).",
+            )
 
         # Strip verification-process narration from the summary: only usable
         # facts belong in the output (e.g. "remain insufficiently verified
@@ -140,18 +161,31 @@ class NewsValidationAgent(BaseAgent):
         summary = re.sub(r"[^.]*supplied excerpts[^.]*\.\s*", "", summary, flags=re.IGNORECASE)
         summary = re.sub(r"[^.]*based on the (?:provided|supplied) sources[^.]*\.\s*", "", summary, flags=re.IGNORECASE)
         summary = re.sub(r"\s{2,}", " ", summary).strip()
+        if not summary:
+            # Fail loudly: never substitute a generic "check completed" line as the summary.
+            raise ModelGenerationError(
+                "Stage 1 failed: model returned no usable SUMMARY section. "
+                f"News input was: {news_input[:200]!r}. "
+                "The model must output a one-line summary of confirmed usable facts.",
+            )
 
         # No invented fallbacks for props/locations/actions: Stage 1 reports only
         # what is real. Empty lists are fine — creative invention belongs to Stage 2
         # and downstream consumers already guard empty lists.
 
         if not conflict:
-            conflict = f"Viral controversy surrounding {news_input[:70]}."
+            # Fail loudly: never invent a "viral controversy" line when the model
+            # did not identify the core conflict.
+            raise ModelGenerationError(
+                "Stage 1 failed: model returned no CORE CONFLICT OR IRONY section. "
+                f"News input was: {news_input[:200]!r}. "
+                "The model must identify the central conflict, irony, or controversy driving the story.",
+            )
 
         return NewsVerificationReport(
             is_verified=is_verified,
             confidence_score=score,
-            verification_summary=summary.strip() or f"Factual check completed with {score}% reliability rating.",
+            verification_summary=summary.strip(),
             verified_facts=facts,
             flagged_claims=flags,
             sources=articles,

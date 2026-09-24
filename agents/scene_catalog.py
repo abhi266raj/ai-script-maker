@@ -15,14 +15,14 @@ SCENE_STYLE_SETUPS: Dict[str, List[Dict[str, Any]]] = {
         {
             "id": "dialogue_college_friends",
             "relationship": "College Friends (कॉलेज दोस्त)",
-            "location": "Campus Banyan Tree & Tea Tapri",
-            "setting": "A vibrant university campus perimeter roadside tea tapri beneath a shady banyan tree with college students sitting on wooden benches.",
+            "location": "Campus Banyan Tree Courtyard",
+            "setting": "A vibrant university campus courtyard beneath a shady banyan tree with college students sitting on stone benches.",
             "characters": [
                 "👩 Ananya (College Finalist - कॉलेज छात्रा / दोस्त 1)",
                 "🧑 Vikram (Everyday Street-Smart Friend - पक्का यार / दोस्त 2)"
             ],
-            "props": ["spiral college notebook", "cutting chai glass", "smartphone"],
-            "audio_sfx": "Cutting Chai Clink + Distant Campus Murmur",
+            "props": ["spiral college notebook", "canteen coffee cups", "smartphone"],
+            "audio_sfx": "Distant Campus Murmur + Pages Flip",
             "wardrobes": {
                 "ANANYA": "Casual denim jeans and embroidered cotton kurti with backpack strap.",
                 "VIKRAM": "Everyday casual printed t-shirt and worn blue jeans."
@@ -496,19 +496,19 @@ SCENE_STYLE_SETUPS: Dict[str, List[Dict[str, Any]]] = {
 
     "Satirical Skit": [
         {
-            "id": "skit_netaji_and_chaiwala",
-            "relationship": "Vain Politician & Sharp-Tongued Vendor (नेताजी और चायवाला)",
-            "location": "Campaign Street Corner Tea Tapri",
-            "setting": "A lively street tea stall adorned with political campaign flags, party buntings, and plastic chairs under a tree.",
+            "id": "skit_netaji_and_street_vendor",
+            "relationship": "Vain Politician & Sharp-Tongued Vendor (नेताजी और ठेलेवाला)",
+            "location": "Campaign Street Corner Rally Stage",
+            "setting": "A lively street corner rally stage adorned with political campaign flags, party buntings, and plastic chairs under a tree.",
             "characters": [
                 "🏛️ Netaji Tiwari (Ward Corporator / Candidate - क्षेत्रीय नेताजी)",
-                "☕ Rohan (Wily Street Chaiwala - हाजिरजवाब चायवाला)"
+                "🧑 Rohan (Wily Street Vendor - हाजिरजवाब ठेलेवाला)"
             ],
-            "props": ["heavy marigold garland", "long aluminum tea strainer", "unpaid chai bill chit"],
-            "audio_sfx": "Car Horn Whoosh + Tapri Brass Kettle Hiss",
+            "props": ["heavy marigold garland", "campaign pamphlet stack", "unpaid vendor bill chit"],
+            "audio_sfx": "Car Horn Whoosh + Crowd Cheer Swell",
             "wardrobes": {
                 "NETAJI TIWARI": "Starch-crisp white khadi kurta-pyjama with vibrant saffron-green party scarf and oversized sunglasses.",
-                "ROHAN": "Faded striped collared shirt with blue cotton tea vendor apron."
+                "ROHAN": "Faded striped collared shirt with vendor waist pouch."
             }
         },
         {

@@ -1,6 +1,7 @@
 """Unit tests for Continuous vs Step-Wise Generation & Per-Step Model Execution."""
 
 import unittest
+from types import SimpleNamespace
 from unittest.mock import patch
 from workflow import reel_workflow
 from core.models import ReelBatchResult, NewsVerificationReport, ReelScript
@@ -24,17 +25,29 @@ class TestStepwiseWorkflow(unittest.TestCase):
         )
         self.patcher_validate.start()
 
-        # Mock dual_engine.generate to simulate Local Apple FM responses without external network access
+        # Mock dual_engine.generate to simulate Local Apple FM responses without external network access.
+        # The hooks-batch prompt (hook_strategist/craft_hooks_batch.md) carries
+        # "ANGLE 1:" blocks and requires a parseable HOOK:/CTA: response —
+        # Stage 2 now generates hooks via the model and fails loudly otherwise.
+        _base_response = ("यह एक त्वरित हिंदी रील स्क्रिप्ट है। पूरी जानकारी यहाँ दी गई है।", "🍏 Local Apple FM (On-Device)")
+
+        def _fake_generate(*args, **kwargs):
+            prompt = kwargs.get("prompt", args[0] if args else "")
+            if isinstance(prompt, str) and "ANGLE 1:" in prompt:
+                return ("ANGLE 1:\nHOOK: 🔥 बड़ी खबर!\nCTA: फॉलो करें!", "🍏 Local Apple FM (On-Device)")
+            return _base_response
+
         self.patcher_generate = patch(
             "core.dual_engine.dual_engine.generate",
-            return_value=("यह एक त्वरित हिंदी रील स्क्रिप्ट है। पूरी जानकारी यहाँ दी गई है।", "🍏 Local Apple FM (On-Device)")
+            side_effect=_fake_generate,
         )
         self.patcher_generate.start()
 
-        # Hermetically mock external news search so tests never hit remote RSS or web sources
+        # Hermetically mock external news search so tests never hit remote RSS or web sources.
+        # The validator reads NewsArticle attributes (source/title/snippet).
         self.patcher_news = patch(
             "tools.news_fetcher.news_fetcher.search_news",
-            return_value=[{"title": "Test Headline", "description": "Local test description", "source": "Local Wire"}]
+            return_value=[SimpleNamespace(title="Test Headline", snippet="Local test description", source="Local Wire")]
         )
         self.patcher_news.start()
 

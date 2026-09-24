@@ -6,6 +6,8 @@ Your sole job in the pipeline is translating storyboard scenes into production-r
 - Topic: {news_topic}
 - Tone: {tone}
 - Angle: {angle}
+- Verified News Facts (keep visuals, props, and on-screen elements consistent with the real news):
+{verified_facts}
 {sub_directive}
 - Storyboard Scenes to Translate:
 {scenes_desc}
@@ -22,8 +24,8 @@ Your sole job in the pipeline is translating storyboard scenes into production-r
    - Start with 'Cinematic 9:16 vertical shot:', followed by 'Photorealistic 4K, 24fps', volumetric lighting, and textures.
    - NEVER include vendor names like 'Google Flow', 'Veo', or 'Sora' in prompt text.
 5. NO DIALOGUE IN PROMPTS (VISUALS ONLY):
-   - The spoken dialogue is supplied above ONLY so you know who is speaking and what they are reacting to (lip movement, gestures, props).
-   - NEVER quote, repeat, or include the spoken dialogue lines in the PROMPT text. Describe only what the camera SEES: people, actions, props, environment, lighting, camera motion.
+   - The storyboard above describes ONLY visuals: speaker, action, props, on-screen text.
+   - NEVER quote, repeat, or invent spoken dialogue lines in the PROMPT text. Describe only what the camera SEES: people, actions, props, environment, lighting, camera motion.
 
 # TASK
 For each scene, synthesize an ultra-detailed 9:16 cinematic generative AI video prompt.

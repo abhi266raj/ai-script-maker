@@ -1,4 +1,4 @@
-"""Combinatorial Instruction Matrix for Tones, Angles, Scene Styles & Sample Story Precedence."""
+"""Combinatorial Instruction Matrix for Tones, Angles, Scene Styles & Sample Story Style Reference."""
 
 from typing import Optional, Dict, Any
 from core.metrics import get_duration_budget
@@ -38,8 +38,8 @@ TONE_INSTRUCTIONS: Dict[str, str] = {
         "and heartfelt sorrow. Spoken Hindi should carry quiet pathos, touching sensitivity, "
         "and profound respect for human suffering and loss. Avoid loud, rushed, or robotic cadence."
     ),
-    "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)": (
-        "⚔️ TONE DIRECTIVE (Heated Argument & Clash / तीखी बहस): Deliver fiery high-voltage verbal friction, sharp counter-arguments, "
+    "⚔️ Heated Argument & Clash": (
+        "⚔️ TONE DIRECTIVE (Heated Argument & Clash): Deliver fiery high-voltage verbal friction, sharp counter-arguments, "
         "passionate convictions, and snappy comebacks. Characters challenge each other's assumptions aggressively "
         "yet entertainingly, trading defensive justifications and emotional comebacks."
     ),
@@ -49,8 +49,10 @@ TONE_INSTRUCTIONS: Dict[str, str] = {
 ANGLE_INSTRUCTIONS: Dict[str, str] = {
     "Funny & Relatable": (
         "🎨 EDITORIAL ANGLE DIRECTIVE (Funny & Relatable):\n"
-        "- Imagine an everyday relatable situation (e.g. friends at a local chai tapri, dealing with hilarious daily absurdities).\n"
-        "- Characters make comedic comparisons, express funny shock, and banter naturally."
+        "- Imagine an everyday relatable situation grounded in THIS news story (e.g. two friends reacting on a video call, dealing with hilarious daily absurdities).\n"
+        "- Characters make comedic comparisons, express funny shock, and banter naturally.\n"
+        "- Do NOT default to a chai tapri / tea stall setting \u2014 imagine a fresh, story-specific setting from the news itself.\n"
+        "- Examples above are format inspiration only: NEVER copy an example's characters, location, or situation."
     ),
     "Sarcastic & Edgy": (
         "🎨 EDITORIAL ANGLE DIRECTIVE (Sarcastic & Edgy):\n"
@@ -84,6 +86,51 @@ ANGLE_INSTRUCTIONS: Dict[str, str] = {
         "- Emphasize poignant vulnerability, heartfelt empathy, and emotional truth."
     ),
 }
+
+
+# Vibe -> Angle mapping (mirrors TONE_TO_ANGLE in app.py for the streamlined 2-dropdown UI)
+_VIBE_TO_ANGLE_KEY = {
+    "🇮🇳 Desi Swag & Cultural Pride (भारतीय गौरव)": "Inspirational & Uplifting",
+    "🪔 Traditional Heritage & Wisdom (सांस्कृतिक धरोहर)": "Inspirational & Uplifting",
+    "🔥 Viral & High Energy (धमाकेदार)": "Gen-Z Hinglish",
+    "😂 Relatable Comedy & Sarcasm (देसी ह्यूमर)": "Funny & Relatable",
+    "⚡ Urgent Breaking News (ताज़ा खबर)": "Dramatic Storytelling",
+    "💡 Deep Analysis & Curious (गहन पड़ताल)": "Investigative Deep-Dive",
+    "🎭 Cinematic Storytelling (भावुक कहानी)": "Dramatic Storytelling",
+    "😢 Emotional & Heartbreaking (भावुक / दुखद)": "Tragic & Heartbreaking",
+    "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)": "Sarcastic & Edgy",
+}
+
+
+# Plain pipeline vibe values (core.constants VIBE_*) -> TONE_INSTRUCTIONS key.
+# The UI passes plain values ("Joke", "Breaking", ...); without this map they
+# never matched the emoji-prefixed tone keys and fell into invented generics.
+_PLAIN_VIBE_TO_TONE_KEY = {
+    "Desi Swag": "🇮🇳 Desi Swag & Cultural Pride (भारतीय गौरव)",
+    "Heritage": "🪔 Traditional Heritage & Wisdom (सांस्कृतिक धरोहर)",
+    "Viral": "🔥 Viral & High Energy (धमाकेदार)",
+    "Joke": "😂 Relatable Comedy & Sarcasm (देसी ह्यूमर)",
+    "Breaking": "⚡ Urgent Breaking News (ताज़ा खबर)",
+    "Analysis": "💡 Deep Analysis & Curious (गहन पड़ताल)",
+    "Cinematic": "🎭 Cinematic Storytelling (भावुक कहानी)",
+    "Emotional": "😢 Emotional & Heartbreaking (भावुक / दुखद)",
+    "Heated": "⚔️ Heated Argument & Clash",
+}
+
+
+def _build_vibe_instructions() -> Dict[str, str]:
+    """Merge tone + angle into a single concise Vibe directive per vibe."""
+    result = {}
+    for vibe_key, tone_dir in TONE_INSTRUCTIONS.items():
+        angle_key = _VIBE_TO_ANGLE_KEY.get(vibe_key, "")
+        angle_dir = ANGLE_INSTRUCTIONS.get(angle_key, "")
+        combined = f"{tone_dir}\n{angle_dir}" if angle_dir else tone_dir
+        result[vibe_key] = combined
+    return result
+
+
+VIBE_INSTRUCTIONS: Dict[str, str] = _build_vibe_instructions()
+
 
 SCENE_STYLE_INSTRUCTIONS: Dict[str, str] = {
     "Dialogue": (
@@ -129,89 +176,125 @@ SCENE_STYLE_INSTRUCTIONS: Dict[str, str] = {
 
 
 def get_tone_instruction(tone: str) -> str:
-    """Retrieve or dynamically construct instruction for chosen tone."""
+    """Retrieve the instruction for a chosen tone. Fails loudly on unknown tones."""
+    if not tone or not tone.strip():
+        raise ValueError("Tone is required: no tone/vibe was supplied.")
+    # Plain pipeline vibe values (core.constants VIBE_*) map to their tone key.
+    # Without this map every plain vibe fell through to an invented generic
+    # directive below.
+    key = _PLAIN_VIBE_TO_TONE_KEY.get(tone.strip(), tone.strip())
     for k, v in TONE_INSTRUCTIONS.items():
-        if k == tone or tone.lower() in k.lower() or k.lower() in tone.lower():
+        if k == key or key.lower() in k.lower() or k.lower() in key.lower():
             return v
-    return f"🎙️ TONE DIRECTIVE: Deliver narration embodying {tone} with authentic spoken Hindi."
+    valid = sorted(TONE_INSTRUCTIONS) + sorted(_PLAIN_VIBE_TO_TONE_KEY)
+    raise ValueError(
+        f"Unknown tone {tone!r}: no instruction exists. Valid tones: {valid}. "
+        "Refusing to invent a generic directive."
+    )
 
 
 def get_angle_instruction(angle: str) -> str:
-    """Retrieve or dynamically construct instruction for chosen editorial angle."""
+    """Retrieve the instruction for a chosen editorial angle. Fails loudly on unknown angles."""
+    if not angle or not angle.strip():
+        raise ValueError("Angle is required: no editorial angle was supplied.")
     for k, v in ANGLE_INSTRUCTIONS.items():
         if k == angle or angle.lower() in k.lower() or k.lower() in angle.lower():
             return v
-    return f"🎨 EDITORIAL ANGLE DIRECTIVE: Frame the reel through an imaginative scenario highlighting {angle}."
+    raise ValueError(
+        f"Unknown angle {angle!r}: no instruction exists. Valid angles: {sorted(ANGLE_INSTRUCTIONS)}. "
+        "Refusing to invent a generic directive."
+    )
 
 
 def get_scene_style_instruction(scene_style: str, character_count: int) -> str:
-    """Retrieve scene style directive tailored to character count."""
-    style_key = scene_style.capitalize()
-    base = SCENE_STYLE_INSTRUCTIONS.get(style_key, SCENE_STYLE_INSTRUCTIONS["Dialogue"])
+    """Retrieve scene style directive tailored to character count. Fails loudly on unknown styles."""
+    if not scene_style or not scene_style.strip():
+        raise ValueError("Scene style is required: none was supplied.")
+    style_key = scene_style.strip().capitalize()
+    if style_key not in SCENE_STYLE_INSTRUCTIONS:
+        raise ValueError(
+            f"Unknown scene style {scene_style!r}. Valid styles: {sorted(SCENE_STYLE_INSTRUCTIONS)}. "
+            "Refusing to silently fall back to Dialogue."
+        )
+    base = SCENE_STYLE_INSTRUCTIONS[style_key]
     if scene_style.lower() in ["dialogue", "argument", "debate"] and character_count > 1:
         base += f"\n- Distinctly feature {character_count} different characters speaking across the scenes directly to each other without commenting or social media CTAs."
     return base
 
 
 
+
+def get_vibe_instruction(vibe: str) -> str:
+    """Retrieve the unified Vibe directive (tone + angle merged) for the streamlined 2-dropdown UI."""
+    for k, v in VIBE_INSTRUCTIONS.items():
+        if k == vibe or vibe.lower() in k.lower() or k.lower() in vibe.lower():
+            return v
+    return get_tone_instruction(vibe)
+
+
 def build_tailored_instruction(
     topic: str,
     duration_sec: int,
-    tone: str,
-    angle: str,
-    scene_style: str,
+    tone: str = "",
+    angle: str = "",
+    scene_style: str = "Dialogue",
     character_count: int = 1,
-    batch_count: int = 1,
-    max_retries: int = 5,
     sample_story: Optional[str] = None,
+    vibe: str = "",
 ) -> str:
     """
-    Construct a complete, highly structured master instruction combining all active configuration inputs:
-    - Topic and exact duration
-    - Word count bounds (Recommended, Min, Strict Max, and pacing ~2.0-2.3 w/s)
-    - Specific tone directive
-    - Specific angle imaginary scenario directive
-    - Specific scene style directive with character allocation
-    - Scripts batch count and Retries
-    - Optional sample story with explicit discrepancy precedence rule
-    (Engine and dead frame-scene configs are excluded from instruction).
+    Streamlined for 2-dropdown UI (Vibe + Scene Style).
+    Vibe = Tone + Angle merged into one directive.
     """
     budget = get_duration_budget(duration_sec)
-    active_topic = topic.strip() or "[topic]"
+    active_topic = topic.strip() if topic else ""
+    if not active_topic:
+        raise ValueError(
+            "Topic is required: refusing to build an instruction around a '[topic]' placeholder."
+        )
 
-    tone_dir = get_tone_instruction(tone)
-    angle_dir = get_angle_instruction(angle)
+    effective_vibe = vibe or tone
+    if effective_vibe:
+        # A selected vibe always resolves through the unified directive (which
+        # fails loudly on unknown vibes) — never an empty creative block.
+        creative_block = get_vibe_instruction(effective_vibe)
+    else:
+        tone_dir = get_tone_instruction(tone) if tone else ""
+        angle_dir = get_angle_instruction(angle) if angle else ""
+        creative_block = "\n\n".join([d for d in [tone_dir, angle_dir] if d])
+
     style_dir = get_scene_style_instruction(scene_style, character_count)
 
-    instructions = [
-        f"🎬 Create a {scene_style.lower()} screenplay from this topic: {active_topic}",
-        f"⏱️ Target format: 9:16 vertical, exactly {duration_sec} seconds.",
-        (
-            f"📝 Dialogue Word Count: Recommended ~{budget['recommended_words']} words "
-            f"(Min: {budget['min_words']} words, Strict Max: {budget['max_words']} words). "
-            f"Spoken pace: ~2.0-2.3 words/sec. Spoken dialogue across all scenes combined must not exceed {budget['max_words']} words."
-        ),
-        f"{tone_dir}",
-        f"{angle_dir}",
-        f"{style_dir}",
-        (
-            f"⚙️ Configuration Parameters: {character_count} speaking character(s), "
-            f"{batch_count} script version(s), {max_retries} validation retry attempt(s). "
-            "Include timestamped scenes, visual B-roll direction, speaker character names, and exact spoken dialogue. "
-            "STRICT PROHIBITION: Dialogue must be pure conversation between characters—NO social media commenting, NO asking viewers to comment, NO meta-CTAs."
-        ),
+    word_block = (
+        "📝 Dialogue Word Count: Recommended ~" + str(budget['recommended_words']) + " words "
+        "(Min: " + str(budget['min_words']) + " words, Strict Max: " + str(budget['max_words']) + " words). "
+        "Spoken pace: ~2.0-2.3 words/sec. Spoken dialogue across all scenes combined must not exceed "
+        + str(budget['max_words']) + " words."
+    )
+
+    config_block = (
+        "⚙️ Configuration Parameters: " + str(character_count) + " speaking character(s). "
+        "Include scene descriptions, visual B-roll direction, speaker character names, and exact spoken dialogue. "
+        "STRICT PROHIBITION: Dialogue must be pure conversation between characters\u2014NO social media commenting, NO asking viewers to comment, NO meta-CTAs."
+    )
+
+    parts = [
+        "🎬 Create a " + scene_style.lower() + " screenplay from this topic: " + active_topic,
+        "⏱️ Target format: 9:16 vertical, exactly " + str(duration_sec) + " seconds.",
+        word_block,
+        creative_block,
+        style_dir,
+        config_block,
     ]
 
     if sample_story and sample_story.strip():
         sample_clean = sample_story.strip()
-        instructions.append(
-            "⭐ OPTIONAL SAMPLE STORY & PRECEDENCE RULE:\n"
-            f"Reference Sample Story: \"{sample_clean}\"\n"
-            "CRITICAL PRECEDENCE INSTRUCTION: In case of any discrepancy or conflict between the general instructions "
-            "and this sample story, THE SAMPLE STORY TAKES HIGHEST PRECEDENCE! "
-            "If the sample story specifies or defines characters (e.g. Husband & Wife / पति-पत्नी, Father & Son / पिता-पुत्र, Colleagues, Friends, Doctor & Patient, or custom named characters), "
-            "relationships, or scene descriptions, THOSE CHARACTERS AND RELATIONSHIPS MUST BE DIRECTLY EXTRACTED, RESPECTED, AND FEATURED "
-            "as the speaking characters in the screenplay, while fitting within the strict word budget."
+        parts.append(
+            "⭐ OPTIONAL SAMPLE STORY \u2014 STYLE REFERENCE ONLY:\n"
+            'Reference Sample Story: "' + sample_clean + '"\n'
+            "Use this sample ONLY as inspiration for structure, rhythm, and tone. "
+            "DO NOT copy its characters, names, relationships, locations, objects, "
+            "dialogue, situations, or plot details \u2014 invent everything fresh for the current news story."
         )
 
-    return "\n\n".join(instructions)
+    return "\n\n".join(parts)

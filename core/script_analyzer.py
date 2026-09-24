@@ -1,12 +1,17 @@
 """Script Continuity, Setting & Dialogue Target Analysis Engine.
 
 Performs deep analysis on generated screenplays to audit and heal:
-1. Setting Mismatch: Harmonizes institutional settings (hospitals, courts, tech parks)
-   with character trades (tea vendors, auto drivers) and props/SFX (cutting chai, tapri clatter).
+1. Setting Mismatch: Keeps settings grounded in the verified news topic (hospitals,
+   courts, tech parks stay institutional); reconciles character trades and props/SFX
+   with that setting instead of relocating to a default street stall.
 2. Dialogue Target & Salutation Auditor: Validates Hindi vocatives against addressee gender and role
    (e.g. prevents marital vocatives like 'सुनती हो' when speaking to male peers or friends).
 3. Visual Kinematics & Prop Continuity: Ensures authentic occupational multi-prop handling
-   (e.g. tea vendor holds strainer/cloth in one hand while gesturing with phone in the other).
+   (e.g. a vendor holds work tools in one hand while gesturing with a phone in the other).
+
+Tea-stall / tapri settings are NEVER introduced by this module. They appear only
+when the generated script itself (from news-grounded Stage 2 scenes) already
+contains them.
 """
 
 import re
@@ -17,18 +22,19 @@ from core.models import SceneItem, ReelScript
 def extract_character_core_name_and_role(char_str: str) -> Tuple[str, str, str]:
     """
     Extract (clean_first_name, gender_hint, role_hint) from character string.
-    e.g. '🏛️ Netaji Tiwari (Ward Corporator / Friend 1)' -> ('Netaji', 'male', 'politician')
-         '☕ Rohan (Street Chai Tapri Owner / Friend 2)' -> ('Rohan', 'male', 'tea_vendor')
+    e.g. '🏛️ Netaji Tiwari (Ward Corporator / Friend 1)' -> ('Netaji', 'unknown', 'netaji')
+         '☕ Rohan (Street Chai Tapri Owner / Friend 2)' -> ('Rohan', 'unknown', 'tea_vendor')
          '👩 Sunita (Wife / Pragmatic Homemaker)' -> ('Sunita', 'female', 'wife')
+    Gender is only ever a hint: unknown defaults to "unknown", never "male".
     """
     if not char_str:
         return ("Speaker", "unknown", "unknown")
 
     c_lower = char_str.lower()
 
-    # Determine gender hint
+    # Determine gender hint — unknown stays "unknown" (never default to male).
     female_names = {"sunita", "ananya", "priya", "meera", "sneha", "pooja", "neha", "kavita", "shreya", "wife", "patni", "mother", "daughter", "गृहिणी", "महिला", "पत्नी", "माँ", "बेटी"}
-    gender = "female" if any(f in c_lower for f in female_names) or "👩" in char_str else "male"
+    gender = "female" if any(f in c_lower for f in female_names) or "👩" in char_str else "unknown"
 
     # Determine role hint
     if any(k in c_lower for k in ["tapri", "tea", "chai", "चाय", "टपरी", "vendor"]):
@@ -148,78 +154,31 @@ def audit_and_heal_dialogue_targets(scenes: List[SceneItem]) -> List[SceneItem]:
 
 def audit_and_enhance_visual_kinematics(scenes: List[SceneItem]) -> List[SceneItem]:
     """
-    Ensure physical kinematics and prop handling reflect authentic occupational reality.
-    Specifically:
-    - Tea vendors: holding a tea strainer, kettle, or cloth in one hand while gesturing with or
-      holding a smartphone with the other, rather than floating/awkward smartphone handling.
-    - Auto drivers: holding meter wiping cloth or auto keys while gesturing.
-    - Students: holding coaching notes/books while interacting.
-    - Citizens/Netaji: natural physical posture.
+    Visual kinematics & prop continuity checkpoint.
+
+    Fail-loud rule: this step must NOT invent replacement actions (e.g. handing
+    a tea vendor a strainer/cloth, or an auto driver ignition keys) when a
+    prop looks missing. Invented actions put words in the video generator's
+    mouth. Mismatches are reported by
+    CommonSenseRealismValidator.audit_screenplay and fixed through the normal
+    retry flow with model regeneration — never synthesized here. Scenes are
+    returned unchanged.
     """
-    if not scenes:
-        return scenes
-
-    for sc in scenes:
-        name, gender, role = extract_character_core_name_and_role(sc.character)
-        vis = sc.visual_b_roll or ""
-
-        # Check for tea vendor handling phone
-        if role == "tea_vendor":
-            has_phone = any(k in vis.lower() for k in ["phone", "smartphone", "screen", "मोबाइल", "फोन"])
-            has_tea_prop = any(k in vis.lower() for k in ["strainer", "cloth", "rag", "kettle", "glass", "कपड़ा", "छन्नी", "केतली"])
-            if has_phone and not has_tea_prop:
-                # Enhance action line to ground in occupational reality
-                if "thrust" in vis.lower() or "shov" in vis.lower():
-                    vis = re.sub(
-                        r"(?:thrusting|shoving|holding|pointing)\s+(?:his\s+|her\s+)?(?:mobile\s+)?phone(?:\s+screen)?",
-                        f"holding a tea strainer and wiping cloth in one hand, gesturing with {name}'s smartphone in the other",
-                        vis,
-                        flags=re.IGNORECASE
-                    )
-                else:
-                    vis = f"{name} pauses wiping the counter with a cloth, showing the smartphone screen with animated reactions."
-                sc.visual_b_roll = vis
-
-        # Check for auto driver handling phone
-        elif role == "driver":
-            has_phone = any(k in vis.lower() for k in ["phone", "smartphone", "screen"])
-            has_driver_prop = any(k in vis.lower() for k in ["keys", "rag", "meter", "चाबी"])
-            if has_phone and not has_driver_prop:
-                vis = f"{name} twirls auto ignition keys in one hand while tapping the smartphone screen with the other."
-                sc.visual_b_roll = vis
-
     return scenes
-
-
-def _matches_any(text: str, keywords: List[str]) -> bool:
-    t = text.lower()
-    for kw in keywords:
-        kw_l = kw.lower()
-        if len(kw_l) <= 4 or kw_l in ["coach", "match", "train", "plane", "court", "flats"]:
-            if re.search(rf"\b{re.escape(kw_l)}\b", t):
-                return True
-        elif kw_l in t:
-            return True
-    return False
 
 
 def harmonize_setting_description(script, topic_subject: str = "") -> str:
     """
-    Harmonize the overall scene setting to prevent clashing between institutional topics
-    (hospital casualty, high court, corporate tech park) and working-class character roles / tapri SFX.
-    
-    If characters include a tea vendor, auto driver, or street tapri presence, or if
-    audio/actions feature cutting chai, clinking glasses, or tea aprons:
-    Transforms an institutional interior into the authentic adjacent exterior / roadside tea stall:
-    - 'Government hospital casualty waiting area' ->
-      'A bustling roadside tea stall directly outside the government hospital casualty entrance.'
-    - 'High Court entrance steps' ->
-      'A lively tea kiosk right across the High Court entrance gate.'
-    - 'Corporate tech park' ->
-      'A bustling tea tapri and outdoor kiosk right adjacent to the glass-facade IT tech park.'
+    Return the setting for the SCENE DETAIL header from real pipeline data.
+
+    Fail-loud rule: the setting must come from the sample story's explicit
+    SCENE DETAIL, or from the Stage 4/5 scene_location / scene_atmosphere
+    carried on each SceneItem. Keyword-guessing a setting (hospital, court,
+    ISRO, airport, ...) from script text invents a location the news never
+    established — that entire pool is removed. Returns "" when no real source
+    exists; callers omit the header instead of printing an invented setting.
+    This module NEVER introduces tea-stall / tapri settings.
     """
-    dur = getattr(script, "target_duration_sec", 15) or 15
-    is_fast = dur <= 10
 
     # 1. Respect explicit SCENE DETAIL in sample story if provided
     sample_text = getattr(script, "sample_story_used", "") or ""
@@ -230,137 +189,30 @@ def harmonize_setting_description(script, topic_subject: str = "") -> str:
             if detail_lines:
                 return " ".join(detail_lines)
 
-    # Gather full script cues
-    all_chars = " ".join([sc.character.lower() for sc in (script.scenes or [])])
-    all_vis = " ".join([(sc.visual_b_roll or "").lower() for sc in (script.scenes or [])])
-    all_sfx = " ".join([(sc.audio_sfx or "").lower() for sc in (script.scenes or [])])
-    combined_script = f"{all_chars} {all_vis} {all_sfx}".lower()
+    # 2. Real Stage 4/5 scene data carried on each SceneItem (never guessed).
+    locations: List[str] = []
+    atmospheres: List[str] = []
+    for sc in (getattr(script, "scenes", None) or []):
+        loc = (getattr(sc, "scene_location", "") or "").strip()
+        if loc and loc not in locations:
+            locations.append(loc)
+        atm = (getattr(sc, "scene_atmosphere", "") or "").strip()
+        if atm and atm not in atmospheres:
+            atmospheres.append(atm)
+    parts = []
+    if locations:
+        parts.append("; ".join(locations))
+    if atmospheres:
+        parts.append("; ".join(atmospheres))
+    return ". ".join(parts)
 
-    has_tapri_props = _matches_any(combined_script, [
-        "tapri", "tea vendor", "chai", "चाय", "टपरी", "apron", "strainer",
-        "cutting chai", "glass clink", "wooden bench", "clatter"
-    ])
-    has_hospital = _matches_any(combined_script, ["hospital", "casualty", "doctor", "ward", "अस्पताल", "मरीज"])
-    has_court = _matches_any(combined_script, ["court", "lawyer", "advocate", "judge", "वकील", "कानून"])
-    has_sir = _matches_any(combined_script, ["sir", "dholera", "special investment", "investment region", "industrial corridor", "collectorate", "secretariat", "mantralaya", "babu", "clerk", "land acquisition", "सरकारी दफ्तर", "कलेक्टर", "सचिवालय"])
-    has_tech = _matches_any(combined_script, ["tech park", "wfo", "cyber", "corporate", "बायोमेट्रिक", "biometric"])
-    has_police = _matches_any(combined_script, ["police", "thana", "challan", "थाना", "दरोगा", "ट्रैफिक"])
-    has_election = _matches_any(combined_script, ["election", "netaji", "पार्षद", "rally", "नेता"])
-
-    # Domestic settings for husband-wife or father-son
-    if any(k in all_chars for k in ["wife", "husband", "patni", "pati", "पत्नी", "पति", "गृहिणी"]):
-        base = "A cozy Indian middle-class household living room or kitchen."
-        vibe = "Very fast-paced, high-energy domestic discussion to fit the 10-second limit." if is_fast else "Relatable domestic atmosphere with grocery bills, kitchen counter, and tea cups."
-        return f"{base} {vibe}"
-
-    if any(k in all_chars for k in ["father", "son", "pita", "beta", "पिता", "बेटा"]):
-        base = "A traditional Indian household study room or veranda."
-        vibe = "Animated generational debate to fit the 10-second limit." if is_fast else "Generational contrast atmosphere with reading glasses, newspapers, and study books."
-        return f"{base} {vibe}"
-
-    # Reconcile Institutional Topics with Tapri/Street Elements
-    if has_hospital:
-        if has_tapri_props:
-            base = "A bustling roadside tea stall directly outside the government hospital casualty entrance."
-            vibe = "Very fast-paced, high-energy vibe to fit the 10-second limit." if is_fast else "Ambient street noise, boiling tea, and hospital visitors in the background."
-        else:
-            base = "Government hospital casualty waiting area."
-            vibe = "High-energy, fast-paced emergency movement to fit the 10-second limit." if is_fast else "Stethoscopes, medicinal shelves, and patients in background corridor."
-        return f"{base} {vibe}"
-
-    if has_court:
-        if has_tapri_props:
-            base = "A lively roadside tea kiosk right across the High Court entrance gate."
-            vibe = "Very fast-paced, high-energy legal buzz to fit the 10-second limit." if is_fast else "Advocates carrying legal briefs, police escorts, and tea glasses clinking."
-        else:
-            base = "High Court entrance steps and pillared corridors."
-            vibe = "Very fast-paced, high-energy legal buzz to fit the 10-second limit." if is_fast else "Busy legal buzz with advocates carrying files and waiting litigants."
-        return f"{base} {vibe}"
-
-    if has_sir:
-        if has_tapri_props:
-            base = "A roadside tea stall and kiosk right outside the government collectorate and SIR planning authority."
-            vibe = "Very fast-paced administrative excitement to fit the 10-second limit." if is_fast else "Bustling with official document files, blueprint maps, and waiting citizens."
-        else:
-            base = "A bustling government administrative planning office and collectorate corridor."
-            vibe = "Very fast-paced administrative action to fit the 10-second limit." if is_fast else "Wooden desks stacked with official files, blueprint maps of the Special Investment Region (SIR), ceiling fans, and official wall seals."
-        return f"{base} {vibe}"
-
-    if has_tech:
-        if has_tapri_props:
-            base = "A bustling roadside tea stall and kiosk adjacent to the glass-facade IT tech park."
-            vibe = "Very fast-paced, high-energy vibe to fit the 10-second limit." if is_fast else "Corporate employees passing RFID turnstiles with lanyards in background."
-        else:
-            base = "Glass-facade IT tech park entrance and adjacent outdoor kiosk."
-            vibe = "Very fast-paced, high-energy vibe to fit the 10-second limit." if is_fast else "Corporate employees passing RFID turnstiles with lanyards in background."
-        return f"{base} {vibe}"
-
-    if has_police:
-        if has_tapri_props:
-            base = "A street tea stall corner situated just outside the city police station."
-            vibe = "Very fast-paced, high-energy street action to fit the 10-second limit." if is_fast else "Barricades, patrol vehicle, and busy vehicular commotion in background."
-        else:
-            base = "Bustling Indian urban traffic junction with barricades."
-            vibe = "Very fast-paced, high-energy street action to fit the 10-second limit." if is_fast else "Barricades, police patrol vehicle, and busy vehicular commotion."
-        return f"{base} {vibe}"
-
-    if has_election:
-        base = "A lively street tea tapri decorated with political buntings near the campaign corner."
-        vibe = "High-voltage election banter and snappy energy to fit the 10-second limit." if is_fast else "Political posters, wooden benches, and lively neighborhood debate."
-        return f"{base} {vibe}"
-
-    # Imagined authentic settings from current data
-    if _matches_any(combined_script, ["space", "isro", "satellite", "chandrayaan", "rocket", "orbit", "अंतरिक्ष", "उपग्रह"]):
-        base = "ISRO Satellite Telemetry and Mission Operations Complex."
-        vibe = "High-energy mission countdown urgency to fit the 10-second limit." if is_fast else "Giant projection displays showing orbital coordinates, telemetry consoles, and mission status readouts."
-        return f"{base} {vibe}"
-
-    if _matches_any(combined_script, ["flight", "airline", "airport", "pilot", "dgca", "aircraft", "विमान", "एयरपोर्ट"]):
-        base = "Modern international airport departure terminal and flight dispatch lounge."
-        vibe = "Very fast-paced transit action to fit the 10-second limit." if is_fast else "Panoramic glass windows overlooking the runway tarmac, flight departure screens, and boarding gate."
-        return f"{base} {vibe}"
-
-    if _matches_any(combined_script, ["railway", "train", "metro", "vande bharat", "station", "loco", "रेलवे", "ट्रेन"]):
-        base = "Zonal railway locomotive dispatch room and digital signaling console."
-        vibe = "Fast-paced signaling action to fit the 10-second limit." if is_fast else "Digital track line status consoles, railway dispatch schedule boards, and radio communications."
-        return f"{base} {vibe}"
-
-    if _matches_any(combined_script, ["gold", "silver", "jewellery", "bullion", "zaveri", "सोना", "चांदी", "सर्राफा"]):
-        base = "A high-end bullion showroom and traditional gold trade counter."
-        vibe = "Snappy market excitement to fit the 10-second limit." if is_fast else "Velvet display trays, digital carat weighing scale, wall-mounted bullion market tickers, and glass counters."
-        return f"{base} {vibe}"
-
-    if _matches_any(combined_script, ["cricket", "ipl", "stadium", "match", "tournament", "coach", "मैच", "क्रिकेट"]):
-        base = "Cricket stadium team pavilion and press briefing box."
-        vibe = "High-voltage sports adrenaline to fit the 10-second limit." if is_fast else "Locker benches, sports gear, floodlight glow through glass windows, and team tactical whiteboards."
-        return f"{base} {vibe}"
-
-    if _matches_any(combined_script, ["pollution", "smog", "aqi", "air quality", "environment", "climate", "प्रदूषण", "स्मॉग"]):
-        base = "City environmental monitoring control tower and air analysis lab."
-        vibe = "Urgent ecological discussion to fit the 10-second limit." if is_fast else "Digital AQI hazard index monitors flashing red, air filtration particulate gauges, and city smog horizon view."
-        return f"{base} {vibe}"
-
-    if _matches_any(combined_script, ["army", "defence", "defense", "military", "soldier", "border", "सेना", "फौज", "जवान"]):
-        base = "Border operational observation post and tactical communications bunker."
-        vibe = "Intense tactical focus to fit the 10-second limit." if is_fast else "Camouflage sandbags, tactical topographical map tables, radio communications consoles, and mountain terrain view."
-        return f"{base} {vibe}"
-
-    if _matches_any(combined_script, ["builder", "flats", "housing", "rera", "apartment", "society", "सोसाइटी", "बिल्डर", "फ्लैट"]):
-        base = "High-rise construction site project cabin and architectural blueprint lounge."
-        vibe = "Fast-paced property discussion to fit the 10-second limit." if is_fast else "Large architectural 3D project models, rolled floor plans, yellow safety helmets, and concrete tower view."
-        return f"{base} {vibe}"
-
-    # Default classic street tapri
-    if is_fast:
-        return "A bustling local Indian street chai tapri. Very fast-paced, high-energy vibe to fit the 10-second limit."
-    return "A bustling local Indian street chai tapri. Casual, everyday public space vibe with background customers, street noise, and boiling tea."
 
 
 def analyze_and_heal_script(script: ReelScript) -> ReelScript:
     """
     Execute full analysis and healing phase on a generated screenplay:
     1. Dialogue Target & Vocative healing (fixing marital salutations used with friends/vendors).
-    2. Visual Kinematics & Prop Continuity enhancement (tea vendor multi-prop realism).
+    2. Visual Kinematics & Prop Continuity enhancement (occupational multi-prop realism).
     """
     if not script or not getattr(script, "scenes", None):
         return script
@@ -382,9 +234,12 @@ class CommonSenseRealismValidator:
     """
     Dedicated Common Sense & Physical Realism Validator step.
     Validates:
-    1. Setting vs Character Trade & Props (e.g. tea vendor clinking chai inside a hospital casualty ward).
+    1. Setting vs Character Trade & Props (e.g. tea stall vendor/props clashing
+       with a hospital casualty setting - flagged for alignment with the
+       verified news topic, never "fixed" by relocating to a tea stall).
     2. Dialogue Target & Gender/Vocative Realism (e.g. calling male friend/vendor 'सुनती हो').
-    3. Visual Kinematics & Prop Handling Realism (e.g. tea vendor operating smartphone without occupational trade props).
+    3. Visual Kinematics & Prop Handling Realism (e.g. a vendor operating a
+       smartphone without occupational trade props).
 
     Produces structured findings and actionable feedback passed to previous pipeline steps for modification and retry.
     """
@@ -393,25 +248,30 @@ class CommonSenseRealismValidator:
         issues: List[str] = []
 
         if not script or not getattr(script, "scenes", None):
-            return True, [], "No scenes to audit"
+            # Fail-loud: an empty storyboard is invalid input, not a pass.
+            msg = "Script has no scenes to audit — the pipeline produced an empty storyboard."
+            return False, [msg], msg
 
         all_chars = " ".join([sc.character.lower() for sc in script.scenes])
         all_vis = " ".join([(sc.visual_b_roll or "").lower() for sc in script.scenes])
         all_sfx = " ".join([(sc.audio_sfx or "").lower() for sc in script.scenes])
         combined_text = f"{all_chars} {all_vis} {all_sfx}".lower()
 
-        # 1. Setting Mismatch Audit
-        has_tapri = any(k in combined_text for k in [
+        # 1. Setting Mismatch Audit: flag vendor/stall props that clash with the
+        # news-grounded institutional setting. The fix is to align characters /
+        # props with the verified news topic - never to relocate the scene to a
+        # tea stall.
+        has_stall_props = any(k in combined_text for k in [
             "tapri", "tea vendor", "chai", "चाय", "टपरी", "apron", "strainer", "cutting chai", "glass clink"
         ])
         s1_vis = (script.scenes[0].visual_b_roll or "").lower()
         if "casualty waiting area" in s1_vis or ("hospital" in s1_vis and "ward" in s1_vis):
-            if has_tapri:
-                issues.append("Setting mismatch: Tea stall vendor/props located inside hospital casualty ward. Move setting to roadside tea stall outside casualty entrance.")
+            if has_stall_props:
+                issues.append("Setting mismatch: Tea stall vendor/props clash with the hospital casualty setting. Align the characters/props with the verified hospital news topic (e.g. visitor, staff) instead of introducing a tea stall.")
 
         if "courtroom" in s1_vis or ("court" in s1_vis and "steps" in s1_vis):
-            if has_tapri:
-                issues.append("Setting mismatch: Tapri elements clashing with court interior. Move setting to tea kiosk outside court gate.")
+            if has_stall_props:
+                issues.append("Setting mismatch: Tea stall elements clash with the court setting. Align the characters/props with the verified legal news topic (e.g. litigant, advocate) instead of introducing a tea stall.")
 
         # 2. Dialogue Target Audit
         num_scenes = len(script.scenes)

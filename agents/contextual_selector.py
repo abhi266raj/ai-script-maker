@@ -51,8 +51,9 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
         engine_mode: str = "first_local_then_agy",
     ) -> Dict[str, Any]:
         """
-        Execute dynamic LLM-driven character casting and physical venue selection,
-        with seamless fallback to the domain-grounded rules engine.
+        Execute dynamic LLM-driven character casting and physical venue selection.
+        Fails loudly (ModelGenerationError) when the model output is unusable —
+        rule-synthesized personas are never silently substituted.
         """
         facts_text = "\n".join([f"- {f}" for f in (verified_facts or [])[:4]]) if verified_facts else f"- {news_topic}"
         sub_directive = f"\nChief Editor Casting Directive:\n{sub_instruction}\n" if sub_instruction else ""
@@ -74,21 +75,26 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
             llm_output = self.execute(prompt, engine_mode=engine_mode)
         except ModelGenerationError:
             raise
-        except Exception:
-            llm_output = ""
+        except Exception as e:
+            # Fail loudly: never substitute rule-synthesized personas when the
+            # engine itself failed.
+            raise ModelGenerationError(
+                f"Contextual selection engine error ({type(e).__name__}): {e}. "
+                f"News topic: {news_topic[:200]!r}"
+            ) from e
 
         parsed = self._parse_selector_output(llm_output, character_count)
         if parsed and parsed.get("setting") and parsed.get("personas") and len(parsed["personas"]) >= character_count:
             return parsed
 
-        # Fallback to domain-grounded rule synthesis
-        return self.select_scene_and_characters(
-            news_topic=news_topic,
-            sample_story=sample_story,
-            character_count=character_count,
-            duration_sec=duration_sec,
-            tone=tone,
-            angle=angle,
+        # Fail loudly: the model output was unusable, and silently substituting
+        # rule-synthesized personas would invent characters the model never
+        # chose. Surface the exact gap instead.
+        raise ModelGenerationError(
+            "Contextual selection failed: model returned no parseable setting/personas "
+            f"for {character_count} character(s). "
+            f"News topic: {news_topic[:200]!r}. "
+            f"Raw output snippet: {(llm_output or '')[:300]!r}"
         )
 
     def _parse_selector_output(self, raw_text: str, character_count: int) -> Optional[Dict[str, Any]]:
@@ -146,43 +152,6 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
     def get_domain_setups(self, domain: str) -> List[Dict[str, Any]]:
         """Retrieve all curated setups for a Script Topic Domain (min 6)."""
         return get_domain_catalog(domain)
-
-    def select_setup_for_context(
-        self,
-        news_topic: str = "",
-        scene_style: str = "Dialogue",
-        angle: str = "",
-        sample_story: Optional[str] = None,
-        character_count: int = 2,
-    ) -> Dict[str, Any]:
-        """
-        Subagent selector: picks the most relevant setup matching domain, style, and angle
-        with at least 5-6 setups per category available.
-        """
-        # First check topic domain
-        domain = self.detect_domain(news_topic, sample_story)
-        domain_setups = self.get_domain_setups(domain)
-        if domain != "street_tapri" and domain_setups:
-            return domain_setups[0]
-
-        # Next check scene style setups
-        if scene_style:
-            style_setups = self.get_scene_style_setups(scene_style)
-            if style_setups:
-                combined = f"{news_topic} {sample_story or ''}".lower()
-                for s in style_setups:
-                    rel_words = [w.lower() for w in s.get("relationship", "").split() if len(w) > 2]
-                    if any(w in combined for w in rel_words):
-                        return s
-                return style_setups[0]
-
-        # Next check angle setups
-        if angle:
-            angle_setups = self.get_angle_setups(angle)
-            if angle_setups:
-                return angle_setups[0]
-
-        return self.get_scene_style_setups("Dialogue")[0]
 
     def detect_domain(self, news_topic: str, sample_story: Optional[str] = None) -> str:
         """Classify the story into its core real-world physical domain."""
@@ -260,251 +229,10 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
         ], combined):
             return "agriculture"
 
-        return "street_tapri"
-
-    def select_scene_and_characters(
-        self,
-        news_topic: str,
-        sample_story: Optional[str] = None,
-        character_count: int = 2,
-        duration_sec: int = 15,
-        tone: str = "",
-        angle: str = "",
-    ) -> Dict[str, Any]:
-        """
-        Select coherent domain-grounded scene setting, character personas, and wardrobe.
-        """
-        is_fast = duration_sec <= 10
-        domain = self.detect_domain(news_topic, sample_story)
-
-        # Domain Configuration Profiles
-        if domain == "government_sir":
-            setting = (
-                "A bustling government administrative planning office and collectorate corridor. "
-                "Very fast-paced administrative action to fit the 10-second limit." if is_fast else
-                "A bustling government administrative planning office and collectorate corridor. "
-                "Wooden desks stacked with official files, blueprint maps of the Special Investment Region (SIR), ceiling fans, and official wall seals."
-            )
-            personas_2 = [
-                "👔 Sharma Ji (Government Administrative Officer - वरिष्ठ अधिकारी)",
-                "🧑 Rajesh (Industrial Investor / Local Landowner - उद्यमी / नागरिक)"
-            ]
-            personas_3 = [
-                "👔 Sharma Ji (Government Administrative Officer - वरिष्ठ अधिकारी)",
-                "🧑 Rajesh (Industrial Investor / Citizen - उद्यमी)",
-                "👩 Priya (Land Planning Assistant - सहायक योजनाकार)"
-            ]
-            wardrobes = {
-                "SHARMA JI": "Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard.",
-                "OFFICER": "Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard.",
-                "RAJESH": "Smart-casual collared shirt and trousers, holding a blue official document file folder.",
-                "INVESTOR": "Smart-casual collared shirt and trousers, holding a blue official document file folder.",
-                "PRIYA": "Formal Indian cotton kurti with office ID badge.",
-            }
-            props = ["Special Investment Region blueprint map", "blue official document file folder", "ink stamp"]
-            sfx = "Paper File Thud + Official Stamp Press"
-
-        elif domain == "healthcare":
-            setting = (
-                "Government hospital OPD corridor and consultation room. "
-                "High-energy emergency movement to fit the 10-second limit." if is_fast else
-                "Government hospital OPD corridor and consultation room. "
-                "Stethoscopes, medicinal cabinets, official health posters on green-painted walls, and patient queue in background."
-            )
-            personas_2 = [
-                "🩺 Dr. Rajesh (Senior Hospital Physician - वरिष्ठ चिकित्सक)",
-                "🧑 Ramesh (Patient / Common Citizen - मरीज)"
-            ]
-            personas_3 = [
-                "🩺 Dr. Rajesh (Senior Hospital Physician - वरिष्ठ चिकित्सक)",
-                "🧑 Ramesh (Patient / Common Citizen - मरीज)",
-                "👩 Nurse Sneha (Staff Nurse - सिस्टर / नर्स)"
-            ]
-            wardrobes = {
-                "DR. RAJESH": "White medical lab coat over light-blue formal shirt with stethoscope around neck.",
-                "DOCTOR": "White medical lab coat over light-blue formal shirt with stethoscope around neck.",
-                "RAMESH": "Everyday modest cotton shirt and trousers, holding a medical prescription slip.",
-                "PATIENT": "Everyday modest cotton shirt and trousers, holding a medical prescription slip.",
-                "NURSE": "Hospital nursing scrubs with hospital ID badge.",
-            }
-            props = ["medical prescription slip", "medicine strip", "stethoscope"]
-            sfx = "Hospital Murmur + Medicine Strip Pop"
-
-        elif domain == "legal":
-            setting = (
-                "High Court entrance steps and pillared corridor. "
-                "Rapid, high-stakes legal buzz to fit the 10-second limit." if is_fast else
-                "High Court entrance steps and pillared corridor. "
-                "Advocates carrying tied legal case files, official notices on notice boards, and waiting litigants in background."
-            )
-            personas_2 = [
-                "⚖️ Advocate Verma (High Court Senior Lawyer - वरिष्ठ अधिवक्ता)",
-                "🧑 Kabir (Litigant / Common Citizen - मुवक्किल / नागरिक)"
-            ]
-            personas_3 = [
-                "⚖️ Advocate Verma (High Court Senior Lawyer - वरिष्ठ अधिवक्ता)",
-                "🧑 Kabir (Litigant / Common Citizen - मुवक्किल)",
-                "👔 Clerk Tripathi (Court Reader / Babu - पेशकार बाबू)"
-            ]
-            wardrobes = {
-                "ADVOCATE VERMA": "Black legal advocate coat with white neckband over crisp white collared shirt.",
-                "LAWYER": "Black legal advocate coat with white neckband over crisp white collared shirt.",
-                "KABIR": "Modest formal attire, clutching a tied legal case file folder.",
-                "LITIGANT": "Modest formal attire, clutching a tied legal case file folder.",
-            }
-            props = ["tied legal case file", "law book", "petition document"]
-            sfx = "Gavel Impact + Case File Rustle"
-
-        elif domain == "tech_corporate":
-            setting = (
-                "A glass-partitioned modern corporate IT office and reception. "
-                "Fast-paced tech park energy to fit the 10-second limit." if is_fast else
-                "A glass-partitioned modern corporate IT office and reception. "
-                "RFID security turnstiles, ergonomic workstations, and indoor foliage in background."
-            )
-            personas_2 = [
-                "👩 Priya (Senior Software Engineer / Colleague 1 - सीनियर डेवलपर)",
-                "🧑 Rohan (Product Manager / Colleague 2 - प्रोडक्ट मैनेजर)"
-            ]
-            personas_3 = [
-                "👩 Priya (Senior Software Engineer - कलीग 1)",
-                "🧑 Rohan (Product Manager - कलीग 2)",
-                "👔 Manager Mehra (Corporate Department Head - डायरेक्टर)"
-            ]
-            wardrobes = {
-                "PRIYA": "Smart-casual tech park attire with corporate RFID access lanyard around neck.",
-                "ROHAN": "Collared polo shirt, dark denim jeans, with corporate RFID badge clip.",
-                "COLLEAGUE": "Smart-casual office attire with corporate RFID lanyard.",
-            }
-            props = ["corporate RFID access badge", "slim laptop", "coffee mug"]
-            sfx = "RFID Turnstile Beep + Keyboard Clatter"
-
-        elif domain == "domestic":
-            setting = (
-                "A cozy Indian middle-class household kitchen and living room. "
-                "Very fast-paced domestic discussion to fit the 10-second limit." if is_fast else
-                "A cozy Indian middle-class household kitchen and living room. "
-                "Gas stove, stainless steel spice containers, handwritten grocery list, and tea cups on the counter."
-            )
-            personas_2 = [
-                "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
-                "🧑 Rajesh (Husband / Salaried Employee - नौकरीपेशा पति)"
-            ]
-            personas_3 = [
-                "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
-                "🧑 Rajesh (Husband / Salaried Employee - नौकरीपेशा पति)",
-                "👴 Sharma Ji (Elder Father - पिताजी)"
-            ]
-            wardrobes = {
-                "SUNITA": "Casual traditional printed cotton daily-wear saree or comfortable kurti.",
-                "WIFE": "Casual traditional printed cotton daily-wear saree or comfortable kurti.",
-                "RAJESH": "Casual collared half-sleeve home shirt and cotton trousers.",
-                "HUSBAND": "Casual collared half-sleeve home shirt and cotton trousers.",
-            }
-            props = ["handwritten grocery budget list", "gas cylinder receipt", "steel tea cup"]
-            sfx = "Stainless Steel Clink + Paper Bill Rustle"
-
-        elif domain == "education":
-            setting = (
-                "A traditional Indian study room or college campus corridor. "
-                "Animated academic debate to fit the 10-second limit." if is_fast else
-                "A traditional Indian study room or college campus corridor. "
-                "Heavy coaching modules, NCERT books, and wall calendar with marked exam dates."
-            )
-            personas_2 = [
-                "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)",
-                "🧑 Aarav (Gen-Z Son / Student - आधुनिक बेटा)"
-            ]
-            personas_3 = [
-                "👴 Sharma Ji (Traditional Father - पिता)",
-                "🧑 Aarav (Gen-Z Son / Student - बेटा)",
-                "📚 Master Ji (School Teacher - शिक्षक)"
-            ]
-            wardrobes = {
-                "SHARMA JI": "Traditional cotton kurta-pyjama with reading spectacles resting on nose.",
-                "FATHER": "Traditional cotton kurta-pyjama with reading spectacles resting on nose.",
-                "AARAV": "Modern college hoodie or casual t-shirt with heavy study backpack.",
-                "SON": "Modern college hoodie or casual t-shirt with heavy study backpack.",
-            }
-            props = ["heavy coaching test module book", "coaching fee receipt", "study backpack"]
-            sfx = "Book Slam onto Desk + Page Flutter"
-
-        elif domain == "police":
-            setting = (
-                "City police station (Thana) reception or traffic checkpost. "
-                "Urgent police action to fit the 10-second limit." if is_fast else
-                "City police station (Thana) reception or traffic checkpost. "
-                "Wooden barricades, official wireless walkie-talkie, and duty log register."
-            )
-            personas_2 = [
-                "👮 Sub-Inspector Sunita (Traffic Police Officer - पुलिस दरोगा)",
-                "🛵 Rohan (Citizen / Delivery Partner - नागरिक)"
-            ]
-            personas_3 = [
-                "👮 Sub-Inspector Sunita (Traffic Police Officer - पुलिस दरोगा)",
-                "🛵 Rohan (Citizen / Delivery Partner - नागरिक)",
-                "🧑 Constable Verma (Police Constable - पुलिस जवान)"
-            ]
-            wardrobes = {
-                "SUB-INSPECTOR SUNITA": "Crisp khaki police uniform with brass service badges, shoulder stars, and leather belt.",
-                "POLICE": "Crisp khaki police uniform with brass service badges, shoulder stars, and leather belt.",
-                "ROHAN": "Casual street wear, helmet in hand or delivery company windbreaker jacket.",
-            }
-            props = ["digital e-challan device", "police duty register", "helmet"]
-            sfx = "Police Radio Crackle + Siren Whoosh"
-
-        else:
-            # Check if text actually warrants a chai tapri setting
-            combined_text = f"{news_topic} {sample_story or ''}".lower()
-            is_explicit_tapri = any(k in combined_text for k in ["chai", "tapri", "चाय", "टपरी", "tea", "street", "dhaba", "roadside", "nukkad", "नुक्कड़", "friend", "दोस्त"])
-            if not is_explicit_tapri and (news_topic.strip() or (sample_story and sample_story.strip())):
-                # DYNAMIC IMAGINATION: Synthesize brand new setting, personas, wardrobe, props, and SFX from current data
-                return self.imagine_from_current_data(
-                    news_topic=news_topic,
-                    sample_story=sample_story,
-                    character_count=character_count,
-                    duration_sec=duration_sec,
-                    tone=tone,
-                    angle=angle,
-                )
-
-            # Default authentic street tapri for casual banter
-            setting = (
-                "A bustling local Indian street chai tapri. "
-                "Very fast-paced, high-energy vibe to fit the 10-second limit." if is_fast else
-                "A bustling local Indian street chai tapri. "
-                "Casual, everyday public space vibe with background customers, street noise, and boiling tea."
-            )
-            personas_2 = [
-                "👩 Ananya (College Friend 1 - कॉलेज दोस्त)",
-                "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)"
-            ]
-            personas_3 = [
-                "👩 Ananya (College Friend 1 - कॉलेज दोस्त)",
-                "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)",
-                "☕ Mohan (Chai Tapri Vendor - टपरी वाला)"
-            ]
-            wardrobes = {
-                "ANANYA": "Casual college-going attire (e.g., jeans and a simple kurti).",
-                "VIKRAM": "Everyday street casual wear (e.g., t-shirt and jeans).",
-                "MOHAN": "Casual cotton shirt with a tea vendor apron.",
-            }
-            props = ["cutting chai glass", "smartphone", "wooden bench"]
-            sfx = "Cutting Chai Clink + Tapri Murmur"
-
-        selected_personas = personas_3 if character_count >= 3 else personas_2
-        if character_count == 1:
-            selected_personas = [selected_personas[0]]
-
-        return {
-            "domain": domain,
-            "setting": setting,
-            "setting_detail": setting,
-            "personas": selected_personas,
-            "wardrobes": wardrobes,
-            "props": props,
-            "sfx": sfx,
-        }
+        # Unknown topic: neutral fallback. The tapri decision is made by the
+        # caller (select_scene_and_characters) via explicit tea-stall keywords,
+        # never by this label.
+        return "general"
 
     def extract_key_subject(self, text: str) -> str:
         """Extract a crisp 2-3 word subject noun phrase from text for dynamic imagination."""

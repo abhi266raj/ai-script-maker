@@ -10,7 +10,7 @@ Implements the canonical professional script structure:
 
 import re
 from typing import List, Dict, Any, Optional
-from core.script_analyzer import harmonize_setting_description, analyze_and_heal_script
+from core.script_analyzer import harmonize_setting_description
 
 POLITICAL_NAMES_BLACKLIST = {
     "rahul", "modi", "narendra", "kejriwal", "gandhi", "amit shah", "amit",
@@ -20,31 +20,64 @@ POLITICAL_NAMES_BLACKLIST = {
 
 
 def sanitize_character_name(name: str) -> str:
-    """Ensure characters never use politician names to prevent policy flags."""
-    if not name:
-        return "CREATOR"
+    """Reject missing or politician names loudly instead of inventing replacements.
+
+    Fail-loud rule: a missing character name, or a name matching the political
+    blacklist, is a Stage 2 contract breach. Returning "CREATOR" or swapping in
+    "Rohan"/"Aarav"/"Kabir" would invent a person who was never finalized.
+    Raise with stage/field detail so the retry flow regenerates the characters.
+    """
+    if not name or not name.strip():
+        raise ValueError(
+            "Screenplay formatting failed: a scene has a missing/empty character name. "
+            "Stage 2 must finalize a named character for every beat — inventing one here is not allowed."
+        )
     t = name
     for pol in POLITICAL_NAMES_BLACKLIST:
         if re.search(rf"\b{pol}\b", t, re.IGNORECASE):
-            t = re.sub(rf"\b{pol}\b", "Rohan", t, flags=re.IGNORECASE)
-            t = t.replace("राहुल", "रोहन").replace("अमित", "आरव").replace("मोदी", "कबीर")
+            raise ValueError(
+                f"Screenplay formatting failed: character name {name!r} matches the political-name "
+                f"blacklist (matched {pol!r}). Stage 2 must finalize a fictional, non-political "
+                "character name; inventing a replacement name here is not allowed."
+            )
     return t
 
 
+# Social-media CTA patterns (comment/like/share/subscribe/follow). The
+# formatters must NOT silently rewrite dialogue to remove these —
+# dialogue_has_cta() detects them and the formatters fail loudly instead.
+_CTA_PATTERNS = [
+    r"(?:नीचे\s*)?कमेंट\s*(?:में\s*(?:बताएं|बताओ|लिखें|लिखो)|करें|करो|सेक्शन\s*में\s*(?:बताएं|बताओ))[\s।!?]*",
+    r"(?:आपकी\s*क्या\s*राय\s*है\s*[,।]?\s*)?कमेंट\s*(?:करें|करके\s*बताएं|में\s*बताएं)[\s।!?]*",
+    r"(?:लाइक\s*(?:और|व)\s*)?शेयर\s*(?:करें|करो|करना\s*मत\s*भूलना)[\s।!?]*",
+    r"फॉलो\s*(?:करें|करो|करना\s*मत\s*भूलना)[\s।!?]*",
+    r"सब्सक्राइब\s*(?:करें|करो)[\s।!?]*",
+    r"(?:comment\s*below|share\s*your\s*thoughts|like\s*and\s*subscribe)[\s।!?]*",
+]
+
+
+def dialogue_has_cta(text: str) -> bool:
+    """Return True if dialogue contains a banned social-media CTA.
+
+    Fail-loud rule: CTAs are detected, never silently stripped. The formatters
+    raise so the pipeline regenerates the beat instead of shipping rewritten
+    dialogue.
+    """
+    if not text:
+        return False
+    return any(re.search(pat, text, flags=re.IGNORECASE) for pat in _CTA_PATTERNS)
+
+
 def strip_commenting_and_cta(text: str) -> str:
-    """Purge social media commenting, subscriber calls, and meta-CTAs from dialogue."""
+    """Legacy CTA stripper — kept for backward compatibility only.
+
+    The screenplay formatters no longer call this: they detect CTAs with
+    dialogue_has_cta() and fail loudly instead of silently rewriting dialogue.
+    """
     if not text:
         return ""
     t = text
-    patterns = [
-        r"(?:नीचे\s*)?कमेंट\s*(?:में\s*(?:बताएं|बताओ|लिखें|लिखो)|करें|करो|सेक्शन\s*में\s*(?:बताएं|बताओ))[\s।!?]*",
-        r"(?:आपकी\s*क्या\s*राय\s*है\s*[,।]?\s*)?कमेंट\s*(?:करें|करके\s*बताएं|में\s*बताएं)[\s।!?]*",
-        r"(?:लाइक\s*(?:और|व)\s*)?शेयर\s*(?:करें|करो|करना\s*मत\s*भूलना)[\s।!?]*",
-        r"फॉलो\s*(?:करें|करो|करना\s*मत\s*भूलना)[\s।!?]*",
-        r"सब्सक्राइब\s*(?:करें|करो)[\s।!?]*",
-        r"(?:comment\s*below|share\s*your\s*thoughts|like\s*and\s*subscribe)[\s।!?]*",
-    ]
-    for pat in patterns:
+    for pat in _CTA_PATTERNS:
         t = re.sub(pat, "", t, flags=re.IGNORECASE)
     t = " ".join(t.split())
     return t.strip()
@@ -57,7 +90,7 @@ def clean_physical_action(raw_action: str) -> str:
     Purges meta instructions, prompt jargon, news dumps, and camera preambles.
     """
     if not raw_action:
-        return "Delivers spoken lines with expressive gestures."
+        return ""
     t = raw_action.strip()
 
     # 1. Strip camera & location preamble ending with semicolon or colon
@@ -85,13 +118,22 @@ def clean_physical_action(raw_action: str) -> str:
     # If first character is lowercase, capitalize it
     if t:
         t = t[0].upper() + t[1:]
-    return t or "Delivers spoken lines with expressive comedic gestures."
+    # Fail-loud: an action cleaned down to nothing stays empty. Callers raise
+    # rather than inventing a generic gesture here.
+    return t
 
 
 def get_first_name(char_str: str) -> str:
-    """Extract clean first name without emoji or parenthetical tags."""
-    if not char_str:
-        return "SPEAKER"
+    """Extract clean first name without emoji or parenthetical tags.
+
+    Fail-loud: an empty or unparseable name raises instead of returning the
+    invented placeholder "SPEAKER".
+    """
+    if not char_str or not char_str.strip():
+        raise ValueError(
+            "Screenplay formatting failed: a scene has a missing/empty character name. "
+            "Stage 2 must finalize a named character for every beat."
+        )
     # Remove emoji and special symbols
     cleaned = re.sub(r"[^\w\s/()-]", "", char_str).strip()
     # Take portion before slash or parenthesis
@@ -105,7 +147,10 @@ def get_first_name(char_str: str) -> str:
         else:
             first = tokens[0]
         return first.strip()
-    return "SPEAKER"
+    raise ValueError(
+        f"Screenplay formatting failed: character name {char_str!r} could not be parsed into a name. "
+        "Stage 2 must finalize a parseable character name for every beat."
+    )
 
 
 def extract_sample_clothing_map(sample_text: str) -> Dict[str, str]:
@@ -124,104 +169,18 @@ def extract_sample_clothing_map(sample_text: str) -> Dict[str, str]:
     return res
 
 
-def get_character_attire(char_raw: str, tone: str = "Funny & Relatable") -> str:
-    """Derive authentic character wardrobe matching role and genre without tone clashes."""
-    c_lower = char_raw.lower()
-    is_comedy = any(w in tone.lower() for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "मजाकिया", "relatable"])
+def resolve_character_attire(first_name: str, sample_clothing_map: Dict[str, str], scene) -> str:
+    """Return real attire for a character, or "" when none was finalized.
 
-    # Avoid tragic tone clash in comedy
-    if is_comedy:
-        if "auto" in c_lower or "driver" in c_lower or "चालक" in c_lower:
-            return "Everyday street casual wear or khaki driver uniform shirt."
-        if "delivery" in c_lower or "rider" in c_lower or "राइडर" in c_lower:
-            return "Delivery company jacket, sling bag, and denim jeans."
-        if "tech" in c_lower or "founder" in c_lower or "फाउंडर" in c_lower:
-            return "Smart-casual tech park attire with corporate ID lanyard."
-        if "lawyer" in c_lower or "advocate" in c_lower or "वकील" in c_lower:
-            return "Black advocate coat over white collared shirt."
-        if "police" in c_lower or "दरोगा" in c_lower or "कांस्टेबल" in c_lower:
-            return "Khaki police uniform with brass badge and name plate."
-        if "corporator" in c_lower or "netaji" in c_lower or "पार्षद" in c_lower or "नेता" in c_lower:
-            return "Crisp white kurta-pyjama with a colorful Nehru jacket."
-        if "scientist" in c_lower or "isro" in c_lower or "वैज्ञानिक" in c_lower:
-            return "Crisp light-blue formal shirt with official project ID lanyard and security badge."
-        if "pilot" in c_lower or "captain" in c_lower or "विमानचालक" in c_lower:
-            return "Crisp white pilot uniform shirt with four gold shoulder epaulets and aviation necktie."
-        if "loco" in c_lower or "railway" in c_lower or "रेलवे" in c_lower:
-            return "Khaki railway service uniform with brass zonal badge and service cap."
-        if "coach" in c_lower or "player" in c_lower or "athlete" in c_lower or "खिलाड़ी" in c_lower:
-            return "Official athletic team sportswear and training track jacket."
-        if "bullion" in c_lower or "jeweller" in c_lower or "सर्राफा" in c_lower:
-            return "Fine silk kurta with tailored Nehru vest and gold watch chain."
-        if "builder" in c_lower or "hardhat" in c_lower or "साइट" in c_lower:
-            return "Crisp linen shirt with yellow project hardhat and site boots."
-        if "officer" in c_lower or "अधिकारी" in c_lower or "clerk" in c_lower or "babu" in c_lower or "बाबू" in c_lower:
-            return "Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard."
-        if "investor" in c_lower or "businessman" in c_lower or "उद्यमी" in c_lower or "landowner" in c_lower or "stakeholder" in c_lower:
-            return "Smart-casual collared shirt and trousers, holding a blue official document file folder."
-        if "doctor" in c_lower or "चिकित्सक" in c_lower:
-            return "Hospital lab coat over scrubs with stethoscope around neck."
-        if "teacher" in c_lower or "मास्टर" in c_lower:
-            return "Neat formal shirt and trousers with spectacles."
-        if "vendor" in c_lower or "tapri" in c_lower or "दुकानदार" in c_lower:
-            return "Casual cotton shirt with a tea vendor apron."
-        # Relational roles: Husband, Wife, Father, Son, Colleague, Neighbor
-        if "wife" in c_lower or "पत्नी" in c_lower or "गृहिणी" in c_lower or "homemaker" in c_lower:
-            return "Casual traditional printed cotton saree or simple kurti."
-        if "husband" in c_lower or "पति" in c_lower or "salaried" in c_lower:
-            return "Everyday collared casual shirt and trousers."
-        if "father" in c_lower or "पिता" in c_lower or "chacha" in c_lower or "बुजुर्ग" in c_lower:
-            return "Traditional cotton kurta-pyjama with reading spectacles."
-        if "son" in c_lower or "बेटा" in c_lower or "youth" in c_lower or "gen-z" in c_lower:
-            return "Modern casual hoodie or oversized t-shirt and denim jeans."
-        if "colleague" in c_lower or "कलीग" in c_lower or "coworker" in c_lower:
-            return "Smart-casual office attire with corporate RFID lanyard."
-        if "neighbor" in c_lower or "पड़ोसी" in c_lower:
-            return "Casual everyday neighborhood wear (kurta or polo shirt)."
-        # Generic young creator / student / friend
-        if any(w in c_lower for w in ["priya", "ananya", "sneha", "meera"]):
-            return "Casual college-going attire (e.g., jeans and a simple kurti)."
-        return "Everyday street casual wear (e.g., t-shirt and jeans)."
-
-
-    # Non-comedy tones
-    if "scientist" in c_lower or "isro" in c_lower or "वैज्ञानिक" in c_lower:
-        return "Crisp light-blue formal shirt with official project ID lanyard and security badge."
-    if "pilot" in c_lower or "captain" in c_lower or "विमानचालक" in c_lower:
-        return "Crisp white pilot uniform shirt with four gold shoulder epaulets and aviation necktie."
-    if "loco" in c_lower or "railway" in c_lower or "रेलवे" in c_lower:
-        return "Khaki railway service uniform with brass zonal badge and service cap."
-    if "coach" in c_lower or "player" in c_lower or "athlete" in c_lower or "खिलाड़ी" in c_lower:
-        return "Official athletic team sportswear and training track jacket."
-    if "bullion" in c_lower or "jeweller" in c_lower or "सर्राफा" in c_lower:
-        return "Fine silk kurta with tailored Nehru vest and gold watch chain."
-    if "builder" in c_lower or "hardhat" in c_lower or "साइट" in c_lower:
-        return "Crisp linen shirt with yellow project hardhat and site boots."
-    if "officer" in c_lower or "अधिकारी" in c_lower or "clerk" in c_lower or "babu" in c_lower or "बाबू" in c_lower:
-        return "Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard."
-    if "investor" in c_lower or "businessman" in c_lower or "उद्यमी" in c_lower or "landowner" in c_lower or "stakeholder" in c_lower:
-        return "Smart-casual collared shirt and trousers, holding a blue official document file folder."
-    if "court" in c_lower or "lawyer" in c_lower:
-        return "Formal black legal attire with white neckband."
-    if "police" in c_lower:
-        return "Standard police service uniform."
-    if "wife" in c_lower or "पत्नी" in c_lower or "गृहिणी" in c_lower or "homemaker" in c_lower:
-        return "Casual traditional printed cotton saree or simple kurti."
-    if "husband" in c_lower or "पति" in c_lower:
-        return "Everyday collared casual shirt and trousers."
-    if "father" in c_lower or "पिता" in c_lower or "chacha" in c_lower or "बुजुर्ग" in c_lower:
-        return "Traditional cotton kurta-pyjama with reading spectacles."
-    if "son" in c_lower or "बेटा" in c_lower:
-        return "Modern casual hoodie or oversized t-shirt and denim jeans."
-    if "colleague" in c_lower or "कलीग" in c_lower or "coworker" in c_lower:
-        return "Smart-casual office attire with corporate RFID lanyard."
-    if "neighbor" in c_lower or "पड़ोसी" in c_lower:
-        return "Casual everyday neighborhood wear (kurta or polo shirt)."
-    if "culture" in tone.lower() or "heritage" in tone.lower():
-        return "Traditional Indian attire (kurta-pyjama or elegant saree)."
-    if "sad" in tone.lower() or "lament" in tone.lower():
-        return "Subdued, modest everyday attire reflecting solemnity."
-    return "Everyday smart-casual attire."
+    Fail-loud rule: attire must come from the sample story's explicit clothing
+    map or the Stage 2 character bible (SceneItem.character_attire).
+    Keyword-guessing wardrobes by role/tone invents clothing the pipeline never
+    designed — return "" and let the caller list the name without an invented
+    outfit.
+    """
+    if first_name in sample_clothing_map:
+        return sample_clothing_map[first_name]
+    return (getattr(scene, "character_attire", "") or "").strip()
 
 
 def derive_scene_detail(script) -> str:
@@ -238,33 +197,34 @@ def format_industry_screenplay(
     """
     Format screenplay strictly matching the industry-standard specification:
     - [Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]
-    - SCENE DETAIL: setting & ambient atmosphere
-    - CHARACTERS & CLOTHING: tone-aligned wardrobe descriptions
+    - SCENE DETAIL: setting & ambient atmosphere (from real pipeline data only)
+    - CHARACTERS & CLOTHING: real attire only, never invented wardrobes
     - Time intervals: clean [Time: 0:00 - 0:03] or [Time: 0:00 - 0:06]
-    - Camera Focus & Action: logical take (fast whip-pan/pan for <=10s, smooth continuous take for >10s)
+    - Camera Focus & Action: the pipeline's own action, cleaned of meta-jargon
     - Physical action lines only (bodies, props, expressions)
     - Optional Text Overlay and Audio/SFX (included based on script/context or user preference)
     - Hindi dialogue in Devanagari
-    """
-    # 0. SCRIPT ANALYSIS & HEALING PHASE (Dialogue target auditor & visual kinematics enhancement)
-    from agents.screenplay_coherence import screenplay_coherence_agent
-    script = analyze_and_heal_script(script)
-    script = screenplay_coherence_agent.align_screenplay_coherence(script)
 
-    dur = getattr(script, "target_duration_sec", 15) or 15
-    is_fast = dur <= 10
+    Fail-loud: this is a pure formatter. It never heals/mutates the script and
+    never invents content — missing required fields raise with beat/field detail.
+    """
 
     lines = []
     lines.append("[Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]")
     lines.append("")
 
-    # 1. SCENE DETAIL
+    # 1. SCENE DETAIL — only from real pipeline data. derive_scene_detail
+    # returns "" when no real source exists; the header is omitted rather
+    # than printing an invented setting.
     scene_detail = derive_scene_detail(script)
-    lines.append("SCENE DETAIL:")
-    lines.append(f"⚬\t{scene_detail}")
-    lines.append("")
+    if scene_detail:
+        lines.append("SCENE DETAIL:")
+        lines.append(f"⚬\t{scene_detail}")
+        lines.append("")
 
-    # 2. CHARACTERS & CLOTHING
+    # 2. CHARACTERS & CLOTHING — real attire only. resolve_character_attire
+    # returns "" when no attire was finalized; the name is listed without an
+    # invented outfit.
     raw_chars = []
     seen = set()
     for sc in script.scenes:
@@ -272,41 +232,63 @@ def format_industry_screenplay(
         first_name = get_first_name(c_clean).upper()
         if first_name not in seen:
             seen.add(first_name)
-            raw_chars.append((first_name, c_clean))
+            raw_chars.append((first_name, sc))
 
     if not raw_chars:
-        raw_chars = [("ANANYA", "Ananya"), ("VIKRAM", "Vikram")]
+        raise ValueError(
+            "Screenplay formatting failed: the script has no scenes/characters to format. "
+            "Refusing to invent placeholder characters."
+        )
 
     sample_text = getattr(script, "sample_story_used", "") or ""
     sample_clothing_map = extract_sample_clothing_map(sample_text)
 
     lines.append("CHARACTERS & CLOTHING:")
-    for first_name, full_name in raw_chars:
-        if first_name in sample_clothing_map:
-            attire = sample_clothing_map[first_name]
+    for first_name, sc in raw_chars:
+        attire = resolve_character_attire(first_name, sample_clothing_map, sc)
+        if attire:
+            lines.append(f"⚬\t{first_name}: {attire}")
         else:
-            attire = get_character_attire(full_name, script.angle)
-        lines.append(f"⚬\t{first_name}: {attire}")
+            lines.append(f"⚬\t{first_name}")
     lines.append("")
 
     # 3. BEATS
     total_scenes = len(script.scenes)
     for idx, sc in enumerate(script.scenes):
-        act_dialogue = strip_commenting_and_cta(sc.dialogue or sc.narration_line or "")
+        # Fail-loud: no fallback from dialogue to narration — a missing spoken
+        # line is a Stage 3 contract breach, not something to paper over.
+        raw_dialogue = (sc.dialogue or "").strip()
+        if not raw_dialogue:
+            raise ValueError(
+                f"Screenplay formatting failed: beat {idx + 1} (scene {sc.scene_number}) has no dialogue. "
+                "The pipeline must supply a spoken Hindi line for every beat."
+            )
+        # Fail-loud: CTAs are detected, never silently stripped.
+        if dialogue_has_cta(raw_dialogue):
+            raise ValueError(
+                f"Screenplay formatting failed: beat {idx + 1} (scene {sc.scene_number}) dialogue contains a "
+                "banned social-media CTA (comment/like/share/subscribe/follow). The pipeline must regenerate "
+                "the beat without the CTA instead of shipping silently rewritten dialogue."
+            )
+        act_dialogue = raw_dialogue
         char_clean = sanitize_character_name(sc.character)
         char_upper = get_first_name(char_clean).upper()
 
-        # Clean timestamp
-        ts = sc.timestamp.strip("[] ")
+        # Timestamp: supplied deterministically by the pipeline — never fabricated here.
+        ts = (sc.timestamp or "").strip("[] ")
         if not ts.startswith("Time:") and not ts.startswith("0:"):
-            ts = f"0:{idx*6:02d} - 0:{(idx+1)*6:02d}"
+            raise ValueError(
+                f"Screenplay formatting failed: beat {idx + 1} (scene {sc.scene_number}) has a missing or "
+                f"malformed timestamp ({sc.timestamp!r}). Timestamps are computed by the pipeline; "
+                "fabricating one here is not allowed."
+            )
         if not ts.startswith("Time:"):
             time_header = f"[Time: {ts}]"
         else:
             time_header = f"[{ts}]"
         lines.append(time_header)
 
-        # Logical, non-contradictory camera cues
+        # Camera cues use the pipeline's own cleaned action only.
         clean_action = clean_physical_action(sc.visual_b_roll)
         clean_action_lower = clean_action.lower()
 
@@ -316,9 +298,19 @@ def format_industry_screenplay(
             "the camera pans", "the camera pulls back", "fast pull back", "camera pulls back"
         ])
 
-        if existing_cue:
-            camera_cue = clean_action
-        elif is_fast:
+        # Fail-loud: no synthetic camera choreography. The camera cue is the
+        # pipeline's own cleaned action; a missing action is a contract breach.
+        # (Dead synthetic branches below are kept for the resume pass to delete.)
+        if not clean_action:
+            raise ValueError(
+                f"Screenplay formatting failed: beat {idx + 1} (scene {sc.scene_number}) has no camera action "
+                "(visual_b_roll is empty). The pipeline must supply a real action per beat; "
+                "inventing a generic one here is not allowed."
+            )
+        camera_cue = clean_action
+        if False:  # DEAD — synthetic whip-pan/pull-back/pan-to removed; delete on resume
+            pass
+        elif False:  # DEAD — see above
             # High-energy, snappy direction for <= 10s
             if idx == 0:
                 if clean_action_lower.startswith(char_upper.lower()):
