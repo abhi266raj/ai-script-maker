@@ -150,6 +150,12 @@ class ChiefEditorCoordinatorAgent:
                 f"- Task: Finalise {character_count} distinct, grounded characters with authentic professions, specific wardrobes, emotional postures, and relational dynamics. NO dialogue, NO hooks, NO CTAs.\n"
                 f"- Diversity: Ensure gender balance and varied professions/socioeconomic roles. No all-male default cast.{sample_clause}"
             ),
+            "hooks": (
+                f"Hook & CTA Sub-Instruction (Agent 2):\n"
+                f"- News Story: {news_topic}\n"
+                f"- Format: {target_seconds}s vertical reel, vibe: {tone}.\n"
+                f"- Task: Craft punchy, scroll-stopping 0-3s Devanagari Hindi hooks (<7 words) and concise closing CTAs matching the requested tone and angle."
+            ),
             "dialogue_writer": (
                 f"Dialogue & Voiceover Sub-Instruction (Agent 3):\n"
                 f"- Topic: {news_topic}\n"
@@ -672,7 +678,7 @@ class ChiefEditorCoordinatorAgent:
             tone=active_tone,
             verification=verification,
             duration_sec=target_seconds,
-            sub_instruction=sub_instructions.get("hook_strategist", ""),
+            sub_instruction=sub_instructions.get("hooks", ""),
             engine_mode=engine_mode,
         )
 

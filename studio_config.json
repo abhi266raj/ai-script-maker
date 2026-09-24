@@ -1,5 +1,5 @@
 {
-  "default_engine": "agy_only",
+  "default_engine": "codex_only",
   "default_tone": "Joke",
   "default_duration": 10,
   "batch_count": 1,

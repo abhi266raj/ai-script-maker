@@ -225,6 +225,18 @@ class CharacterFinaliserAgent(BaseAgent):
                 if h and c:
                     parsed_map[idx] = (h, c)
 
+        if 0 not in parsed_map and len(angles) == 1:
+            h = None
+            c = None
+            for line in raw_output.split("\n"):
+                ls = line.strip()
+                if ls.upper().startswith("HOOK:") and not h:
+                    h = ls.split(":", 1)[1].strip("[] \"'\"")
+                elif ls.upper().startswith("CTA:") and not c:
+                    c = ls.split(":", 1)[1].strip("[] \"'\"")
+            if h and c:
+                parsed_map[0] = (h, c)
+
         # Fail loudly: every angle must get a model-generated hook/CTA.
         # Never substitute template hooks for angles the model skipped.
         missing = [i for i in range(len(angles)) if i not in parsed_map]
