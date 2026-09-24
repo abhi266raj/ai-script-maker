@@ -17,8 +17,8 @@
     ],
     "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
   },
-  "default_tone": "Joke",
-  "news_category": "\ud83d\ude02 Desi Quirky, Jugaad & Funny India",
+  "default_tone": "Cinematic",
+  "news_category": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance",
   "workflow_mode": "\u26a1 Continuous",
   "engines": {
     "hybrid": {
@@ -254,11 +254,11 @@
   "selected_script_index": 0,
   "default_angle": "Funny & Relatable",
   "character_count": 2,
-  "scene_style": "Dialogue",
+  "scene_style": "Narration",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
   "source_mode": "\ud83d\udce1 Live News",
-  "selected_headline": "'Reporting From Nobita\u2019s City', Vaibhav Sooryavanshi\u2019s Doraemon post goes viral - Watch",
-  "story_source": "\ud83d\ude02 Desi Quirky, Jugaad & Funny India"
+  "selected_headline": "Indian Medical Parliamentarians\u2019 Forum Organises National Policy Summit on \u2018Swasth Bharat Se Saksham Bharat\u2019 to Reimagine MedTech Access in India",
+  "story_source": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance"
 }

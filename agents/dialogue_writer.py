@@ -1584,6 +1584,23 @@ class DialogueNarrationAgent(BaseAgent):
         except Exception:
             pass
 
+    def __getattr__(self, name):
+        import sys
+        mod = sys.modules.get("agents.dialogue_writer")
+        if mod and hasattr(mod, name) and name != "dialogue_writer":
+            return getattr(mod, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        import sys
+        mod = sys.modules.get("agents.dialogue_writer")
+        if mod and hasattr(mod, name) and name != "dialogue_writer":
+            try:
+                setattr(mod, name, value)
+            except Exception:
+                pass
+
     def _record_stage_step(self, stage, name, input_text, output_text, passed, sub_checks=None):
         """Record a Stage 3 step with linear numbering (3.1, 3.2, 3.3...).
 
@@ -2356,7 +2373,8 @@ class DialogueNarrationAgent(BaseAgent):
             return {"problems": _problems, "pass_output": "Passed - SFX matches tone", "feedback": _fb}
 
         def _check_quality():
-            # ONE AI validator call per script: ai_judge_script_quality judges
+            # ONE AI validator call per script: ai_judge_script_quality (wrapping
+            # ai_judge_news_coverage and ai_judge_tone_compliance) judges
             # tone (ENFORCED) + news coverage (ADVISORY) together in a single
             # model call. Tone failure fails this check, triggers fail-fast
             # and feeds retry feedback; the news verdict is surfaced in the
