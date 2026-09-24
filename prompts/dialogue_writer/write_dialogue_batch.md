@@ -32,12 +32,11 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
 {items_desc}
 
 # CORE RULES & GUIDELINES
-1. THE STORY MUST MAKE COMPLETE LOGICAL SENSE & COVER ALL IMPORTANT NEWS POINTS:
-   - Anyone watching this reel must immediately understand WHAT happened, WHO is involved, and WHERE it took place.
-   - NEWS CLARITY LAW: The dialogue itself must CLEARLY state the actual news — the key event, the people/entities involved, and the core verified facts. A viewer who only hears the dialogue (no visuals, no captions) must understand exactly what news this reel is about. Vague allusions ('वो खबर', 'ये मामला', 'सुना क्या हुआ') WITHOUT naming the actual event, people, and facts are BANNED.
-   - Do NOT talk in vague riddles. Name the actual topic, key verified facts, figures, and places clearly in natural Hindi.
-   - FOR FUNNY / COMIC / SATIRICAL SCRIPTS: Weave humor DIRECTLY out of the real news points! Exaggerate relatable reactions, compare absurd everyday realities (e.g. rent vs groceries, bureaucratic quirks, jugaad), but ensure every core fact from the news is clearly delivered.
-   - EVERY line must earn its place: add a verified fact, ask a specific question, give a direct answer/rebuttal, or land a news-grounded punchline. BAN empty generic lines ('वाह भाई वाह!', 'अब बात पूरी समझ आई!', 'इसे कहते हैं असली ट्विस्ट') that communicate nothing.
+1. INSERT THE NEWS CREATIVELY:
+   - The viewer must absorb WHAT happened, WHO is involved, and WHERE — through the story, never through a lecture. Weave the verified facts INTO the comedy, banter, arguments, gossip, and character voices. The news should emerge naturally from the scene; the viewer learns it while laughing (or feeling the emotion), not while being read a bulletin.
+   - Name the actual topic, key facts, figures, and places in natural Hindi — no vague riddles ('वो खबर', 'ये मामला', 'सुना क्या हुआ'). But deliver them the way real people talk: reacting, joking, arguing, exaggerating.
+   - FOR FUNNY / COMIC / SATIRICAL SCRIPTS: the humor comes FROM the news itself. Exaggerate the absurdity inside the real facts, compare with relatable everyday realities (e.g. rent vs groceries, bureaucratic quirks, jugaad), build punchlines on real numbers and real situations.
+   - EVERY line must earn its place: move the story, reveal a fact through character voice, or land a punchline. BAN empty generic lines ('वाह भाई वाह!', 'अब बात पूरी समझ आई!', 'इसे कहते हैं असली ट्विस्ट') that communicate nothing.
    - Characters are REAL PEOPLE with the listed roles — they react from their own life and perspective. They are NOT news anchors reading headlines.
    - NEVER copy the hook idea or any template text (emojis like 🔥, phrases like 'को लेकर बड़ा अपडेट') into dialogue. The hook is only a meaning-hint — express it in your own words.
 

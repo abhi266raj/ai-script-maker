@@ -29,7 +29,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-import agents.dialogue_writer as dw
+import agents.dialogue_writer
+dw = sys.modules["agents.dialogue_writer"]
 import agents.chief_editor as ce_mod
 
 PASS_MARK = []
@@ -240,9 +241,10 @@ class TestFailFastValidation:
         names = re.findall(r'"name":\s*"([^"]+)"', m.group(1))
         assert names == [
             "Structure check",
-            "News coverage check",
-            "Tone check",
+            "Tone + news check",
             "Language check",
+            "Clothing check",
+            "SFX check",
         ], f"checks not ordered by failure likelihood: {names}"
 
 

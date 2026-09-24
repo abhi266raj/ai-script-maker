@@ -11,3 +11,5 @@ gatherUsageStats = false
 
 [server]
 fileWatcherType = "watchdog"
+runOnSave = true
+

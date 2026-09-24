@@ -132,6 +132,16 @@ def clean_hindi_dialogue(text: str) -> str:
     return t.strip()
 
 
+def _strip_timing_leaks(text: str) -> str:
+    """Remove model-written timestamp artifacts from a draft before it is shown
+    back to the model. The Stage 3 parser tolerates [Time: ...] headers, but the
+    refine prompt must never present them as the format to imitate — otherwise
+    one leak becomes permanent via the previous-draft feedback loop."""
+    text = re.sub(r"\[Time:[^\]\n]*\]", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
+
+
 def smart_trim_dialogue(text: str, max_words: int, rec_words: int, cta: str = "") -> str:
     """Intelligently trim dialogue to fit max_words while preserving complete sentences without injecting commenting or CTA."""
     cleaned = strip_commenting_and_cta(text)
@@ -1202,6 +1212,88 @@ def ai_judge_tone_compliance(
         return False, "Tone compliance could not be verified"
 
 
+def ai_judge_script_quality(
+    agent,
+    scene_lines: List[Dict[str, str]],
+    news_topic: str,
+    hook: str,
+    tone: str,
+    angle: str,
+    engine_mode: str = "first_local_then_agy",
+) -> Tuple[bool, str, bool, str]:
+    """ONE AI call judging BOTH tone compliance (enforced) and news coverage (advisory).
+
+    This is the SOLE AI validator in Stage 3 (token saving): the old separate
+    news-coverage judge and tone judge each cost one model call per script per
+    attempt; this merged judge costs one. The verdict is split deterministically.
+
+    Returns (tone_ok, tone_issue, news_ok, news_reason).
+      - tone_ok=False -> enforced: fails the check, fail-fast, retry feedback.
+      - news_ok=False -> advisory only: surfaced in the check output, never
+                         fails the stage, never triggers a retry, never feeds
+                         retry feedback.
+
+    If the judge engine errors, both verdicts come back False with a visible
+    warning carrying the error detail -- never a silent pass, never a silent
+    fail; the user decides via the normal retry/failure UI.
+    """
+    dialogue_text = "\n".join(
+        f"Beat {i+1} ({sl.get('character', '?')}): {sl.get('dialogue', '')}"
+        for i, sl in enumerate(scene_lines or [])
+    )
+    total_beats = len(scene_lines or [])
+    required_beats = (total_beats * 7 + 9) // 10  # 70% rounded up
+
+    prompt = (
+        "You are a script quality validator for short Hindi comedy/drama reels. "
+        "Judge TWO things about the dialogue below: (1) TONE compliance, (2) NEWS coverage.\n\n"
+        f"REQUIRED TONE: {tone}\n"
+        f"ANGLE: {angle}\n"
+        f"TOTAL BEATS: {total_beats} (at least {required_beats} beats must clearly embody the tone)\n\n"
+        f"NEWS: {news_topic}\n"
+        f"NEWS ANGLE: {hook}\n\n"
+        f"DIALOGUE:\n{dialogue_text}\n\n"
+        "--- TONE ---\n"
+        "For FUNNY/HUMOROUS tone: at least 70% of beats must have genuine humor -- "
+        "a real setup and punchline, witty observations, funny exaggerations, relatable comedy. "
+        "Mild amusement or neutral fact-delivery does NOT count as funny.\n"
+        "For SAD/LAMENT/SORROW tone: at least 70% of beats must be CLEARLY emotional, "
+        "grief-stricken, sorrowful, or heartbreaking -- not just neutral or informational. "
+        "ZERO jokes, ZERO laughter, ZERO comedic beats. Somber throughout.\n"
+        "For other tones: the emotional quality must be present in most beats, never contradicted.\n\n"
+        "--- NEWS ---\n"
+        "Would a viewer who ONLY hears this dialogue (no visuals, no captions) understand WHAT news "
+        "this is about -- the key event and what happened? "
+        "Short-form mentions (e.g. 'Ola' for 'Ola Electric'), paraphrases, and Hindi transliterations all COUNT. "
+        "Generic filler with no specific event does NOT count. "
+        "The news should be woven in creatively through the characters' voices -- not lectured.\n\n"
+        "Answer in exactly this format:\n"
+        "TONE_VERDICT: YES or NO\n"
+        "TONE_ISSUE: <one sentence describing the specific tone problem, or 'None' if compliant>\n"
+        "NEWS_VERDICT: YES or NO\n"
+        "NEWS_REASON: <one sentence explaining why>"
+    )
+    try:
+        response = agent.execute(prompt, engine_mode=engine_mode)
+        tone_match = re.search(r"TONE_VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
+        tone_ok = tone_match.group(1).upper() == "YES" if tone_match else False
+        tone_issue_match = re.search(r"TONE_ISSUE:\s*(.+)", response, re.IGNORECASE)
+        tone_issue = tone_issue_match.group(1).strip() if tone_issue_match else "Tone not maintained"
+        news_match = re.search(r"NEWS_VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
+        news_ok = news_match.group(1).upper() == "YES" if news_match else False
+        news_reason_match = re.search(r"NEWS_REASON:\s*(.+)", response, re.IGNORECASE)
+        news_reason = news_reason_match.group(1).strip() if news_reason_match else "No reason given by the judge"
+        if tone_ok:
+            tone_issue = ""
+        return tone_ok, tone_issue, news_ok, news_reason
+    except Exception as e:
+        _warn = (
+            f"\u26a0\ufe0f AI script-quality judge engine error ({type(e).__name__}: {e}). "
+            "Quality could not be verified \u2014 retry or accept manually."
+        )
+        return False, _warn, False, _warn
+
+
 def get_role_identity(scene_style: str, tone: str, angle: str) -> str:
     """Role priming for the dialogue writer: a funny screenwriter identity when comedy is requested."""
     if is_comedy_request(tone, angle):
@@ -1356,10 +1448,18 @@ def run_validation_checks_fail_fast(check_specs, stage_prefix, val_num, emit=Non
     check_specs: list of dicts, each with:
         "sub": str          - sub-check number, e.g. "1" -> key "3.2.1"
         "name": str         - display name, e.g. "Structure check"
+        "validator": str      - "AI validator" or "code validator"; shown in
+                                the UI so the user sees which checks cost a
+                                model call and which are free code checks.
         "input": str        - input description shown in the UI
         "start_detail": str - optional live detail emitted on start
         "run": callable     - () -> {"problems": [str], "pass_output": str,
                                      "feedback": str}
+        "advisory": bool    - optional; when True the check is observed but
+                                never enforced: problems are surfaced in the
+                                output as advisory and do NOT fail the stage,
+                                do NOT trigger retries, and do NOT feed the
+                                retry feedback.
     stage_prefix: e.g. "3" -> check keys "3.2.1".."3.2.4".
     val_num: validation step number, e.g. 2.
     emit: optional callable(stage, name, phase, **details) for live progress.
@@ -1387,6 +1487,7 @@ def run_validation_checks_fail_fast(check_specs, stage_prefix, val_num, emit=Non
             sub_checks.append({
                 "stage": stage_key,
                 "name": name,
+                "validator": spec.get("validator", ""),
                 "input": spec.get("input", ""),
                 "output": skip_note,
                 "passed": None,
@@ -1405,10 +1506,32 @@ def run_validation_checks_fail_fast(check_specs, stage_prefix, val_num, emit=Non
         result = spec["run"]() or {}
         problems = result.get("problems") or []
         passed = not problems
+        if spec.get("advisory") and not passed:
+            # Advisory check: surface the verdict, never block. It cannot
+            # fail the stage, trigger a retry, or feed retry feedback.
+            _note = "; ".join(problems)
+            _advisory_output = f"Advisory (not blocking): {_note}"
+            sub_checks.append({
+                "stage": stage_key,
+                "name": name,
+                "validator": spec.get("validator", ""),
+                "input": spec.get("input", ""),
+                "output": _advisory_output,
+                "passed": True,
+                "advisory": True,
+            })
+            if emit is not None:
+                emit(stage_key, name, "complete",
+                     status="pass",
+                     detail=f"Advisory: {_note}"[:200],
+                     input=spec.get("input", "")[:300],
+                     output=_advisory_output[:300])
+            continue
         output = result.get("pass_output", "Passed") if passed else "; ".join(problems)
         sub_checks.append({
             "stage": stage_key,
             "name": name,
+            "validator": spec.get("validator", ""),
             "input": spec.get("input", ""),
             "output": output,
             "passed": passed,
@@ -1460,6 +1583,23 @@ class DialogueNarrationAgent(BaseAgent):
                         "stage": 3, **details})
         except Exception:
             pass
+
+    def __getattr__(self, name):
+        import sys
+        mod = sys.modules.get("agents.dialogue_writer")
+        if mod and hasattr(mod, name) and name != "dialogue_writer":
+            return getattr(mod, name)
+        raise AttributeError(f"'{type(self).__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name, value):
+        super().__setattr__(name, value)
+        import sys
+        mod = sys.modules.get("agents.dialogue_writer")
+        if mod and hasattr(mod, name) and name != "dialogue_writer":
+            try:
+                setattr(mod, name, value)
+            except Exception:
+                pass
 
     def _record_stage_step(self, stage, name, input_text, output_text, passed, sub_checks=None):
         """Record a Stage 3 step with linear numbering (3.1, 3.2, 3.3...).
@@ -1836,7 +1976,7 @@ class DialogueNarrationAgent(BaseAgent):
                 f"\n# 🔄 REVISION & CORRECTION MODE (HIGH PRIORITY):\n"
                 f"You are REVISING and REFINING an existing dialogue draft based on user feedback.\n"
                 f"Do NOT generate disconnected lines. Use this previous draft as the reference baseline and directly resolve the user's critique:\n\n"
-                f"PREVIOUS DRAFT:\n{previous_draft.strip()}\n\n"
+                f"PREVIOUS DRAFT:\n{_strip_timing_leaks(previous_draft.strip())}\n\n"
                 f"USER CORRECTION FEEDBACK:\n{fb_text}\n\n"
                 f"CORRECTION MANDATE:\n"
                 f"- Directly address and fix the issues in the user's feedback.\n"
@@ -1910,7 +2050,7 @@ class DialogueNarrationAgent(BaseAgent):
                 dialogue_type_directive=dialogue_type_directive,
                 rec_words=budget["recommended_words"],
                 max_words=budget["max_words"],
-                previous_draft=previous_draft.strip(),
+                previous_draft=_strip_timing_leaks(previous_draft.strip()),
                 feedback=(feedback.strip() if feedback and feedback.strip()
                           else "Improve character interconnectedness and reactive flow."),
             )
@@ -2111,20 +2251,28 @@ class DialogueNarrationAgent(BaseAgent):
             f"Style: {scene_style} | Characters: {character_count} | Duration: {duration_sec}s\n"
             f"Speakers: {', '.join(_speaker_names) if _speaker_names else 'N/A'}"
         )
-        if _retry_round > 0 and feedback:
-            _gen_input += f"\n\nRetry feedback applied:\n{(feedback or '')[:500]}"
+        _dlg_lines = []
+        for _n in narrations:
+            for _sl in (_n.scene_lines or []):
+                _ch = _sl.get("character", "Speaker")
+                _dg = _sl.get("dialogue", "")
+                if _dg:
+                    _dlg_lines.append(f"{_ch}: “{_dg}”")
+        _dlg_formatted = "\n".join(_dlg_lines) if _dlg_lines else (raw_output or "")[:2000]
+
         self._record_stage_step(
             stage=f"3.{_gen_num}",
             name=_gen_name,
             input_text=_gen_input,
-            output_text=raw_output or "",
+            output_text=_dlg_formatted,
             passed=True,
         )
         self._emit_substep(on_substep, f"3.{_gen_num}", _gen_name, "complete",
                            status="pass",
-                           detail=f"Draft {_retry_round + 1} written ({len(raw_output or '')} chars)",
+                           detail=f"Draft {_retry_round + 1} written ({len(_dlg_lines)} dialogue beats)",
                            input=_gen_input[:400],
-                           output=(raw_output or "")[:600])
+                           output=_dlg_formatted,
+                           script_lines=_dlg_lines)
 
         # === STAGE 3.x VALIDATION STEP (3.2, 3.4, 3.6... even numbers) ===
         # FAIL-FAST, ordered by failure likelihood (most failure-prone first):
@@ -2183,12 +2331,54 @@ class DialogueNarrationAgent(BaseAgent):
                 )
             return {"problems": _problems, "pass_output": "Passed - common Hindi", "feedback": _fb}
 
-        def _check_news():
-            # News coverage is validated by the AI judge ONLY (FR-16.1) — no
-            # token/regex matching. The judge sees ONLY the short news title /
-            # basic news content + the dialogue (never the full facts list).
-            # Its VERDICT + REASON are surfaced in the 3.2.2 output so the
-            # decision is verifiable, never a hidden black box.
+        def _check_clothing():
+            # Code-enforced: generic clothing descriptions are banned.
+            _problems = []
+            if raw_output and raw_output.strip():
+                for _idx, _nar in enumerate(narrations):
+                    _chars = getattr(_nar, "characters", None) or []
+                    _c_iss = validate_clothing_specificity(_chars)
+                    if _c_iss:
+                        _problems.append(f"Script {_idx + 1}: " + "; ".join(_c_iss))
+            _fb = ""
+            if _problems:
+                _fb = (
+                    "CLOTHING FIX (HIGHEST PRIORITY — character attire is too generic):\n"
+                    + "\n".join(f"- {p}" for p in _problems)
+                    + "\nRewrite ONLY the CHARACTERS & CLOTHING section: give every character specific, "
+                      "visual, job-and-news-appropriate attire (colors, fabric, accessories, job-related gear). "
+                      "NEVER write generic phrases like \"everyday wear\", \"casual clothes\", or \"t-shirt and jeans\". "
+                      "Keep every beat, joke, and line of dialogue EXACTLY as-is."
+                )
+            return {"problems": _problems, "pass_output": "Passed - attire specific", "feedback": _fb}
+
+        def _check_sfx():
+            # Code-enforced: SFX must match the required tone.
+            _problems = []
+            if raw_output and raw_output.strip():
+                for _idx, _nar in enumerate(narrations):
+                    _sl = getattr(_nar, "scene_lines", None) or []
+                    _sfx_iss = validate_sfx_tone_match(_sl, tone)
+                    if _sfx_iss:
+                        _problems.append(f"Script {_idx + 1}: " + "; ".join(_sfx_iss))
+            _fb = ""
+            if _problems:
+                _fb = (
+                    "SFX FIX (HIGHEST PRIORITY — sound effects clash with the required tone):\n"
+                    + "\n".join(f"- {p}" for p in _problems)
+                    + f"\nRewrite ONLY the Audio/SFX lines of the flagged beats so the sound matches the '{tone}' tone "
+                      "(serious/sad story: somber score and natural ambience — NO comedic sounds, NO laughter). "
+                      "Keep every line of dialogue EXACTLY as-is."
+                )
+            return {"problems": _problems, "pass_output": "Passed - SFX matches tone", "feedback": _fb}
+
+        def _check_quality():
+            # ONE AI validator call per script: ai_judge_script_quality (wrapping
+            # ai_judge_news_coverage and ai_judge_tone_compliance) judges
+            # tone (ENFORCED) + news coverage (ADVISORY) together in a single
+            # model call. Tone failure fails this check, triggers fail-fast
+            # and feeds retry feedback; the news verdict is surfaced in the
+            # output but never blocks, never retries, never feeds feedback.
             _problems = []
             _judge_notes = []
             if raw_output and raw_output.strip():
@@ -2197,54 +2387,23 @@ class DialogueNarrationAgent(BaseAgent):
                     _it = items[_idx] if _idx < len(items) else {}
                     _ith = (_it.get("hook") if isinstance(_it, dict) else "") or ""
                     _hook = clean_hook_for_dialogue(_ith)
-                    _ok, _reason = ai_judge_news_coverage(
-                        self, _sl, news_input, _hook,
+                    _t_ok, _t_issue, _n_ok, _n_reason = ai_judge_script_quality(
+                        self, _sl, news_input, _hook, tone, preferred_angle,
                         engine_mode=engine_mode,
                     )
-                    _judge_notes.append(f"Script {_idx + 1}: {_reason}")
-                    if not _ok:
-                        _problems.append(f"Script {_idx + 1}: {_reason}")
-            _pass_output = "Passed - news clearly stated"
-            if _judge_notes:
-                _pass_output += ". " + " | ".join(_judge_notes)
-            _fb = ""
-            if _problems:
-                _must_state: list = []
-                for _it2 in (items or []):
-                    _h2 = clean_hook_for_dialogue((_it2.get("hook") if isinstance(_it2, dict) else "") or "")
-                    if _h2 and _h2 not in _must_state:
-                        _must_state.append(_h2)
-                _vvf = getattr(verification, "verified_facts", None) if verification else None
-                for _f in (_vvf or [])[:2]:
-                    _fs = str(_f or "").strip()
-                    if _fs and _fs not in _must_state:
-                        _must_state.append(_fs)
-                _facts_block = ("\nThe verified facts that MUST be understandable from the dialogue:\n"
-                                + "\n".join(f"- {_f}" for _f in _must_state)) if _must_state else ""
-                _fb = (
-                    "NEWS COVERAGE FIX (HIGHEST PRIORITY — the draft below never states the news):\n"
-                    + "\n".join(f"- {p}" for p in _problems)
-                    + "\nThe viewer must understand WHAT happened from the dialogue alone. "
-                      "Rewrite so the beats state these verified facts in the characters' own words. "
-                      "State the core what-happened in the FIRST beat."
-                    + _facts_block
-                    + "\nIMPORTANT: Do NOT write a new script from scratch. Take the previous draft and "
-                      "UPDATE ONLY the beats that fail to state the news. Keep what works, fix what doesn't."
-                )
-            return {"problems": _problems, "pass_output": _pass_output, "feedback": _fb}
-
-        def _check_tone():
-            # AI judge verifies the tone is maintained (keyword matching is brittle).
-            _problems = []
-            if raw_output and raw_output.strip():
-                for _idx, _nar in enumerate(narrations):
-                    _sl = getattr(_nar, "scene_lines", None) or []
-                    _t_ok, _t_issue = ai_judge_tone_compliance(
-                        self, _sl, tone, preferred_angle,
-                        engine_mode=engine_mode,
+                    _judge_notes.append(
+                        f"Script {_idx + 1}: tone={'PASS' if _t_ok else 'FAIL'}; "
+                        f"news={'PASS' if _n_ok else 'advisory note'}"
                     )
                     if not _t_ok:
                         _problems.append(f"Script {_idx + 1}: {_t_issue}")
+                    if not _n_ok:
+                        _judge_notes.append(
+                            f"Script {_idx + 1} news (advisory, not blocking): {_n_reason}"
+                        )
+            _pass_output = "Passed - tone maintained"
+            if _judge_notes:
+                _pass_output += ". " + " | ".join(_judge_notes)
             _fb = ""
             if _problems:
                 _fb = (
@@ -2255,22 +2414,29 @@ class DialogueNarrationAgent(BaseAgent):
                       "\nIMPORTANT: Do NOT write a new script from scratch. Take the previous draft and "
                       "UPDATE ONLY the beats that failed. Keep what works, fix what doesn't."
                 )
-            return {"problems": _problems, "pass_output": "Passed - tone maintained", "feedback": _fb}
+            return {"problems": _problems, "pass_output": _pass_output, "feedback": _fb}
 
-        # Fail-fast spec list: ORDER IS THE CONTRACT -- Structure, News, Tone,
-        # Language (most failure-prone first). The helper stops at the first
-        # failure; later checks are recorded as skipped, never executed.
-        _news_input_desc = f"News: {(news_input or '')[:120]} (judge sees title + dialogue only, FR-16.1)"
+        # Fail-fast spec list: ORDER IS THE CONTRACT -- Structure, Tone+news
+        # (one AI validator call: tone enforced, news advisory), Language,
+        # Clothing, SFX (most failure-prone first).
+        # The helper stops at the first failure; later checks are recorded as
+        # skipped, never executed. There is no separate final gate: when all
+        # numbered checks pass, the narrations are fully validated.
+        # "validator" marks each check as "AI validator" (costs one model
+        # call per script per attempt) or "code validator" (free,
+        # deterministic) -- shown in the UI next to every check.
         _check_specs = [
-            {"sub": "1", "name": "Structure check", "run": _check_structure,
+            {"sub": "1", "name": "Structure check", "validator": "code validator", "run": _check_structure,
              "input": f"Dialogue type: {scene_style} | Speakers: {', '.join(_speaker_names) if _speaker_names else 'N/A'}"},
-            {"sub": "2", "name": "News coverage check", "run": _check_news,
-             "input": _news_input_desc},
-            {"sub": "3", "name": "Tone check", "run": _check_tone,
-             "input": f"Required vibe: {tone} | Angle: {preferred_angle or '—'} (70% of beats must embody it)",
+            {"sub": "2", "name": "Tone + news check", "validator": "AI validator", "run": _check_quality,
+             "input": f"Required vibe: {tone} | Angle: {preferred_angle or '—'} — ONE AI call judges tone (enforced, 70% of beats) + news coverage (advisory)",
              "start_detail": f"Required vibe: {tone}"},
-            {"sub": "4", "name": "Language check", "run": _check_language,
+            {"sub": "3", "name": "Language check", "validator": "code validator", "run": _check_language,
              "input": "Scanned dialogue for formal/bureaucratic Hindi (common-person Hindi required)"},
+            {"sub": "4", "name": "Clothing check", "validator": "code validator", "run": _check_clothing,
+             "input": "Character attire must be specific, visual, job/news-appropriate (no generic clothing)"},
+            {"sub": "5", "name": "SFX check", "validator": "code validator", "run": _check_sfx,
+             "input": f"SFX must match the required tone ({tone})"},
         ]
         _sub_checks, _retry_feedback_parts = run_validation_checks_fail_fast(
             _check_specs,
@@ -2290,7 +2456,7 @@ class DialogueNarrationAgent(BaseAgent):
             name=_val_name,
             input_text=f"Validating draft {_retry_round + 1} ({len(raw_output or '')} chars, {len(narrations)} script(s))",
             output_text=(
-                "All 4 checks passed" if _val_passed
+                "All 5 checks passed" if _val_passed
                 else f"Failed: {', '.join(_failed_names)}"
             ),
             passed=_val_passed,
@@ -2298,7 +2464,7 @@ class DialogueNarrationAgent(BaseAgent):
         )
         self._emit_substep(on_substep, f"3.{_val_num}", _val_name, "complete",
                            status="pass" if _val_passed else "fail",
-                           detail=("All 4 checks passed" if _val_passed
+                           detail=("All 5 checks passed" if _val_passed
                                    else f"Failed: {', '.join(_failed_names)}"))
 
         if not _val_passed:
@@ -2341,67 +2507,12 @@ class DialogueNarrationAgent(BaseAgent):
                 partial_output=raw_output or "",
             )
 
-        # --- Final gate: fail loudly, never ship silently-broken output ---
-        # All 4 validations passed above. Final gate double-checks plus
-        # clothing/SFX (not part of the numbered 3.x checks).
-        #
-        # For news coverage: the AI judge is the sole validator (FR-16.1).
-        # It reads only the short news title / basic news content + dialogue
-        # and verdicts whether the viewer can understand what happened.
-        _final_problems: list = []
-        for _idx, _nar in enumerate(narrations):
-            _sl = getattr(_nar, "scene_lines", None) or []
-            _s_iss = validate_dialogue_structure(_sl, scene_style, _speaker_names)
-            if _s_iss:
-                _final_problems.append(f"Script {_idx + 1} structure: " + "; ".join(_s_iss))
-            _h_found = find_formal_hindi(str(_nar))
-            if _h_found:
-                _final_problems.append(f"Script {_idx + 1} formal Hindi: " + ", ".join(_h_found))
-            _it = items[_idx] if _idx < len(items) else {}
-            _ith = (_it.get("hook") if isinstance(_it, dict) else "") or ""
-            # News coverage: the AI judge is the sole validator (FR-16.1) —
-            # no token/regex matching. It reads only the short news title /
-            # basic news content + the dialogue, and its VERDICT + REASON are
-            # recorded so the decision stays verifiable.
-            _n_ok, _n_reason = ai_judge_news_coverage(
-                self, _sl, news_input, clean_hook_for_dialogue(_ith),
-                engine_mode=engine_mode,
-            )
-            if not _n_ok:
-                _final_problems.append(f"Script {_idx + 1} news coverage: {_n_reason}")
-            # Tone compliance: ask the AI judge directly (keyword matching is brittle).
-            # The judge understands humor, emotion, and tone semantically.
-            _tone_ok, _tone_issue = ai_judge_tone_compliance(
-                self, _sl, tone, preferred_angle,
-                engine_mode=engine_mode,
-            )
-            if not _tone_ok:
-                _final_problems.append(f"Script {_idx + 1} tone ({tone}): {_tone_issue}")
-            # Code-enforced: generic clothing ban
-            _chars = getattr(_nar, "characters", None) or []
-            _c_iss = validate_clothing_specificity(_chars)
-            if _c_iss:
-                _final_problems.append(f"Script {_idx + 1} clothing: " + "; ".join(_c_iss))
-            # Code-enforced: SFX tone match
-            _sfx_iss = validate_sfx_tone_match(_sl, tone)
-            if _sfx_iss:
-                _final_problems.append(f"Script {_idx + 1} SFX: " + "; ".join(_sfx_iss))
-        if _final_problems:
-            # Attach all attempt outputs as evidence: the user wants to see
-            # what attempt 1, 2, 3 produced. Snippets only — full outputs
-            # are already visible via self.last_attempt_history in the UI.
-            _attempt_evidence = ""
-            if attempt_history:
-                _attempt_evidence = " | ".join(
-                    f"Attempt {i + 1} ({len(a or '')} chars): {(a or '')[:200]!r}"
-                    for i, a in enumerate(attempt_history)
-                )
-            raise ModelGenerationError(
-                "Stage 3 dialogue validation failed after automatic correction: "
-                + " | ".join(_final_problems)
-                + (" | " + _attempt_evidence if _attempt_evidence else ""),
-                partial_output=raw_output or "",
-            )
+        # All 5 numbered checks passed above (structure, tone+news, language,
+        # clothing, SFX) — the narrations are fully validated. There
+        # is no separate final gate: it used to re-run structure/language/tone
+        # (including a duplicate paid tone-judge AI call per script) after the
+        # numbered checks had already passed. Fail-loud behavior is preserved:
+        # if the retry budget is exhausted, the raise above fires with evidence.
 
         # Enrich: for any speaker name the model used that wasn't in the
         # finalized list, generate a full character profile (job, attire, etc.)

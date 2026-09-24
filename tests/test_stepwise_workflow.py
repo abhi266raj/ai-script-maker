@@ -29,12 +29,33 @@ class TestStepwiseWorkflow(unittest.TestCase):
         # The hooks-batch prompt (hook_strategist/craft_hooks_batch.md) carries
         # "ANGLE 1:" blocks and requires a parseable HOOK:/CTA: response —
         # Stage 2 now generates hooks via the model and fails loudly otherwise.
+        _news_response = (
+            "STATUS: VERIFIED\nCONFIDENCE SCORE: 90%\nSUMMARY: Verified news story.\n"
+            "VERIFIED FACTS:\n- Fact 1\n- Fact 2\n"
+            "CORE CONFLICT OR IRONY: Viral debate and controversy surrounding the announcement.\n"
+            "TANGIBLE ACTIONS:\n- Inspecting items\nKEY LOCATIONS:\n- City square\nPHYSICAL PROPS:\n- Banner",
+            "🍏 Local Apple FM (On-Device)"
+        )
+        _groups_response = (
+            "GROUP A:\n"
+            "CHARACTER 1:\nName: Rohan\nJob: News Anchor\nAttire: Blue blazer\nEmotion: Confident\nRelationship: Anchor\n"
+            "CHARACTER 2:\nName: Priya\nJob: Field Reporter\nAttire: Yellow kurta\nEmotion: Excited\nRelationship: Reporter\n"
+            "GROUP B:\n"
+            "CHARACTER 1:\nName: Amit\nJob: Tech Analyst\nAttire: Grey shirt\nEmotion: Skeptical\nRelationship: Analyst\n"
+            "CHARACTER 2:\nName: Neha\nJob: Student\nAttire: Casual hoodie\nEmotion: Curious\nRelationship: Student\n",
+            "🍏 Local Apple FM (On-Device)"
+        )
         _base_response = ("यह एक त्वरित हिंदी रील स्क्रिप्ट है। पूरी जानकारी यहाँ दी गई है।", "🍏 Local Apple FM (On-Device)")
 
         def _fake_generate(*args, **kwargs):
             prompt = kwargs.get("prompt", args[0] if args else "")
-            if isinstance(prompt, str) and "ANGLE 1:" in prompt:
-                return ("ANGLE 1:\nHOOK: 🔥 बड़ी खबर!\nCTA: फॉलो करें!", "🍏 Local Apple FM (On-Device)")
+            if isinstance(prompt, str):
+                if "GROUP A" in prompt or "CHARACTER 1" in prompt or "finalise_character_groups" in prompt or "character_group" in prompt.lower():
+                    return _groups_response
+                if "ANGLE 1:" in prompt or "craft_hooks" in prompt:
+                    return ("ANGLE 1:\nHOOK: 🔥 बड़ी खबर!\nCTA: फॉलो करें!", "🍏 Local Apple FM (On-Device)")
+                if "CONFIDENCE SCORE" in prompt or "FACTS:" in prompt or "CORE CONFLICT" in prompt or "News Verification" in prompt or "RESEARCH" in prompt or "verify" in prompt.lower():
+                    return _news_response
             return _base_response
 
         self.patcher_generate = patch(

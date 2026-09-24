@@ -182,13 +182,28 @@ class NewsValidationAgent(BaseAgent):
                 "The model must identify the central conflict, irony, or controversy driving the story.",
             )
 
+        converted_articles = []
+        for a in articles:
+            if isinstance(a, NewsArticle):
+                converted_articles.append(a)
+            elif isinstance(a, dict):
+                converted_articles.append(NewsArticle(**a))
+            else:
+                converted_articles.append(NewsArticle(
+                    title=str(getattr(a, "title", "")),
+                    link=str(getattr(a, "link", getattr(a, "url", ""))),
+                    source=str(getattr(a, "source", "")),
+                    snippet=str(getattr(a, "snippet", getattr(a, "description", ""))),
+                    published=str(getattr(a, "published", "")),
+                ))
+
         return NewsVerificationReport(
             is_verified=is_verified,
             confidence_score=score,
             verification_summary=summary.strip(),
             verified_facts=facts,
             flagged_claims=flags,
-            sources=articles,
+            sources=converted_articles,
             physical_props=props,
             key_locations=locations,
             core_conflict_or_irony=conflict.strip(),

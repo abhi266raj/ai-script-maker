@@ -194,6 +194,10 @@ def harmonize_setting_description(script, topic_subject: str = "") -> str:
     atmospheres: List[str] = []
     for sc in (getattr(script, "scenes", None) or []):
         loc = (getattr(sc, "scene_location", "") or "").strip()
+        if not loc:
+            m = re.search(r"shot\s+(?:at|outside|inside|in|near)\s+(?:a |an )?([^;.]+)", getattr(sc, "visual_b_roll", "") or "", re.IGNORECASE)
+            if m:
+                loc = m.group(1).strip()
         if loc and loc not in locations:
             locations.append(loc)
         atm = (getattr(sc, "scene_atmosphere", "") or "").strip()

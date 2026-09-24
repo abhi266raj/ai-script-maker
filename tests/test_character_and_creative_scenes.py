@@ -159,8 +159,8 @@ def test_professional_screenplay_scene_description_and_clean_beats():
     assert "PRIYA:" in pro
     assert "ROHAN:" in pro
 
-    # Running beats have pure action without "Handheld dynamic 9:16 shot at..."
-    assert "[Time: 0:00 - 0:03]" in pro
+    # Per FR-9.3: timestamps are omitted by default in exported screenplay
+    assert "[Time:" not in pro
     assert "Camera Focus & Action: Single continuous handheld take starting on Priya." in pro
     assert "Priya aggressively slaps her smartphone onto the bench" in pro
     assert "Handheld dynamic 9:16 shot" not in pro
@@ -191,6 +191,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 scene_number=1,
                 character="Ananya",
                 timestamp="0:00 - 0:03",
+                scene_atmosphere="Very fast-paced, high-energy vibe to fit the 10-second limit.",
                 visual_b_roll="Fast whip-pan to Ananya slamming a book on the library counter.",
                 on_screen_text="No Jobs?",
                 audio_sfx="Fast whoosh + heavy book slam.",

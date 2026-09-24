@@ -193,13 +193,13 @@ def format_industry_screenplay(
     topic_name: str = "",
     include_overlays: bool = True,
     include_sfx: bool = True,
+    include_timestamps: bool = False,
 ) -> str:
     """
     Format screenplay strictly matching the industry-standard specification:
     - [Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]
     - SCENE DETAIL: setting & ambient atmosphere (from real pipeline data only)
     - CHARACTERS & CLOTHING: real attire only, never invented wardrobes
-    - Time intervals: clean [Time: 0:00 - 0:03] or [Time: 0:00 - 0:06]
     - Camera Focus & Action: the pipeline's own action, cleaned of meta-jargon
     - Physical action lines only (bodies, props, expressions)
     - Optional Text Overlay and Audio/SFX (included based on script/context or user preference)
@@ -282,11 +282,12 @@ def format_industry_screenplay(
                 f"malformed timestamp ({sc.timestamp!r}). Timestamps are computed by the pipeline; "
                 "fabricating one here is not allowed."
             )
-        if not ts.startswith("Time:"):
-            time_header = f"[Time: {ts}]"
-        else:
-            time_header = f"[{ts}]"
-        lines.append(time_header)
+        if include_timestamps:
+            if not ts.startswith("Time:"):
+                time_header = f"[Time: {ts}]"
+            else:
+                time_header = f"[{ts}]"
+            lines.append(time_header)
 
         # Camera cues use the pipeline's own cleaned action only.
         clean_action = clean_physical_action(sc.visual_b_roll)
@@ -307,59 +308,8 @@ def format_industry_screenplay(
                 "(visual_b_roll is empty). The pipeline must supply a real action per beat; "
                 "inventing a generic one here is not allowed."
             )
-        camera_cue = clean_action
-        if False:  # DEAD — synthetic whip-pan/pull-back/pan-to removed; delete on resume
-            pass
-        elif False:  # DEAD — see above
-            # High-energy, snappy direction for <= 10s
-            if idx == 0:
-                if clean_action_lower.startswith(char_upper.lower()):
-                    rest = clean_action[len(char_upper):].strip()
-                    for vp, vi in [
-                        ("slams", "slamming"), ("shoves", "shoving"), ("points", "pointing"),
-                        ("gestures", "gesturing"), ("drops", "dropping"), ("holds", "holding"),
-                        ("sets", "setting"), ("sips", "sipping"), ("takes", "taking"),
-                        ("unfolds", "unfolding"), ("taps", "tapping"), ("waves", "waving"),
-                        ("thrusts", "thrusting"), ("counts", "counting")
-                    ]:
-                        if rest.startswith(vp):
-                            rest = vi + rest[len(vp):]
-                            break
-                        if " " in rest:
-                            adv, verb_rest = rest.split(" ", 1)
-                            if verb_rest.startswith(vp):
-                                rest = f"{adv} {vi}{verb_rest[len(vp):]}"
-                                break
-                    camera_cue = f"Fast whip-pan to {char_upper.title()} {rest}" if rest else f"Fast whip-pan to {char_upper.title()}."
-                else:
-                    camera_cue = f"Fast whip-pan to {char_upper.title()} {clean_action[0].lower() + clean_action[1:]}"
-            elif idx == total_scenes - 1 and total_scenes >= 2:
-                if not clean_action_lower.startswith(char_upper.lower()):
-                    act = f"{char_upper.title()} {clean_action[0].lower() + clean_action[1:]}"
-                else:
-                    act = clean_action
-                camera_cue = f"Fast pull back to frame both. {act}"
-            else:
-                if clean_action_lower.startswith(char_upper.lower()):
-                    rest = clean_action[len(char_upper):].strip()
-                    for vp, vi in [
-                        ("slams", "slamming"), ("shoves", "shoving"), ("points", "pointing"),
-                        ("gestures", "gesturing"), ("drops", "dropping"), ("holds", "holding"),
-                        ("sets", "setting"), ("sips", "sipping"), ("takes", "taking"),
-                        ("unfolds", "unfolding"), ("taps", "tapping"), ("waves", "waving"),
-                        ("thrusts", "thrusting"), ("counts", "counting")
-                    ]:
-                        if rest.startswith(vp):
-                            rest = vi + rest[len(vp):]
-                            break
-                        if " " in rest:
-                            adv, verb_rest = rest.split(" ", 1)
-                            if verb_rest.startswith(vp):
-                                rest = f"{adv} {vi}{verb_rest[len(vp):]}"
-                                break
-                    camera_cue = f"Quick pan to {char_upper.title()} {rest}" if rest else f"Quick pan to {char_upper.title()}."
-                else:
-                    camera_cue = f"Quick pan to {char_upper.title()} {clean_action[0].lower() + clean_action[1:]}"
+        if existing_cue:
+            camera_cue = clean_action
         else:
             # Smooth single continuous take for standard reels (> 10s)
             if not clean_action_lower.startswith(char_upper.lower()):

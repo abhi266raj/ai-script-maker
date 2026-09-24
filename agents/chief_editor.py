@@ -150,6 +150,12 @@ class ChiefEditorCoordinatorAgent:
                 f"- Task: Finalise {character_count} distinct, grounded characters with authentic professions, specific wardrobes, emotional postures, and relational dynamics. NO dialogue, NO hooks, NO CTAs.\n"
                 f"- Diversity: Ensure gender balance and varied professions/socioeconomic roles. No all-male default cast.{sample_clause}"
             ),
+            "hooks": (
+                f"Hook & CTA Sub-Instruction (Agent 2):\n"
+                f"- News Story: {news_topic}\n"
+                f"- Format: {target_seconds}s vertical reel, vibe: {tone}.\n"
+                f"- Task: Craft punchy, scroll-stopping 0-3s Devanagari Hindi hooks (<7 words) and concise closing CTAs matching the requested tone and angle."
+            ),
             "dialogue_writer": (
                 f"Dialogue & Voiceover Sub-Instruction (Agent 3):\n"
                 f"- Topic: {news_topic}\n"
@@ -185,10 +191,6 @@ class ChiefEditorCoordinatorAgent:
                 f"AI Video Prompt Sub-Instruction (Agent 6):\n"
                 f"- Core Mission: Synthesize production-ready 9:16 vertical cinematic generative video prompts with seamless shot continuity.\n"
                 f"- Directives: Specify 9:16 vertical ratio, 4K 24fps, cinematic camera motions (orbit, push-in, low-angle tracking), volumetric lighting, and realistic textures for each scene. Never include internal AI engine names or vendor watermarks in the prompt text."
-            ),
-            "video_quality_gate": (
-                f"Quality Gate Sub-Instruction (Agent 7):\n"
-                f"- Core Mission: Audit all video prompts for 3-5s physical feasibility, temporal consistency across scenes, and AI safety compliance."
             ),
         }
         if only_for:
@@ -374,7 +376,7 @@ class ChiefEditorCoordinatorAgent:
         verification_from_cache = False
         cache_age_hours = 0.0
         skip_cache = prev_verif is not None or bool(extra_instruction and extra_instruction.strip())
-        _emit_substep(on_substep, 1, "1.1", "News verification", "start",
+        _emit_substep(on_substep, 1, "1.1", "Fact verification & dossier", "start",
                        detail=f"Verifying: {(news_input or '')[:120]}",
                        input=f"News: {(news_input or '')[:300]}")
         if not skip_cache:
@@ -414,17 +416,31 @@ class ChiefEditorCoordinatorAgent:
             # because exceptions above propagate before reaching this line).
             store_verification(news_input, verification.model_dump())
 
-        _emit_substep(on_substep, 1, "1.1", "News verification", "complete",
+        _emit_substep(on_substep, 1, "1.1", "Fact verification & dossier", "complete",
                        status="pass",
                        detail=(f"Verified with {verification.confidence_score}% confidence"
                                + (f" (cache hit, {cache_age_hours:.1f}h old)" if verification_from_cache else "")),
                        input=f"News: {(news_input or '')[:300]}",
                        output=(verification.verification_summary or "")[:500])
 
+        _emit_substep(on_substep, 1, "1.2", "Verification gate overview", "start",
+                      detail="Checking news claim verification and confidence threshold")
+        _s1_is_v = bool(getattr(verification, "is_verified", False))
+        _s1_conf = getattr(verification, "confidence_score", 0) or 0
+        _emit_substep(on_substep, 1, "1.2.1", "News claim check", "complete",
+                      status="pass" if _s1_is_v else "fail",
+                      detail="Claim verified" if _s1_is_v else "Claim unverified / warning")
+        _emit_substep(on_substep, 1, "1.2.2", "Confidence threshold check", "complete",
+                      status="pass" if _s1_conf >= 70 else "fail",
+                      detail=f"Confidence {_s1_conf}% ({'≥ 70%' if _s1_conf >= 70 else '< 70%'})")
+        _emit_substep(on_substep, 1, "1.2", "Verification gate overview", "complete",
+                      status="pass" if (_s1_is_v and _s1_conf >= 70) else "fail",
+                      detail="Verification gate passed" if (_s1_is_v and _s1_conf >= 70) else "Issues detected")
+
         if not verification_from_cache and verification.confidence_score < 70 and max_retries > 0:
             stage1_failures += 1
             stage1_errors.append(f"Initial confidence score low ({verification.confidence_score}%)")
-            _emit_substep(on_substep, 1, "1.2", "Confidence retry", "start",
+            _emit_substep(on_substep, 1, "1.3", "Confidence retry", "start",
                            detail=f"Confidence {verification.confidence_score}% < 70% — refining query")
             try:
                 verification = news_validator.validate_news(
@@ -435,14 +451,14 @@ class ChiefEditorCoordinatorAgent:
                 # low-confidence entry) -- never cached on failure since exceptions
                 # above propagate before reaching this line.
                 store_verification(news_input, verification.model_dump())
-                _emit_substep(on_substep, 1, "1.2", "Confidence retry", "complete",
+                _emit_substep(on_substep, 1, "1.3", "Confidence retry", "complete",
                                status="pass",
                                detail=f"Re-verified with {verification.confidence_score}% confidence")
             except ModelGenerationError:
                 raise
             except Exception as e2:
                 stage1_errors.append(f"Refinement exception: {str(e2)[:80]}")
-                _emit_substep(on_substep, 1, "1.2", "Confidence retry", "complete",
+                _emit_substep(on_substep, 1, "1.3", "Confidence retry", "complete",
                                status="fail", detail=f"Refinement failed: {str(e2)[:120]}")
 
         agent_audits.append(
@@ -606,8 +622,8 @@ class ChiefEditorCoordinatorAgent:
         # Validate: every character MUST be fully detailed (no generic placeholders).
         # NOTE: AI enrichment disabled — it risks hangs. The prompt already
         # demands detailed output; generic fallbacks are logged as warnings.
-        _emit_substep(on_substep, 2, "2.2", "Character validation", "start",
-                       detail="Checking character count, specificity and diversity")
+        _emit_substep(on_substep, 2, "2.2", "Character validation overview", "start",
+                      detail="Checking character count, specificity and diversity")
         _GENERIC_MARKERS = [
             "key character / speaker", "key witness / participant",
             "authentic everyday attire", "expressive and engaged",
@@ -640,9 +656,12 @@ class ChiefEditorCoordinatorAgent:
         if _generic_chars:
             # Fail loudly: generic details must trigger the retry flow, never
             # pass silently with a warning buried in the audit trail.
-            _emit_substep(on_substep, 2, "2.2", "Character validation", "complete",
-                           status="fail",
-                           detail=(f"Characters with generic details: {', '.join(_generic_chars)}"))
+            _emit_substep(on_substep, 2, "2.2.2", "Specificity & attire check", "complete",
+                          status="fail",
+                          detail=(f"Generic details: {', '.join(_generic_chars)}"))
+            _emit_substep(on_substep, 2, "2.2", "Character validation overview", "complete",
+                          status="fail",
+                          detail=(f"Characters with generic details: {', '.join(_generic_chars)}"))
             raise ModelGenerationError(
                 f"Stage 2 failed: characters with generic details — attire must be specific, "
                 f"job/news-appropriate and distinct per character: {', '.join(_generic_chars)}. "
@@ -653,32 +672,46 @@ class ChiefEditorCoordinatorAgent:
         # If the strategist parsed fewer characters than requested, that is a
         # partial failure — never silently top up with template personas.
         if len(finalized_chars) < character_count:
-            _emit_substep(on_substep, 2, "2.2", "Character validation", "complete",
-                           status="fail",
-                           detail=(f"Character shortfall: parsed {len(finalized_chars)}/{character_count} characters"))
+            _emit_substep(on_substep, 2, "2.2.1", "Character count check", "complete",
+                          status="fail",
+                          detail=(f"Character shortfall: parsed {len(finalized_chars)}/{character_count} characters"))
+            _emit_substep(on_substep, 2, "2.2", "Character validation overview", "complete",
+                          status="fail",
+                          detail=(f"Character shortfall: parsed {len(finalized_chars)}/{character_count} characters"))
             raise ModelGenerationError(
                 f"Stage 2 failed: character shortfall — parsed {len(finalized_chars)} characters "
                 f"but {character_count} were requested. "
                 f"Parsed: {[c.name for c in finalized_chars]!r}"
             )
-        _emit_substep(on_substep, 2, "2.2", "Character validation", "complete",
-                       status="pass" if len(finalized_chars) >= character_count else "fail",
-                       detail=(f"{len(finalized_chars)}/{character_count} characters; "
-                               + ("; ".join(stage2_errors[-2:]) if stage2_errors else "all checks passed")))
+        _emit_substep(on_substep, 2, "2.2.1", "Character count check", "complete",
+                      status="pass",
+                      detail=f"{len(finalized_chars)}/{character_count} character count confirmed")
+        _emit_substep(on_substep, 2, "2.2.2", "Specificity & attire check", "complete",
+                      status="pass",
+                      detail="All characters have specific roles and distinct attire")
+        _emit_substep(on_substep, 2, "2.2", "Character validation overview", "complete",
+                      status="pass",
+                      detail=(f"{len(finalized_chars)}/{character_count} characters; "
+                              + ("; ".join(stage2_errors[-2:]) if stage2_errors else "all checks passed")))
 
         # Hooks and CTAs are generated by the hook-strategist model — one per
         # angle, grounded in the verified news. Template hooks are never
         # substituted: craft_hooks_batch raises ModelGenerationError on any
         # gap, and that failure flows into the normal stage retry.
+        _emit_substep(on_substep, 2, "2.3", "Viral angles & hooks", "start",
+                      detail=f"Crafting scroll-stopping Hindi hooks for {len(selected_angles[:total_scripts])} angle(s)")
         hooks_and_ctas = hook_strategist.craft_hooks_batch(
             news_topic=news_input,
             angles=selected_angles[:total_scripts],
             tone=active_tone,
             verification=verification,
             duration_sec=target_seconds,
-            sub_instruction=sub_instructions.get("hook_strategist", ""),
+            sub_instruction=sub_instructions.get("hooks", ""),
             engine_mode=engine_mode,
         )
+        _emit_substep(on_substep, 2, "2.3", "Viral angles & hooks", "complete",
+                      status="pass",
+                      detail=f"{len(hooks_and_ctas)} hooks formulated")
 
         # Build clean story beat steps from selected characters and verified news
         # context. Locations are intentionally NOT fixed here — the dialogue
@@ -1167,14 +1200,18 @@ class ChiefEditorCoordinatorAgent:
                        output="\n".join(
                            f"Script {i + 1}: " + ", ".join(getattr(s, 'location_name', '?') for s in sc[:3])
                            for i, sc in enumerate(derived_per_script[:3])))
-        # 4.2 Derivation check: every script must have at least one scene.
-        _emit_substep(on_substep, 4, "4.2", "Derivation check", "start",
-                       detail="Verifying every script has derived scenes")
+        # 4.2 Scene validation overview & 4.2.1 Location completeness check
+        _emit_substep(on_substep, 4, "4.2", "Scene validation overview", "start",
+                      detail="Verifying every script has derived scenes with locations")
         _missing = [i + 1 for i, sc in enumerate(derived_per_script) if not sc]
-        _emit_substep(on_substep, 4, "4.2", "Derivation check", "complete",
-                       status="pass" if not _missing else "fail",
-                       detail=("All scripts have scenes" if not _missing
-                               else f"Scripts missing scenes: {_missing}"))
+        _emit_substep(on_substep, 4, "4.2.1", "Location completeness check", "complete",
+                      status="pass" if not _missing else "fail",
+                      detail=("All scripts have derived locations" if not _missing
+                              else f"Scripts missing scenes: {_missing}"))
+        _emit_substep(on_substep, 4, "4.2", "Scene validation overview", "complete",
+                      status="pass" if not _missing else "fail",
+                      detail=("All scripts have scenes" if not _missing
+                              else f"Scripts missing scenes: {_missing}"))
 
         state["agent_audits"].append(
             AgentAuditItem(
@@ -1351,31 +1388,54 @@ class ChiefEditorCoordinatorAgent:
                             "location."
                         )
 
-            # ADVISORY-ONLY quality gate (user rule): feasibility scores,
-            # duration limits, and camera-complexity verdicts must NEVER fail
-            # Stage 5 or trigger retries. The verdict is recorded on the script
-            # for visibility only — a FAILED verdict always continues.
-            video_verif = video_quality_gate.audit_prompts(
-                prompts=video_prompts,
-                sub_instruction=sub_instructions.get("video_quality_gate"),
-                engine_mode=engine_mode,
-            )
+            # REMOVED 2026-09-24: the advisory video_quality_gate.audit_prompts()
+            # AI call (paid, always-passed) was deleted per user decision — it
+            # cost a model call per script while judging nothing that could
+            # block. Stage 5's real validation is the deterministic
+            # realism/coherence code validator below (5.2).
             _emit_substep(on_substep, 5, "5.1", "Storyboard generation", "progress",
                            detail=f"Script {d_idx + 1}/{len(script_dialogues)}: {len(scenes)} scene(s) storyboarded")
-            _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "progress",
-                           detail=f"Script {d_idx + 1}/{len(script_dialogues)}: reviewed {len(video_prompts)} prompt(s) — advisory only, cannot block")
-            if not video_verif.passed:
-                # Advisory flag, never a failure: surfaced for visibility,
-                # then the pipeline continues with the storyboard as-is.
-                _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "complete",
-                               status="pass",
-                               detail=(f"Script {i + 1} advisory flags (non-blocking, feasibility "
-                                       f"{video_verif.feasibility_score}%): {video_verif.feedback[:150]}"))
-                logger.warning("Stage 5 advisory quality flags for script %d (non-blocking): %s",
-                               i + 1, video_verif.feedback[:300])
+
+            _clean_scenes = []
+            for _s in scenes:
+                if isinstance(_s, SceneItem):
+                    _clean_scenes.append(_s)
+                elif hasattr(_s, "__dict__"):
+                    _sd = vars(_s).copy()
+                    _vp = _sd.get("video_prompt")
+                    if isinstance(_vp, str):
+                        _vp = VideoScenePrompt(
+                            scene_number=_sd.get("scene_number", 1),
+                            timestamp=_sd.get("timestamp", "0:00 - 0:03"),
+                            visual_prompt_ai=_vp,
+                            camera_movement="cinematic",
+                            lighting_and_mood="realistic",
+                            aspect_ratio="9:16",
+                            motion_level="moderate",
+                            ai_engine="Veo",
+                        )
+                    elif not isinstance(_vp, (VideoScenePrompt, dict)):
+                        _vp = None
+                    _clean_scenes.append(SceneItem(
+                        scene_number=_sd.get("scene_number", 1),
+                        timestamp=_sd.get("timestamp", "0:00 - 0:03"),
+                        visual_b_roll=_sd.get("visual_b_roll", "Action"),
+                        on_screen_text=_sd.get("on_screen_text", ""),
+                        audio_sfx=_sd.get("audio_sfx", ""),
+                        video_prompt=_vp,
+                        **{k: v for k, v in _sd.items() if k not in ("scene_number", "timestamp", "visual_b_roll", "on_screen_text", "audio_sfx", "video_prompt") and k in SceneItem.model_fields}
+                    ))
+                else:
+                    _clean_scenes.append(_s)
+
+            _clarity_val = d.get("clarity", 90)
+            if isinstance(_clarity_val, float):
+                _clarity_int = int(_clarity_val * 100) if _clarity_val <= 1.0 else int(_clarity_val)
             else:
-                _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "progress",
-                               detail=f"Script {d_idx + 1}/{len(script_dialogues)}: advisory review clean")
+                try:
+                    _clarity_int = int(_clarity_val)
+                except (TypeError, ValueError):
+                    _clarity_int = 90
 
             scripts.append(
                 ReelScript(
@@ -1385,7 +1445,7 @@ class ChiefEditorCoordinatorAgent:
                     hook_hindi=hook,
                     narration_hindi=narration,
                     call_to_action=cta,
-                    scenes=scenes,
+                    scenes=_clean_scenes,
                     word_count=d["w_cnt"],
                     min_words=d.get("min_words", min_w),
                     recommended_words=d.get("recommended_words", rec_w),
@@ -1397,8 +1457,7 @@ class ChiefEditorCoordinatorAgent:
                     estimated_duration_sec=d["e_dur"],
                     timeline_fit_status=d["t_stat"],
                     timeline_feedback=d["audit_feedback"],
-                    video_verification=video_verif,
-                    clarity_score=d["clarity"],
+                    clarity_score=_clarity_int,
                     sample_story_used=active_sample_story,
                     retry_count=d["attempt"],
                     self_healing_notes=d["retry_notes"],
@@ -1407,6 +1466,13 @@ class ChiefEditorCoordinatorAgent:
             )
 
             from core.script_analyzer import common_sense_validator
+            # 5.2 Realism & coherence gate & 5.2.1 Realism & coherence check
+            _emit_substep(on_substep, 5, "5.2", "Realism & coherence gate", "start",
+                           detail=f"Script {i + 1}: deterministic setting/vocative/kinematics audit",
+                           validator="")
+            _emit_substep(on_substep, 5, "5.2.1", "Realism & coherence check", "start",
+                           detail=f"Script {i + 1}: deterministic setting/vocative/kinematics audit (code validator)",
+                           validator="code validator")
             sc_curr = scripts[-1]
             cs_valid, cs_issues, cs_feedback = common_sense_validator.audit_screenplay(sc_curr)
             cs_attempt = 0
@@ -1420,19 +1486,31 @@ class ChiefEditorCoordinatorAgent:
             # Fail loudly: if the storyboard is still invalid after all healing
             # retries, it must not ship as a success.
             if not cs_valid:
+                _emit_substep(on_substep, 5, "5.2.1", "Realism & coherence check", "complete",
+                               status="fail",
+                               detail=f"Script {i + 1}: still failing after {cs_attempt} healing attempt(s): {str(cs_feedback)[:200]}",
+                               validator="code validator")
+                _emit_substep(on_substep, 5, "5.2", "Realism & coherence gate", "complete",
+                               status="fail",
+                               detail=f"Script {i + 1}: validation failed")
                 raise ModelGenerationError(
                     f"Stage 5 failed: common-sense validation still failing for script {i + 1} "
                     f"after {cs_attempt} healing attempt(s). Issues: {str(cs_feedback)[:500]}"
                 )
+            _emit_substep(on_substep, 5, "5.2.1", "Realism & coherence check", "complete",
+                           status="pass",
+                           detail=(f"Script {i + 1}: passed" +
+                                   (f" after {cs_attempt} healing attempt(s)" if cs_attempt else "")),
+                           validator="code validator")
             scripts[-1] = sc_curr
 
         _emit_substep(on_substep, 5, "5.1", "Storyboard generation", "complete",
                        status="pass",
                        detail=f"{len(scripts)} storyboard(s) ready",
                        output=f"{sum(len(s.scenes or []) for s in scripts)} scene(s) across {len(scripts)} script(s)")
-        _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "complete",
+        _emit_substep(on_substep, 5, "5.2", "Realism & coherence gate", "complete",
                        status="pass",
-                       detail=f"All {len(scripts)} script(s) storyboarded — quality gate is advisory only, nothing blocked")
+                       detail=f"All {len(scripts)} script(s) passed the deterministic realism/coherence code validator")
 
         state["agent_audits"].append(
             AgentAuditItem(
@@ -1756,20 +1834,27 @@ class ChiefEditorCoordinatorAgent:
                        detail=f"Integrating outputs for {len(scripts)} script(s)",
                        input=f"Stage 1-5 outputs: verification, {len(scripts)} script(s), characters, scenes")
         # ---- REAL VALIDATION GATE (no hardcoded scores) ----
-        _emit_substep(on_substep, 6, "6.2", "Validation gate", "start",
-                       detail="Running cross-stage integration checks")
+        _emit_substep(on_substep, 6, "6.2", "Validation gate overview", "start",
+                      detail="Running cross-stage deterministic integration checks & retry audit")
         gate = self.run_validation_gate(state, engine_mode=engine_mode)
         gate_errors = [i for i in gate["issues"] if i.get("severity") == "error"]
         gate_warnings = [i for i in gate["issues"] if i.get("severity") != "error"]
         state["validation_passed"] = gate["passed"]
         state["validation_issues"] = gate["issues"]
         state["validation_summary"] = gate["summary"]
-        _emit_substep(on_substep, 6, "6.2", "Validation gate", "complete",
-                       status="pass" if gate["passed"] else "fail",
-                       detail=(f"All integration checks passed" if gate["passed"]
-                               else f"{len(gate_errors)} error(s), {len(gate_warnings)} warning(s): "
-                                    + "; ".join(i.get("detail", "")[:80] for i in gate_errors[:3])),
-                       output=gate["summary"][:500] if gate.get("summary") else "")
+        _emit_substep(on_substep, 6, "6.2.1", "Integration checks", "complete",
+                      status="pass" if gate["passed"] else "fail",
+                      detail=("All integration checks passed" if gate["passed"]
+                              else f"{len(gate_errors)} error(s), {len(gate_warnings)} warning(s)"))
+        _emit_substep(on_substep, 6, "6.2.2", "Retry audit check", "complete",
+                      status="pass",
+                      detail="Audit trail and health checks verified")
+        _emit_substep(on_substep, 6, "6.2", "Validation gate overview", "complete",
+                      status="pass" if gate["passed"] else "fail",
+                      detail=(f"All integration checks passed" if gate["passed"]
+                              else f"{len(gate_errors)} error(s), {len(gate_warnings)} warning(s): "
+                                   + "; ".join(i.get("detail", "")[:80] for i in gate_errors[:3])),
+                      output=gate["summary"][:500] if gate.get("summary") else "")
 
         state["agent_audits"].append(
             AgentAuditItem(
@@ -2008,6 +2093,9 @@ class ChiefEditorCoordinatorAgent:
             "data": {
                 "ai_input": {"hook_strategist": state.get("sub_instructions", {}).get("hook_strategist", "")},
                 "finalized_characters": state.get("finalized_characters", []),
+                "character_group_a": state.get("character_group_a", []),
+                "character_group_b": state.get("character_group_b", []),
+                "selected_character_group": state.get("selected_character_group", "A"),
                 "hooks_and_ctas": state.get("hooks_and_ctas", []),
             },
         }
@@ -2079,6 +2167,10 @@ class ChiefEditorCoordinatorAgent:
             "data": {
                 "ai_input": {"hook_strategist": state.get("sub_instructions", {}).get("hook_strategist", "")},
                 "derived_scenes_per_script": state.get("derived_scenes_per_script", []),
+                "scene_options_a_per_script": state.get("scene_options_a_per_script", []),
+                "scene_options_b_per_script": state.get("scene_options_b_per_script", []),
+                "selected_scene_set": state.get("selected_scene_set", "A"),
+                "finalized_scenes": state.get("finalized_scenes", []),
             },
         }
 

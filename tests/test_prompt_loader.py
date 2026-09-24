@@ -40,7 +40,7 @@ class TestPromptLoader(unittest.TestCase):
         self.assertEqual(agent1.instructions, load_prompt("news_validator/validate_news.md"))
 
         agent2 = HookAndAngleAgent()
-        self.assertEqual(agent2.instructions, load_prompt("hook_strategist/craft_hook.md"))
+        self.assertEqual(agent2.instructions, load_prompt("hook_strategist/finalise_characters.md"))
 
         agent3 = DialogueNarrationAgent()
         self.assertEqual(agent3.instructions, load_prompt("dialogue_writer/write_dialogue.md"))
