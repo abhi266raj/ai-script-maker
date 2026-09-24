@@ -2241,7 +2241,7 @@ class DialogueNarrationAgent(BaseAgent):
                 _dg = _sl.get("dialogue", "")
                 if _dg:
                     _dlg_lines.append(f"{_ch}: “{_dg}”")
-        _dlg_formatted = "\n".join(_dlg_lines[:8]) if _dlg_lines else (raw_output or "")[:600]
+        _dlg_formatted = "\n".join(_dlg_lines) if _dlg_lines else (raw_output or "")[:2000]
 
         self._record_stage_step(
             stage=f"3.{_gen_num}",
@@ -2254,7 +2254,8 @@ class DialogueNarrationAgent(BaseAgent):
                            status="pass",
                            detail=f"Draft {_retry_round + 1} written ({len(_dlg_lines)} dialogue beats)",
                            input=_gen_input[:400],
-                           output=_dlg_formatted)
+                           output=_dlg_formatted,
+                           script_lines=_dlg_lines)
 
         # === STAGE 3.x VALIDATION STEP (3.2, 3.4, 3.6... even numbers) ===
         # FAIL-FAST, ordered by failure likelihood (most failure-prone first):
