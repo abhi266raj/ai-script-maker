@@ -137,7 +137,10 @@ class ReelScript(BaseModel):
     timeline_feedback: str = ""
 
     # Step 4: AI Video Generation & Pass Verification
-    video_verification: VideoPassVerification = Field(default_factory=VideoPassVerification)
+    # Optional since 2026-09-24: the advisory AI quality gate was removed, so
+    # no verdict is produced anymore. None = gate did not run (honest), never
+    # a default "passed" — see VideoPassVerification's fail-loud fields.
+    video_verification: Optional[VideoPassVerification] = None
 
     # Step 5: Clarity & Self-Healing Retry Tracking
     clarity_score: int = 95

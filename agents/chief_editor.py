@@ -186,10 +186,6 @@ class ChiefEditorCoordinatorAgent:
                 f"- Core Mission: Synthesize production-ready 9:16 vertical cinematic generative video prompts with seamless shot continuity.\n"
                 f"- Directives: Specify 9:16 vertical ratio, 4K 24fps, cinematic camera motions (orbit, push-in, low-angle tracking), volumetric lighting, and realistic textures for each scene. Never include internal AI engine names or vendor watermarks in the prompt text."
             ),
-            "video_quality_gate": (
-                f"Quality Gate Sub-Instruction (Agent 7):\n"
-                f"- Core Mission: Audit all video prompts for 3-5s physical feasibility, temporal consistency across scenes, and AI safety compliance."
-            ),
         }
         if only_for:
             return {k: v for k, v in all_instructions.items() if k in only_for}
@@ -1351,31 +1347,13 @@ class ChiefEditorCoordinatorAgent:
                             "location."
                         )
 
-            # ADVISORY-ONLY quality gate (user rule): feasibility scores,
-            # duration limits, and camera-complexity verdicts must NEVER fail
-            # Stage 5 or trigger retries. The verdict is recorded on the script
-            # for visibility only — a FAILED verdict always continues.
-            video_verif = video_quality_gate.audit_prompts(
-                prompts=video_prompts,
-                sub_instruction=sub_instructions.get("video_quality_gate"),
-                engine_mode=engine_mode,
-            )
+            # REMOVED 2026-09-24: the advisory video_quality_gate.audit_prompts()
+            # AI call (paid, always-passed) was deleted per user decision — it
+            # cost a model call per script while judging nothing that could
+            # block. Stage 5's real validation is the deterministic
+            # realism/coherence code validator below (5.2).
             _emit_substep(on_substep, 5, "5.1", "Storyboard generation", "progress",
                            detail=f"Script {d_idx + 1}/{len(script_dialogues)}: {len(scenes)} scene(s) storyboarded")
-            _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "progress",
-                           detail=f"Script {d_idx + 1}/{len(script_dialogues)}: reviewed {len(video_prompts)} prompt(s) — advisory only, cannot block")
-            if not video_verif.passed:
-                # Advisory flag, never a failure: surfaced for visibility,
-                # then the pipeline continues with the storyboard as-is.
-                _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "complete",
-                               status="pass",
-                               detail=(f"Script {i + 1} advisory flags (non-blocking, feasibility "
-                                       f"{video_verif.feasibility_score}%): {video_verif.feedback[:150]}"))
-                logger.warning("Stage 5 advisory quality flags for script %d (non-blocking): %s",
-                               i + 1, video_verif.feedback[:300])
-            else:
-                _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "progress",
-                               detail=f"Script {d_idx + 1}/{len(script_dialogues)}: advisory review clean")
 
             scripts.append(
                 ReelScript(
@@ -1397,7 +1375,6 @@ class ChiefEditorCoordinatorAgent:
                     estimated_duration_sec=d["e_dur"],
                     timeline_fit_status=d["t_stat"],
                     timeline_feedback=d["audit_feedback"],
-                    video_verification=video_verif,
                     clarity_score=d["clarity"],
                     sample_story_used=active_sample_story,
                     retry_count=d["attempt"],
@@ -1407,6 +1384,11 @@ class ChiefEditorCoordinatorAgent:
             )
 
             from core.script_analyzer import common_sense_validator
+            # 5.2 Realism & coherence — deterministic CODE validator (blocking).
+            # Pure regex/keyword checks; costs no model call. Fail loudly.
+            _emit_substep(on_substep, 5, "5.2", "Realism & coherence check", "start",
+                           detail=f"Script {i + 1}: deterministic setting/vocative/kinematics audit (code validator)",
+                           validator="code validator")
             sc_curr = scripts[-1]
             cs_valid, cs_issues, cs_feedback = common_sense_validator.audit_screenplay(sc_curr)
             cs_attempt = 0
@@ -1420,19 +1402,29 @@ class ChiefEditorCoordinatorAgent:
             # Fail loudly: if the storyboard is still invalid after all healing
             # retries, it must not ship as a success.
             if not cs_valid:
+                _emit_substep(on_substep, 5, "5.2", "Realism & coherence check", "complete",
+                               status="fail",
+                               detail=f"Script {i + 1}: still failing after {cs_attempt} healing attempt(s): {str(cs_feedback)[:200]}",
+                               validator="code validator")
                 raise ModelGenerationError(
                     f"Stage 5 failed: common-sense validation still failing for script {i + 1} "
                     f"after {cs_attempt} healing attempt(s). Issues: {str(cs_feedback)[:500]}"
                 )
+            _emit_substep(on_substep, 5, "5.2", "Realism & coherence check", "complete",
+                           status="pass",
+                           detail=(f"Script {i + 1}: passed" +
+                                   (f" after {cs_attempt} healing attempt(s)" if cs_attempt else "")),
+                           validator="code validator")
             scripts[-1] = sc_curr
 
         _emit_substep(on_substep, 5, "5.1", "Storyboard generation", "complete",
                        status="pass",
                        detail=f"{len(scripts)} storyboard(s) ready",
                        output=f"{sum(len(s.scenes or []) for s in scripts)} scene(s) across {len(scripts)} script(s)")
-        _emit_substep(on_substep, 5, "5.2", "Quality gate (advisory)", "complete",
+        _emit_substep(on_substep, 5, "5.2", "Realism & coherence check", "complete",
                        status="pass",
-                       detail=f"All {len(scripts)} script(s) storyboarded — quality gate is advisory only, nothing blocked")
+                       validator="code validator",
+                       detail=f"All {len(scripts)} script(s) passed the deterministic realism/coherence code validator")
 
         state["agent_audits"].append(
             AgentAuditItem(

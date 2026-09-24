@@ -16,6 +16,8 @@
 - [ ] Fix format_teleprompter_text landmine: it accesses sc.narration_line which SceneItem does not define (AttributeError if a beat ever has empty dialogue) — guard with getattr when the formatter is next touched.
 
 ## Done
+- [x] Stage 5 video quality gate FULLY REMOVED (2026-09-24): the advisory `video_quality_gate.audit_prompts()` AI call (paid, always-passed) is deleted from chief_editor.py — no longer just advisory, it no longer runs at all. Dead `video_verification=` kwarg, dead sub_instruction entry, and all feasibility-% UI removed.
+- [x] Validator-type labels across ALL stages (2026-09-24): every validation in the UI now shows 🤖 AI validator / ⚙️ code validator / 🤖 AI generation — stepwise detail views AND the continuous-mode live tracker (via _SUBSTEP_PLAN). Misleading titles fixed: 4.2.1 "beat traceability" → Location Check (code), 2.2.2 "distinct roles" → role presence (code), 5.2.1 Quality Gate → Realism & Coherence (code, blocking). The previously invisible blocking common-sense code validator (5.2) is now visible in the UI and tracker.
 - [x] Stage 5 video quality gate killed — advisory-only, cannot fail a run
 - [x] hook_strategist.py SyntaxError fixed (4 lines), file compiles
 - [x] Stage 1 + Stage 3 strict-JSON backend (46/46 tests pass)

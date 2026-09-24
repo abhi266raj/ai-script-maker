@@ -66,14 +66,20 @@ Streamlit discourages or improperly formats `st.expander` components nested insi
   - **Cast Selection**: Group A vs Group B selection via radio buttons and side-by-side columns displaying attire, stance, and relationship dynamics.
   - **Raw JSON**: Displayed directly with `as_expander=False`.
 
-### ✍️ Stage 3 Validation Checks
-- In `3.2 Validation`, removed nested expanders for:
+### ✍️ Stage 3 Sequential Display Order & Validation Checks
+- **Strict Sequential Order**: Sub-checks are displayed in strict numeric order so nothing is hidden or missing:
+  - `3.1 Generate Dialogue` (AI generation)
+  - `3.2 Validation Checks Overview` (overview of fail-fast gate)
   - `3.2.1 Structure Check` (code validator)
   - `3.2.2 Tone + News Check` (AI validator)
   - `3.2.3 Language Check` (code validator)
   - `3.2.4 Clothing Check` (code validator)
   - `3.2.5 SFX Check` (code validator)
-- Checks are rendered sequentially inline with subheadings, icons, and dividers inside `3.2 Validation`.
+  - `3.3 Retry Generation` (AI generation, if retried)
+  - `3.4 Re-validate` (if retried)
+- **Zero Nesting**: Rendered as independent top-level sibling expanders rather than hiding `3.2.1` and `3.2.2` inside `3.2`.
+- In `Stage 3 Steps` history view, sub-checks are rendered inline with markdown and badges, eliminating nested expanders (`st.expander` inside `st.expander`).
+- In `_render_live_tracker`, all substeps (including 3.2.1–3.2.5) are tracked in sequential numerical order with live badges and no nested expanders.
 
 ### 🎬 Stage 4 & 5 Validation Checks
 - In Stage 4 (`4.2 Validation`), removed nested expander for `4.2.1 Connectivity Check`.
