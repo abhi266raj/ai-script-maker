@@ -199,8 +199,8 @@ This document evaluates the existing codebase (v1.2 / multi-stage agent pipeline
      Audio/SFX [0:00 – 0:02]: Muffled hallway echo + urgent doorbell chime
      Text Overlay: NEW POLICY ALERT
 
-     AMIT [0:01 – 0:06] [Frantic delivery ~2.6 wps]:
-     "यह नया नियम लागू होते ही हमारा इंसेंटिव आधा हो जाएगा!"
+     ⚬ AMIT [Frantic] [0:01 – 0:04.5]:
+       "यह नया नियम लागू होते ही हमारा इंसेंटिव आधा हो जाएगा!"
 
      ### SCENE 2: The Inside Reaction [8 Seconds]
      Visual Anchor: Amit's silhouette visible through the frosted glass door frame in the background.
@@ -210,8 +210,8 @@ This document evaluates the existing codebase (v1.2 / multi-stage agent pipeline
      Camera Focus & Action: Reverse angle inside the office. Priya turns sharply from her desk with wide eyes.
      Audio/SFX [0:00 – 0:03]: Keyboard clatter cut short + tense ambient hum
 
-     PRIYA [0:02 – 0:07] [Sharp defensive retort ~2.4 wps]:
-     "कंपनी ने साफ कर दिया है, अब हर ऑर्डर पर नया टैक्स कटेगा!"
+     ⚬ PRIYA [Sharp] [0:02 – 0:06.5]:
+       "कंपनी ने साफ कर दिया है, अब हर ऑर्डर पर नया टैक्स कटेगा!"
      ```
 2. **Scene & Dialogue Time Scoping:**
    - Deterministic timestamp calculation resetting to `[0:00]` per scene.

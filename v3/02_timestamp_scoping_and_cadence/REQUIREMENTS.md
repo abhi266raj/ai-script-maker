@@ -10,8 +10,9 @@
 
 Implement high-precision, scene-scoped timing and actor delivery cues:
 1. **Per-Scene Reset:** Reset all audio, dialogue, and SFX timestamps to `[0:00]` at the start of each individual scene.
-2. **Line-Level & SFX Timestamps:** Attach explicit start-to-end timestamps `[0:XX – 0:XX]` directly to every spoken dialogue line and sound effect cue.
-3. **Performance Delivery Cues:** Accompany every spoken dialogue line with an emotional energy tag and words-per-second (wps) cadence metric (e.g. `[Frantic delivery ~2.8 wps]` or `[Deadpan comedic shrug ~2.0 wps]`).
+2. **Canonical Line Format:** Format every spoken line as `CHARACTER [Tone] [0:XX – 0:XX]: "Dialogue"`.
+3. **Pacing Relative to Scene Runtime Without Rigid Word Limits:** Pace speech at roughly **2 to 3 words per second** (urgent/fast tones near 3 wps, calm/sarcastic tones near 2 wps) relative to the scene runtime, completely replacing rigid word limits.
+4. **Fractional Second Support:** Support high-precision fractional timestamps (e.g. `[0:01 – 0:04.5]`).
 
 ---
 
@@ -22,33 +23,43 @@ Implement high-precision, scene-scoped timing and actor delivery cues:
 - All events within Scene $X$ occur between `[0:00]` and `[0:XX]` where $XX \le 10$ seconds.
 - Cumulative whole-reel timestamps (e.g. `0:15 - 0:22`) are strictly prohibited within scene bodies.
 
-### FR-02.2: Line-Level Direct Timestamps
-- Timestamps must NOT be detached in arbitrary section blocks. They must precede or attach directly to dialogue lines and SFX cues:
-  - SFX format: `Audio/SFX [0:00 – 0:02]: <Description>`
-  - Dialogue format: `<CHARACTER> [0:01 – 0:06] [<Delivery Cue>]: "<Dialogue>"`
-- The duration of the line (`end_time - start_time`) must be mathematically feasible for the syllable and word count at the indicated cadence.
+### FR-02.2: Line-Level Direct Timestamps & Canonical Spoken Syntax
+- Spoken lines MUST strictly follow the canonical syntax:
+  ```text
+  CHARACTER [Tone] [0:XX – 0:XX]:
+    "Dialogue"
+  ```
+  or on a single line:
+  ```text
+  CHARACTER [Tone] [0:XX – 0:XX]: "Dialogue"
+  ```
+- Timestamps can use whole or fractional seconds (e.g., `[0:01 – 0:04.5]`, `[0:05 – 0:09]`).
+- SFX format: `Audio/SFX [0:00 – 0:02]: <Description>`.
 
-### FR-02.3: Performance & Speed Cadence Cues
-- Update Stage 3 Dialogue Writer prompt to lift the blanket ban on brackets for delivery cues.
-- Require every dialogue line to include:
-  - Emotional energy descriptor (e.g., `Frantic delivery`, `Deadpan comedic shrug`, `Breathless realization`, `Sharp sarcastic smirk`).
-  - Speed cadence estimate: `~X.X wps` (words per second, typically 2.0 to 3.2 wps for Hindi speech).
-- Syntax: `[<Emotional Energy> ~X.X wps]`.
+### FR-02.3: Pacing Speech at 2 to 3 WPS (No Rigid Word Limits)
+- Rigid word count formulas (e.g., "max 11 words per beat", "recommended 10 words") are **REMOVED**.
+- Instead, dialogue length is governed dynamically by the timestamp window duration and tone:
+  - **Urgent / Frantic / Fast tones:** Paced near **3 words per second** (~2.8 to 3.2 wps).
+  - **Calm / Sarcastic / Deadpan tones:** Paced near **2 words per second** (~1.8 to 2.2 wps).
+- Target words for a line are determined by:
+  $$\text{Target Words} \approx (\text{End Time} - \text{Start Time}) \times \text{Pacing WPS}$$
 
 ---
 
 ## 3. Screenplay Formatter Rendering Example
 
 ```markdown
-### SCENE 1: The Inflation Shock [7 Seconds]
+### SCENE 1: The Kitchen Chaos [9 Seconds]
 
 #### Shot 1
-Camera Focus & Action: Dynamic push-in on Ramesh inspecting the grocery receipt.
-Audio/SFX [0:00 – 0:02]: Receipt paper snap + muted market murmur
-Text Overlay: BILL CHECK
+Camera Focus & Action: Handheld push-in on Rameshwar in the doorway looking wide-eyed at the counter. Stationary whiskey bottle lying empty on its side.
+Audio/SFX [0:00 – 0:01.5]: Glass roll clink + breathless commotion
 
-RAMESH [0:01 – 0:06] [Frantic delivery ~2.8 wps]:
-"सिर्फ चार टमाटर और बिल सीधा ढाई सौ पार कर गया!"
+⚬ RAMESHWAR [Frantic] [0:01 – 0:04.5]:
+  "अरे भगाने गए तो हाथ में काट लिया, और खुद पूरी बोतल गटक गई!"
+
+⚬ SUNITA [Sarcastic] [0:05 – 0:09]:
+  "बिना चखने के पूरी बोतल साफ, अब वन विभाग ही संभाले!"
 ```
 
 ---
@@ -58,13 +69,14 @@ RAMESH [0:01 – 0:06] [Frantic delivery ~2.8 wps]:
 1. **`validate_scene_timestamp_scoping(scene)`:**
    - Verifies all timestamps in the scene start $\ge \text{0:00}$ and end $\le \text{scene.duration\_sec}$.
    - Flags any timestamp exceeding the scene's declared duration.
-2. **`validate_delivery_cue_format(dialogue_line)`:**
-   - Regex matches `r"\[[\w\s/]+~\d+\.\d+\s*wps\]"`.
-   - Validates that wps falls within physiological Hindi speech limits ($1.8 \le \text{wps} \le 3.8$).
-3. **`validate_cadence_consistency(dialogue_text, start_sec, end_sec, wps)`:**
-   - Calculates actual words in `dialogue_text`.
-   - Expected duration $\approx \text{word\_count} / \text{wps}$.
-   - Flags discrepancies where dialogue duration differs from timestamp window by $> 1.5\text{s}$.
+2. **`validate_spoken_line_syntax(dialogue_line)`:**
+   - Validates that lines match `r"^(?:[⚬•]\s*)?[A-Z\u0900-\u097F\s]+\s*\[[\w\s/]+\]\s*\[\d+:\d+(?:\.\d+)?\s*[–\-]\s*\d+:\d+(?:\.\d+)?\]:\s*(?:\n\s*)?\"[^\"]+\"$"`.
+   - Rejects unformatted, untimed, or missing-tone dialogue lines.
+3. **`validate_pacing_wps(dialogue_text, start_sec, end_sec, tone)`:**
+   - Computes line duration $\Delta t = \text{end\_sec} - \text{start\_sec}$.
+   - Computes words in `dialogue_text`: $\text{actual\_wps} = \text{words} / \Delta t$.
+   - Validates that speech rate sits naturally in the 2.0 to 3.2 wps range (urgent/fast $\approx 3$ wps, calm/sarcastic $\approx 2$ wps).
+   - Flags unrealistic dialogue that would require frantic mumbling ($>3.5$ wps) or awkward pauses ($<1.6$ wps).
 
 ---
 

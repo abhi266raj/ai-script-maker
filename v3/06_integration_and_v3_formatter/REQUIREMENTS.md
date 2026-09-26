@@ -35,8 +35,8 @@ Camera Focus & Action: Low-angle tracking push-in on Vikram standing at the insp
 Audio/SFX [0:00 – 0:02]: Dull office hum + rhythmic ceiling fan click
 Text Overlay: SURPRISE AUDIT
 
-VIKRAM [0:01 – 0:06] [Stern bureaucratic firmness ~2.6 wps]:
-"नए फूड सेफ्टी नियमों के तहत इस किचन का लाइसेंस तुरंत प्रभाव से सस्पेंड किया जाता है!"
+⚬ VIKRAM [Stern] [0:01 – 0:05.5]:
+  "नए फूड सेफ्टी नियमों के तहत इस किचन का लाइसेंस तुरंत प्रभाव से सस्पेंड किया जाता है!"
 
 ### SCENE 2: The Escalation Behind the Partition [8 Seconds]
 Visual Anchor: Vikram's shoulder and the stationary clipboard visible through the glass serving hatch in the background.
@@ -46,8 +46,8 @@ Audio Bleed: Ceiling fan clicking echo trails across [0:00 – 0:02] behind the 
 Camera Focus & Action: Medium close-up on Anjali on the other side of the partition. She leans back abruptly with an incredulous expression.
 Audio/SFX [0:00 – 0:02]: Fan click bleed + sharp intake of breath
 
-ANJALI [0:01 – 0:06] [Outraged disbelief ~2.8 wps]:
-"सस्पेंड? पिछले हफ्ते ही आपकी टीम ने पूरी इंस्पेक्शन रिपोर्ट को क्लीन चिट दी थी!"
+⚬ ANJALI [Outraged] [0:01 – 0:05.5]:
+  "सस्पेंड? पिछले हफ्ते ही आपकी टीम ने पूरी इंस्पेक्शन रिपोर्ट को क्लीन चिट दी थी!"
 ```
 
 ---
