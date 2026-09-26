@@ -36,13 +36,16 @@ Implement high-precision, scene-scoped timing and actor delivery cues:
 - Timestamps can use whole or fractional seconds (e.g., `[0:01 – 0:04.5]`, `[0:05 – 0:09]`).
 - SFX format: `Audio/SFX [0:00 – 0:02]: <Description>`.
 
-### FR-02.3: Pacing Speech at 2 to 3 WPS (No Rigid Word Limits)
-- Rigid word count formulas (e.g., "max 11 words per beat", "recommended 10 words") are **REMOVED**.
-- Instead, dialogue length is governed dynamically by the timestamp window duration and tone:
-  - **Urgent / Frantic / Fast tones:** Paced near **3 words per second** (~2.8 to 3.2 wps).
-  - **Calm / Sarcastic / Deadpan tones:** Paced near **2 words per second** (~1.8 to 2.2 wps).
-- Target words for a line are determined by:
-  $$\text{Target Words} \approx (\text{End Time} - \text{Start Time}) \times \text{Pacing WPS}$$
+### FR-02.3: Pacing Speech at 2 to 3 WPS (Complete Elimination of Rigid Word Limits)
+> [!IMPORTANT]
+> **Elimination of Strict Word Count Limits in Scenes:**  
+> The legacy pipeline enforced hard caps (e.g. `max_words = 11`, `recommended_words = 10` per beat in `core/metrics.py` and `agents/dialogue_writer.py`), causing unnecessary retries and awkward sentence truncation.  
+> **In V3, strict word count limits per beat/scene are completely eliminated.**  
+> Dialogue length is governed entirely by the duration of the timestamp window ($\Delta t \le 10\text{s}$) and natural conversational speech pacing:
+> - **Urgent / Frantic / Fast tones:** Paced near **3 words per second** (~2.8 to 3.2 wps).
+> - **Calm / Sarcastic / Deadpan tones:** Paced near **2 words per second** (~1.8 to 2.2 wps).
+> 
+> As long as the line duration $\Delta t \le 10$ seconds and pacing falls within $2.0 \le \text{wps} \le 3.2$, the dialogue is valid. Rigid integer word boundaries are never enforced.
 
 ---
 

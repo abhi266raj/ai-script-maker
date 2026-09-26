@@ -46,9 +46,10 @@
 * **Difficulty:** Medium.
 * **Scope of Change:**
   - Shift all timing generation to per-scene `[0:00]` start.
-  - Update `prompts/dialogue_writer/write_dialogue_batch.md` to instruct the model to output delivery cues:
-    `CHAR [0:01 – 0:06] [Frantic delivery ~2.8 wps]: "हिंदी संवाद"`
-  - Implement a deterministic post-processor in Python: calculate actual words in the line, compute $\text{wps} = \text{words} / \text{duration}$, and calibrate the tag if the AI's wps estimate is inaccurate.
+  - **Complete Elimination of Strict Word Counts:** Remove legacy rigid word budgets (e.g. `max_words = 11`, `recommended_words = 10`). Replace with dynamic pacing (2 to 3 wps) relative to the scene's timestamp window ($\le 10$s).
+  - Update `prompts/dialogue_writer/write_dialogue_batch.md` to instruct the model to output canonical lines:
+    `⚬ CHARACTER [Tone] [0:XX – 0:XX]: "हिंदी संवाद"`
+  - Implement a deterministic post-processor in Python: calculate actual words in the line, compute $\text{wps} = \text{words} / \text{duration}$, and validate against natural conversational speech velocity ($2.0 \le \text{wps} \le 3.2$).
 
 ---
 
