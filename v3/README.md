@@ -6,11 +6,12 @@
 
 ---
 
-## 📌 Executive Overview
+## 📌 Executive Overview & Architectural Decision
 
-To reliably transition the Reel Studio pipeline to the **V3 Master Scriptwriting Guidelines**, the work is broken down into **6 modular, sequential sub-features**. Each sub-feature has a dedicated specification (`REQUIREMENTS.md`) with explicit data contracts, prompt requirements, code validators, and automated test plans.
-
-This modular structure allows incremental execution, thorough verification, and zero regression to existing v1.2 capabilities.
+To reliably transition the Reel Studio pipeline to the **V3 Master Scriptwriting Guidelines**, the pipeline makes a **clean break directly to V3**:
+- **Zero Backward Compatibility Baggage:** No dual-model wrappers, legacy prompt branches, or obsolete fallback paths.
+- **Maximum Velocity:** Eliminates compatibility shims and directly upgrades models, formatters, and prompts to the V3 standard.
+- **Sequential Execution:** Broken down into **6 modular sub-features**, each with an explicit `REQUIREMENTS.md` detailing functional requirements, schema, validators, and automated tests.
 
 ---
 
