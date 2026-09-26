@@ -255,40 +255,46 @@ echo "✅ App bundle assembled: ${APP_BUNDLE}"
 
 # ─── Phase 5: Package Apple Disk Image (.dmg) ────────────────────────
 echo ""
-echo "━━━ 5/5  DMG — generating ${DMG_NAME} ━━━"
-DMG_PATH="dist/${DMG_NAME}"
-rm -f "${DMG_PATH}"
-
-if command -v create-dmg >/dev/null 2>&1; then
-    echo "   Packaging with create-dmg..."
-    create-dmg \
-        --volname "${APP_NAME}" \
-        --window-pos 200 120 \
-        --window-size 600 400 \
-        --icon "${APP_NAME}.app" 150 190 \
-        --app-drop-link 450 190 \
-        "${DMG_PATH}" \
-        "${APP_BUNDLE}" >/dev/null
+DMG_PATH=""
+if $DEV_MODE; then
+    echo "━━━ 5/5  DMG — skipped for DEV build (DMG is created for Release only) ━━━"
+    rm -f "dist/${DMG_NAME}"
 else
-    echo "   create-dmg not found — using native macOS hdiutil..."
-    STAGING_DIR="dist/dmg_staging_${SERVER_PORT}"
-    rm -rf "${STAGING_DIR}"
-    mkdir -p "${STAGING_DIR}"
-    
-    cp -R "${APP_BUNDLE}" "${STAGING_DIR}/"
-    ln -s /Applications "${STAGING_DIR}/Applications"
-    
-    hdiutil create \
-        -volname "${APP_NAME}" \
-        -srcfolder "${STAGING_DIR}" \
-        -ov \
-        -format UDZO \
-        "${DMG_PATH}" >/dev/null
-        
-    rm -rf "${STAGING_DIR}"
-fi
+    echo "━━━ 5/5  DMG — generating ${DMG_NAME} ━━━"
+    DMG_PATH="dist/${DMG_NAME}"
+    rm -f "${DMG_PATH}"
 
-echo "✅ Disk image created: ${DMG_PATH}"
+    if command -v create-dmg >/dev/null 2>&1; then
+        echo "   Packaging with create-dmg..."
+        create-dmg \
+            --volname "${APP_NAME}" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon "${APP_NAME}.app" 150 190 \
+            --app-drop-link 450 190 \
+            "${DMG_PATH}" \
+            "${APP_BUNDLE}" >/dev/null
+    else
+        echo "   create-dmg not found — using native macOS hdiutil..."
+        STAGING_DIR="dist/dmg_staging_${SERVER_PORT}"
+        rm -rf "${STAGING_DIR}"
+        mkdir -p "${STAGING_DIR}"
+        
+        cp -R "${APP_BUNDLE}" "${STAGING_DIR}/"
+        ln -s /Applications "${STAGING_DIR}/Applications"
+        
+        hdiutil create \
+            -volname "${APP_NAME}" \
+            -srcfolder "${STAGING_DIR}" \
+            -ov \
+            -format UDZO \
+            "${DMG_PATH}" >/dev/null
+            
+        rm -rf "${STAGING_DIR}"
+    fi
+
+    echo "✅ Disk image created: ${DMG_PATH}"
+fi
 
 # ─── Summary ─────────────────────────────────────────────────────────
 echo ""
@@ -297,9 +303,15 @@ echo "🎉 BUILD COMPLETE: ${APP_NAME} (v${VERSION})"
 echo ""
 echo "📦 App Bundle:  ${APP_BUNDLE}"
 ls -lhd "${APP_BUNDLE}"
-echo ""
-echo "💿 Disk Image:  ${DMG_PATH}"
-ls -lh "${DMG_PATH}"
-echo ""
-echo "🚀 To test DMG: open \"${DMG_PATH}\""
+
+if [ -n "${DMG_PATH}" ] && [ -f "${DMG_PATH}" ]; then
+    echo ""
+    echo "💿 Disk Image:  ${DMG_PATH}"
+    ls -lh "${DMG_PATH}"
+    echo ""
+    echo "🚀 To test DMG: open \"${DMG_PATH}\""
+else
+    echo ""
+    echo "🚀 To launch:   open \"${APP_BUNDLE}\""
+fi
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
