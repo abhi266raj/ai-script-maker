@@ -3,17 +3,45 @@ import WebKit
 
 /// Native window for Hindi Reel Studio. The process stays alive so the
 /// bundle icon remains in the Dock instead of handing off to a browser.
+///
+/// Supports two launch modes:
+///   1. **Standalone (frozen)** — runs the PyInstaller-bundled runtime
+///      from Contents/Resources/runtime/run_standalone
+///   2. **Development (venv)** — runs .venv/bin/streamlit from the
+///      project directory (fallback when frozen runtime is absent)
+///
+/// Port and window title are read from Info.plist so the same code
+/// serves both Release (port 8501) and Dev (port 8502) variants.
 final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var server: Process?
-    private let port = 8501
-    private let projectDir: String
+
+    /// Server port — read from Info.plist "HRSServerPort" key, default 8501
+    private let port: Int = {
+        if let p = Bundle.main.object(forInfoDictionaryKey: "HRSServerPort") as? Int, p > 0 {
+            return p
+        }
+        return 8501
+    }()
+
+    /// Window title — read from Info.plist "CFBundleDisplayName", fallback to CFBundleName
+    private let windowTitle: String = {
+        if let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String {
+            return name
+        }
+        if let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String {
+            return name
+        }
+        return "Hindi Reel Studio"
+    }()
+
+    /// Project directory — parent of the .app bundle
+    private let projectDir: String = {
+        (Bundle.main.bundlePath as NSString).deletingLastPathComponent
+    }()
 
     override init() {
-        let bundle = Bundle.main.bundlePath
-        // Hindi Reel Studio.app lives in the project root.
-        projectDir = (bundle as NSString).deletingLastPathComponent
         super.init()
     }
 
@@ -45,7 +73,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Hindi Reel Studio"
+        window.title = windowTitle
         window.titlebarAppearsTransparent = false
         window.minSize = NSSize(width: 900, height: 640)
         window.center()
@@ -60,19 +88,29 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     }
 
     private func startServerIfNeeded() {
+        // Check if server is already running on our port
         let probe = "http://127.0.0.1:\(port)/"
         if let url = URL(string: probe),
            let _ = try? Data(contentsOf: url) {
             return
         }
+
+        // --- Try frozen runtime first (standalone .app) ---
+        let frozenRuntime = (Bundle.main.resourcePath ?? "") + "/runtime/run_standalone"
+        if FileManager.default.isExecutableFile(atPath: frozenRuntime) {
+            launchFrozenRuntime(executable: frozenRuntime)
+            return
+        }
+
+        // --- Fallback to .venv/bin/streamlit (development mode) ---
         let streamlit = (projectDir as NSString).appendingPathComponent(".venv/bin/streamlit")
-        let app = (projectDir as NSString).appendingPathComponent("app.py")
+        let appPy = (projectDir as NSString).appendingPathComponent("app.py")
         guard FileManager.default.isExecutableFile(atPath: streamlit) else { return }
 
         let process = Process()
         process.executableURL = URL(fileURLWithPath: streamlit)
         process.arguments = [
-            "run", app,
+            "run", appPy,
             "--server.headless", "true",
             "--server.address", "127.0.0.1",
             "--server.port", String(port),
@@ -80,6 +118,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         process.currentDirectoryURL = URL(fileURLWithPath: projectDir)
 
         var env = ProcessInfo.processInfo.environment
+        env["HRS_PORT"] = String(port)
         let extraPaths = [
             "/opt/homebrew/bin",
             "/opt/homebrew/sbin",
@@ -100,6 +139,29 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         env["PATH"] = pathComponents.joined(separator: ":")
         process.environment = env
 
+        configureLogging(process: process)
+        try? process.run()
+        server = process
+    }
+
+    /// Launch the PyInstaller-frozen runtime binary
+    private func launchFrozenRuntime(executable: String) {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = []
+
+        var env = ProcessInfo.processInfo.environment
+        env["HRS_PORT"] = String(port)
+        process.environment = env
+        process.currentDirectoryURL = URL(fileURLWithPath: projectDir)
+
+        configureLogging(process: process)
+        try? process.run()
+        server = process
+    }
+
+    /// Set up log file for the server process
+    private func configureLogging(process: Process) {
         let logURL = URL(fileURLWithPath: (projectDir as NSString).appendingPathComponent(".server.log"))
         FileManager.default.createFile(atPath: logURL.path, contents: nil)
         if let handle = try? FileHandle(forWritingTo: logURL) {
@@ -107,8 +169,6 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             process.standardError = handle
         }
         process.standardInput = FileHandle.nullDevice
-        try? process.run()
-        server = process
     }
 
     private func waitThenLoad() {
