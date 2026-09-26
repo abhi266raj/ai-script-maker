@@ -66,7 +66,7 @@ fi
 if $ENABLE_IPV4; then
     SERVER_HOST="127.0.0.1"
 else
-    SERVER_HOST="::1"
+    SERVER_HOST="::"
 fi
 
 # ─── Configure variant-specific values ───────────────────────────────

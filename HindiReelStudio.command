@@ -16,7 +16,7 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "$DIR"
 
 PORT=${HRS_PORT:-8501}
-HOST="${HRS_HOST:-::1}"
+HOST="${HRS_HOST:-::}"
 
 # Check for --ipv4 or --ipv6 arguments
 for arg in "$@"; do
@@ -31,8 +31,10 @@ done
 BIND_HOST="${HOST#[}"
 BIND_HOST="${BIND_HOST%]}"
 
-# Format URL with brackets for IPv6 literals
-if [[ "${BIND_HOST}" == *":"* ]]; then
+# Format URL with brackets for IPv6 literals (for dual-stack ::, connect via ::1)
+if [ "${BIND_HOST}" = "::" ]; then
+    URL="http://[::1]:${PORT}"
+elif [[ "${BIND_HOST}" == *":"* ]]; then
     URL="http://[${BIND_HOST}]:${PORT}"
 else
     URL="http://${BIND_HOST}:${PORT}"
@@ -53,7 +55,8 @@ warn() { echo "⚠️  $1"; }
 die()  { echo ""; echo "❌ $1"; if [ -n "${2:-}" ]; then echo "$2"; fi; exit 1; }
 
 is_server_running() {
-    curl -s -g --connect-timeout 2 --max-time 5 "${URL}/" > /dev/null 2>&1
+    curl -s -g --connect-timeout 2 --max-time 5 "${URL}/" > /dev/null 2>&1 || \
+    curl -s --connect-timeout 2 --max-time 5 "http://127.0.0.1:${PORT}/" > /dev/null 2>&1
 }
 
 open_app() {

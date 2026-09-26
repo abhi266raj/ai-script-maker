@@ -27,7 +27,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         return 8501
     }()
 
-    /// Server host — read from Info.plist "HRSServerHost" or HRS_HOST environment variable, default "::1" (IPv6 loopback)
+    /// Server host — read from Info.plist "HRSServerHost" or HRS_HOST environment variable, default "::" (dual-stack IPv6 + IPv4)
     private let host: String = {
         if let h = ProcessInfo.processInfo.environment["HRS_HOST"], !h.isEmpty {
             return h
@@ -35,7 +35,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         if let h = Bundle.main.object(forInfoDictionaryKey: "HRSServerHost") as? String, !h.isEmpty {
             return h
         }
-        return "::1"
+        return "::"
     }()
 
     /// Window title — read from Info.plist "CFBundleDisplayName", fallback to CFBundleName
@@ -105,18 +105,29 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         var urls: [URL] = []
         let cleanHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
 
-        if cleanHost.contains(":") {
+        if cleanHost == "::" || cleanHost.isEmpty || cleanHost == "localhost" {
+            // Dual-stack: both IPv6 and IPv4 loopback are active
+            let dualStackEndpoints = [
+                "http://[::1]:\(port)/",
+                "http://127.0.0.1:\(port)/",
+                "http://localhost:\(port)/"
+            ]
+            for ep in dualStackEndpoints {
+                if let u = URL(string: ep), !urls.contains(u) { urls.append(u) }
+            }
+        } else if cleanHost.contains(":") {
             // Explicit IPv6 literal address e.g. ::1
             if let u = URL(string: "http://[\(cleanHost)]:\(port)/") { urls.append(u) }
         } else {
+            // Explicit IPv4 or hostname
             if let u = URL(string: "http://\(cleanHost):\(port)/") { urls.append(u) }
         }
 
         // Dual-stack and IPv6/IPv4 fallback probe candidates
         let fallbacks = [
-            "http://localhost:\(port)/",
+            "http://[::1]:\(port)/",
             "http://127.0.0.1:\(port)/",
-            "http://[::1]:\(port)/"
+            "http://localhost:\(port)/"
         ]
         for fb in fallbacks {
             if let u = URL(string: fb), !urls.contains(u) {

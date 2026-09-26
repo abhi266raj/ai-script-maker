@@ -23,7 +23,7 @@ cat <<EOF > "${PLIST_PATH}"
         <string>--server.headless</string>
         <string>true</string>
         <string>--server.address</string>
-        <string>${HRS_HOST:-localhost}</string>
+        <string>${HRS_HOST:-::}</string>
         <string>--server.port</string>
         <string>8501</string>
     </array>
