@@ -135,8 +135,6 @@ if [ ! -f "AppIcon.icns" ]; then
     if [ -d "AppIcon.iconset" ]; then
         echo "   Generating AppIcon.icns from AppIcon.iconset..."
         iconutil -c icns AppIcon.iconset -o AppIcon.icns
-    elif [ -f "Hindi Reel Studio.app/Contents/Resources/AppIcon.icns" ]; then
-        cp "Hindi Reel Studio.app/Contents/Resources/AppIcon.icns" AppIcon.icns
     fi
 fi
 
