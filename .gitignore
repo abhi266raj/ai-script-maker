@@ -11,11 +11,21 @@ venv/
 # Stage 1 verification cache (24h, machine-local -- never commit)
 .verification_cache.json
 
+# Runtime cache files (news data, session state -- machine-local)
+project_config.json
+studio_config.json
+
 # macOS
 .DS_Store
 
 # Build artifacts
 *.app/
+dist/
+build/
+*.spec
+
+# Generated icons (rebuilt by scripts/generate_dev_icon.py)
+AppIcon-Dev.icns
 
 # Editors
 .vscode/
