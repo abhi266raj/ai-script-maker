@@ -43,8 +43,8 @@ ENGINE_OPTIONS = {
 }
 ENGINE_NAMES_REV = {v: k for k, v in ENGINE_OPTIONS.items()}
 
-# Centralized app version — bump here; the top nav renders it automatically.
-APP_VERSION = "1.2.1"
+# Centralized app version — imported from core.version single source of truth
+from core.version import __version__ as APP_VERSION
 
 # Merged story source: manual topic entry plus every news feed (replaces the
 # Stage names for display in collapsible history (continuous + step-wise).

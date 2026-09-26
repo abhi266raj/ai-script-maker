@@ -3,17 +3,58 @@ import WebKit
 
 /// Native window for Hindi Reel Studio. The process stays alive so the
 /// bundle icon remains in the Dock instead of handing off to a browser.
+///
+/// Supports two launch modes:
+///   1. **Standalone (frozen)** — runs the PyInstaller-bundled runtime
+///      from Contents/Resources/runtime/run_standalone
+///   2. **Development (venv)** — runs .venv/bin/streamlit from the
+///      project directory (fallback when frozen runtime is absent)
+///
+/// Network & IP support:
+///   - Dual-stack localhost, IPv4 (127.0.0.1), and IPv6 ([::1])
+///   - Port and window title are read from Info.plist so the same code
+///     serves both Release (port 8501) and Dev (port 8502) variants.
 final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var server: Process?
-    private let port = 8501
-    private let projectDir: String
+
+    /// Server port — read from Info.plist "HRSServerPort" key, default 8501
+    private let port: Int = {
+        if let p = Bundle.main.object(forInfoDictionaryKey: "HRSServerPort") as? Int, p > 0 {
+            return p
+        }
+        return 8501
+    }()
+
+    /// Server host — read from Info.plist "HRSServerHost" or HRS_HOST environment variable, default "::" (dual-stack IPv6 + IPv4)
+    private let host: String = {
+        if let h = ProcessInfo.processInfo.environment["HRS_HOST"], !h.isEmpty {
+            return h
+        }
+        if let h = Bundle.main.object(forInfoDictionaryKey: "HRSServerHost") as? String, !h.isEmpty {
+            return h
+        }
+        return "::"
+    }()
+
+    /// Window title — read from Info.plist "CFBundleDisplayName", fallback to CFBundleName
+    private let windowTitle: String = {
+        if let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String {
+            return name
+        }
+        if let name = Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String {
+            return name
+        }
+        return "Hindi Reel Studio"
+    }()
+
+    /// Project directory — parent of the .app bundle
+    private let projectDir: String = {
+        (Bundle.main.bundlePath as NSString).deletingLastPathComponent
+    }()
 
     override init() {
-        let bundle = Bundle.main.bundlePath
-        // Hindi Reel Studio.app lives in the project root.
-        projectDir = (bundle as NSString).deletingLastPathComponent
         super.init()
     }
 
@@ -45,11 +86,11 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = "Hindi Reel Studio"
+        window.title = windowTitle
         window.titlebarAppearsTransparent = false
         window.minSize = NSSize(width: 900, height: 640)
         window.center()
-        window.setFrameAutosaveName("HindiReelStudio")
+        window.setFrameAutosaveName("HindiReelStudio_\(port)")
 
         let config = WKWebViewConfiguration()
         webView = WKWebView(frame: window.contentView!.bounds, configuration: config)
@@ -59,27 +100,80 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.makeKeyAndOrderFront(nil)
     }
 
+    /// Candidate URLs supporting IPv6 loopback ([::1]), IPv4 (127.0.0.1), and localhost
+    private func candidateURLs() -> [URL] {
+        var urls: [URL] = []
+        let cleanHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+
+        if cleanHost == "::" || cleanHost.isEmpty || cleanHost == "localhost" {
+            // Dual-stack: both IPv6 and IPv4 loopback are active
+            let dualStackEndpoints = [
+                "http://[::1]:\(port)/",
+                "http://127.0.0.1:\(port)/",
+                "http://localhost:\(port)/"
+            ]
+            for ep in dualStackEndpoints {
+                if let u = URL(string: ep), !urls.contains(u) { urls.append(u) }
+            }
+        } else if cleanHost.contains(":") {
+            // Explicit IPv6 literal address e.g. ::1
+            if let u = URL(string: "http://[\(cleanHost)]:\(port)/") { urls.append(u) }
+        } else {
+            // Explicit IPv4 or hostname
+            if let u = URL(string: "http://\(cleanHost):\(port)/") { urls.append(u) }
+        }
+
+        // Dual-stack and IPv6/IPv4 fallback probe candidates
+        let fallbacks = [
+            "http://[::1]:\(port)/",
+            "http://127.0.0.1:\(port)/",
+            "http://localhost:\(port)/"
+        ]
+        for fb in fallbacks {
+            if let u = URL(string: fb), !urls.contains(u) {
+                urls.append(u)
+            }
+        }
+        return urls
+    }
+
     private func startServerIfNeeded() {
-        let probe = "http://127.0.0.1:\(port)/"
-        if let url = URL(string: probe),
-           let _ = try? Data(contentsOf: url) {
+        // Probe candidate URLs (IPv4, IPv6, localhost) to see if server is already running
+        for probeURL in candidateURLs() {
+            if let _ = try? Data(contentsOf: probeURL) {
+                return
+            }
+        }
+
+        // --- Try frozen runtime first (standalone .app) ---
+        let frozenRuntime = (Bundle.main.resourcePath ?? "") + "/runtime/run_standalone"
+        if FileManager.default.isExecutableFile(atPath: frozenRuntime) {
+            launchFrozenRuntime(executable: frozenRuntime)
             return
         }
+
+        // --- Fallback to .venv/bin/streamlit (development mode) ---
         let streamlit = (projectDir as NSString).appendingPathComponent(".venv/bin/streamlit")
-        let app = (projectDir as NSString).appendingPathComponent("app.py")
+        let appPy = (projectDir as NSString).appendingPathComponent("app.py")
         guard FileManager.default.isExecutableFile(atPath: streamlit) else { return }
 
+        let cleanHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
         let process = Process()
         process.executableURL = URL(fileURLWithPath: streamlit)
         process.arguments = [
-            "run", app,
-            "--server.headless", "true",
-            "--server.address", "127.0.0.1",
-            "--server.port", String(port),
+            "run", appPy,
+            "--global.developmentMode=false",
+            "--server.headless=true",
+            "--server.address=\(cleanHost)",
+            "--server.port=\(port)",
         ]
         process.currentDirectoryURL = URL(fileURLWithPath: projectDir)
 
         var env = ProcessInfo.processInfo.environment
+        env["HRS_PORT"] = String(port)
+        env["HRS_HOST"] = cleanHost
+        env["STREAMLIT_SERVER_ADDRESS"] = cleanHost
+        env["STREAMLIT_GLOBAL_DEVELOPMENT_MODE"] = "false"
         let extraPaths = [
             "/opt/homebrew/bin",
             "/opt/homebrew/sbin",
@@ -100,26 +194,78 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         env["PATH"] = pathComponents.joined(separator: ":")
         process.environment = env
 
-        let logURL = URL(fileURLWithPath: (projectDir as NSString).appendingPathComponent(".server.log"))
-        FileManager.default.createFile(atPath: logURL.path, contents: nil)
-        if let handle = try? FileHandle(forWritingTo: logURL) {
-            process.standardOutput = handle
-            process.standardError = handle
-        }
-        process.standardInput = FileHandle.nullDevice
+        configureLogging(process: process)
         try? process.run()
         server = process
     }
 
-    private func waitThenLoad() {
-        let url = URL(string: "http://127.0.0.1:\(port)/")!
-        DispatchQueue.global(qos: .userInitiated).async {
-            for _ in 0..<40 {
-                if let _ = try? Data(contentsOf: url) { break }
-                Thread.sleep(forTimeInterval: 0.4)
+    /// Launch the PyInstaller-frozen runtime binary
+    private func launchFrozenRuntime(executable: String) {
+        let cleanHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = []
+
+        var env = ProcessInfo.processInfo.environment
+        env["HRS_PORT"] = String(port)
+        env["HRS_HOST"] = cleanHost
+        env["STREAMLIT_SERVER_ADDRESS"] = cleanHost
+        env["STREAMLIT_GLOBAL_DEVELOPMENT_MODE"] = "false"
+        process.environment = env
+        
+        let runDir = (Bundle.main.resourcePath ?? "") + "/runtime"
+        process.currentDirectoryURL = URL(fileURLWithPath: runDir)
+
+        configureLogging(process: process)
+        try? process.run()
+        server = process
+    }
+
+    /// Set up log file for the server process (safe for read-only /Applications)
+    private func configureLogging(process: Process) {
+        var logURL: URL? = nil
+        let localCandidate = URL(fileURLWithPath: (projectDir as NSString).appendingPathComponent(".server_\(port).log"))
+        
+        if FileManager.default.isWritableFile(atPath: projectDir) {
+            logURL = localCandidate
+        } else {
+            if let userLogs = FileManager.default.urls(for: .libraryDirectory, in: .userDomainMask).first?.appendingPathComponent("Logs/HindiReelStudio") {
+                try? FileManager.default.createDirectory(at: userLogs, withIntermediateDirectories: true)
+                logURL = userLogs.appendingPathComponent("server_\(port).log")
+            } else {
+                logURL = URL(fileURLWithPath: "/tmp/hindi_reel_studio_\(port).log")
             }
+        }
+
+        if let logURL {
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(atPath: logURL.path, contents: nil)
+            }
+            if let handle = try? FileHandle(forWritingTo: logURL) {
+                process.standardOutput = handle
+                process.standardError = handle
+            }
+        }
+        process.standardInput = FileHandle.nullDevice
+    }
+
+    private func waitThenLoad() {
+        let urls = candidateURLs()
+        DispatchQueue.global(qos: .userInitiated).async {
+            var activeURL: URL? = nil
+            for _ in 0..<60 {
+                for candidate in urls {
+                    if let _ = try? Data(contentsOf: candidate) {
+                        activeURL = candidate
+                        break
+                    }
+                }
+                if activeURL != nil { break }
+                Thread.sleep(forTimeInterval: 0.5)
+            }
+            let targetURL = activeURL ?? urls.first ?? URL(string: "http://localhost:\(self.port)/")!
             DispatchQueue.main.async {
-                self.webView.load(URLRequest(url: url))
+                self.webView.load(URLRequest(url: targetURL))
             }
         }
     }

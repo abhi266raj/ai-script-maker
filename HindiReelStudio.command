@@ -15,9 +15,31 @@ set -u
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "$DIR"
 
-PORT=8501
-HOST="127.0.0.1"
-URL="http://${HOST}:${PORT}"
+PORT=${HRS_PORT:-8501}
+HOST="${HRS_HOST:-::}"
+
+# Check for --ipv4 or --ipv6 arguments
+for arg in "$@"; do
+    if [ "$arg" = "--ipv6" ]; then
+        HOST="::1"
+    elif [ "$arg" = "--ipv4" ]; then
+        HOST="127.0.0.1"
+    fi
+done
+
+# Strip brackets if passed in HOST for server binding
+BIND_HOST="${HOST#[}"
+BIND_HOST="${BIND_HOST%]}"
+
+# Format URL with brackets for IPv6 literals (for dual-stack ::, connect via ::1)
+if [ "${BIND_HOST}" = "::" ]; then
+    URL="http://[::1]:${PORT}"
+elif [[ "${BIND_HOST}" == *":"* ]]; then
+    URL="http://[${BIND_HOST}]:${PORT}"
+else
+    URL="http://${BIND_HOST}:${PORT}"
+fi
+
 LOG_FILE="${DIR}/.server.log"
 FP_FILE="${DIR}/.server.fingerprint"
 PID_FILE="${DIR}/.server.pid"
@@ -33,7 +55,8 @@ warn() { echo "⚠️  $1"; }
 die()  { echo ""; echo "❌ $1"; if [ -n "${2:-}" ]; then echo "$2"; fi; exit 1; }
 
 is_server_running() {
-    curl -s --connect-timeout 2 --max-time 5 "${URL}/" > /dev/null 2>&1
+    curl -s -g --connect-timeout 2 --max-time 5 "${URL}/" > /dev/null 2>&1 || \
+    curl -s --connect-timeout 2 --max-time 5 "http://127.0.0.1:${PORT}/" > /dev/null 2>&1
 }
 
 open_app() {
@@ -145,8 +168,9 @@ repair_env() {
 start_server() {
     echo "🍏 Starting the Hindi Reel Studio server on ${URL}..."
     nohup "${ST}" run "${DIR}/app.py" \
+        --global.developmentMode false \
         --server.headless true \
-        --server.address "${HOST}" \
+        --server.address "${BIND_HOST}" \
         --server.port ${PORT} < /dev/null > "${LOG_FILE}" 2>&1 &
     echo $! > "${PID_FILE}"
     code_fingerprint > "${FP_FILE}" 2>/dev/null

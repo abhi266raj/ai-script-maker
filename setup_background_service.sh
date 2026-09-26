@@ -18,10 +18,12 @@ cat <<EOF > "${PLIST_PATH}"
         <string>${PROJECT_DIR}/.venv/bin/streamlit</string>
         <string>run</string>
         <string>${PROJECT_DIR}/app.py</string>
+        <string>--global.developmentMode</string>
+        <string>false</string>
         <string>--server.headless</string>
         <string>true</string>
         <string>--server.address</string>
-        <string>127.0.0.1</string>
+        <string>${HRS_HOST:-::}</string>
         <string>--server.port</string>
         <string>8501</string>
     </array>

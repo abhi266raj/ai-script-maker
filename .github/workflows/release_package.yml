@@ -1,0 +1,65 @@
+# ──────────────────────────────────────────────────────────────────────
+# Build & Release macOS App — GitHub Actions CI/CD (v2.0 skeleton)
+# ──────────────────────────────────────────────────────────────────────
+# Phase 1 (v1.3): manual workflow_dispatch trigger only.
+# Phase 2 (v2.0): uncomment the tag-push trigger for full automation.
+# ──────────────────────────────────────────────────────────────────────
+name: Build & Release macOS App
+
+on:
+  workflow_dispatch:           # Manual trigger (Phase 1 — v1.3)
+    inputs:
+      variant:
+        description: 'Build variant'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - dev
+          - release
+          - both
+  # push:                      # Uncomment for Phase 2 (v2.0)
+  #   tags: ['v*']
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    strategy:
+      matrix:
+        variant: ${{ github.event.inputs.variant == 'both' && fromJSON('["dev","release"]') || fromJSON(format('["{0}"]', github.event.inputs.variant)) }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Create venv & install deps
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install --upgrade pip
+          .venv/bin/pip install -r requirements.txt
+          .venv/bin/pip install pyinstaller pillow
+
+      - name: Build ${{ matrix.variant }} app
+        run: |
+          chmod +x scripts/build_macos_app.sh
+          ./scripts/build_macos_app.sh --${{ matrix.variant }}
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Hindi-Reel-Studio-${{ matrix.variant }}-macOS
+          path: |
+            dist/*.dmg
+            dist/*.app
+
+      # ── Uncomment for automated GitHub Release uploads (v2.0) ──
+      # - name: Create Release
+      #   if: startsWith(github.ref, 'refs/tags/v')
+      #   uses: softprops/action-gh-release@v2
+      #   with:
+      #     files: dist/*.dmg
