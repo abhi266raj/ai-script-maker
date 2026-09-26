@@ -14,7 +14,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
-VERSION="1.3.0"
+# Resolve version dynamically from single source of truth (core/version.py)
+VERSION="$(grep -E '^__version__[[:space:]]*=' "${PROJECT_DIR}/core/version.py" | sed -E 's/__version__[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/' || echo "1.3.0")"
 
 cd "$PROJECT_DIR"
 
@@ -64,7 +65,7 @@ if $DEV_MODE; then
     DMG_NAME=""
     ICON_SRC="AppIcon-Dev.icns"
     SERVER_PORT=8502
-    OUTPUT_DIR="dev"
+    OUTPUT_DIR="dev/v${VERSION}"
     APP_BUNDLE="${OUTPUT_DIR}/${APP_NAME}.app"
     echo "🛠️  Target: DEV variant"
     echo "   Bundle ID:  ${IDENTIFIER}"
@@ -77,7 +78,7 @@ else
     DMG_NAME="Hindi-Reel-Studio-v${VERSION}-macOS.dmg"
     ICON_SRC="AppIcon.icns"
     SERVER_PORT=8501
-    OUTPUT_DIR="dist"
+    OUTPUT_DIR="dist/v${VERSION}"
     APP_BUNDLE="${OUTPUT_DIR}/${APP_NAME}.app"
     echo "📦 Target: RELEASE variant"
     echo "   Bundle ID:  ${IDENTIFIER}"
@@ -86,6 +87,12 @@ else
     echo "   Output App: ${APP_BUNDLE}"
     echo "   Output DMG: ${OUTPUT_DIR}/${DMG_NAME}"
 fi
+echo ""
+
+# ─── Phase 0: Clean previous app bundles ─────────────────────────────
+echo "━━━ 0/5  CLEANUP — deleting previous app bundles ━━━"
+rm -rf "${OUTPUT_DIR}"/*.app dev/*.app dist/*.app build/pyi_dist build/pyi_work
+echo "✅ Cleaned previous .app bundles"
 echo ""
 
 # ─── Phase 1: Verify tools & environment ─────────────────────────────
@@ -264,7 +271,7 @@ else
             "${APP_BUNDLE}" >/dev/null
     else
         echo "   create-dmg not found — using native macOS hdiutil..."
-        STAGING_DIR="dist/dmg_staging_${SERVER_PORT}"
+        STAGING_DIR="build/dmg_staging_${SERVER_PORT}"
         rm -rf "${STAGING_DIR}"
         mkdir -p "${STAGING_DIR}"
         
@@ -282,6 +289,10 @@ else
     fi
 
     echo "✅ Disk image created: ${DMG_PATH}"
+
+    # In Release mode, dist/ should only contain the DMG installer
+    echo "🧹 Removing intermediate app bundle (installer packaged in DMG)..."
+    rm -rf "${APP_BUNDLE}"
 fi
 
 # ─── Summary ─────────────────────────────────────────────────────────
@@ -289,16 +300,15 @@ echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
 echo "🎉 BUILD COMPLETE: ${APP_NAME} (v${VERSION})"
 echo ""
-echo "📦 App Bundle:  ${APP_BUNDLE}"
-ls -lhd "${APP_BUNDLE}"
 
 if [ -n "${DMG_PATH}" ] && [ -f "${DMG_PATH}" ]; then
-    echo ""
     echo "💿 Disk Image:  ${DMG_PATH}"
     ls -lh "${DMG_PATH}"
     echo ""
     echo "🚀 To test DMG: open \"${DMG_PATH}\""
 else
+    echo "📦 App Bundle:  ${APP_BUNDLE}"
+    ls -lhd "${APP_BUNDLE}"
     echo ""
     echo "🚀 To launch:   open \"${APP_BUNDLE}\""
 fi

@@ -17,10 +17,11 @@ from .metrics import (
 )
 from .prompt_loader import load_prompt, render_prompt, PROMPTS_DIR
 
-__version__ = "1.0.0"
+from .version import __version__, VERSION
 
 __all__ = [
     "__version__",
+    "VERSION",
     "dual_engine",
     "DualEngine",
     "fm_engine",
