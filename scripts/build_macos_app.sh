@@ -19,17 +19,15 @@ VERSION="1.3.0"
 cd "$PROJECT_DIR"
 
 # ─── Determine variant ───────────────────────────────────────────────
-ENABLE_IPV4=false
 DEV_MODE=""
+SERVER_HOST="::"  # Built with dual-stack (simultaneous IPv6 + IPv4) by default
 
 for arg in "$@"; do
     case "$arg" in
         --dev)     DEV_MODE=true ;;
         --release) DEV_MODE=false ;;
-        --ipv4)    ENABLE_IPV4=true ;;
-        --ipv6)    ENABLE_IPV4=false ;;
         -h|--help)
-            echo "Usage: $0 [--dev | --release] [--ipv4 | --ipv6]"
+            echo "Usage: $0 [--dev | --release]"
             exit 0
             ;;
     esac
@@ -37,23 +35,19 @@ done
 
 choose_variant() {
     echo ""
-    echo "┌────────────────────────────────────────────────────────┐"
-    echo "│         Hindi Reel Studio — Build Menu                 │"
-    echo "├────────────────────────────────────────────────────────┤"
-    echo "│  1)  🛠️  DEV     standalone (IPv6 ::1 loopback)        │"
-    echo "│  2)  🛠️  DEV     standalone (IPv4 127.0.0.1 fallback)  │"
-    echo "│  3)  📦 RELEASE standalone (IPv6 ::1 loopback)        │"
-    echo "│  4)  📦 RELEASE standalone (IPv4 127.0.0.1 fallback)  │"
-    echo "└────────────────────────────────────────────────────────┘"
+    echo "┌──────────────────────────────────────────────┐"
+    echo "│        Hindi Reel Studio — Build Menu        │"
+    echo "├──────────────────────────────────────────────┤"
+    echo "│  1)  🛠️  DEV     build (outputs to dev/)      │"
+    echo "│  2)  📦 RELEASE build (outputs to dist/)     │"
+    echo "└──────────────────────────────────────────────┘"
     echo ""
-    read -rp "Choose option [1-4]: " choice
+    read -rp "Choose option [1/2]: " choice
     case "$choice" in
-        1|dev|DEV|d|D)             DEV_MODE=true;  ENABLE_IPV4=false ;;
-        2|dev-ipv4|DEV-IPV4)       DEV_MODE=true;  ENABLE_IPV4=true  ;;
-        3|release|RELEASE|r|R)     DEV_MODE=false; ENABLE_IPV4=false ;;
-        4|release-ipv4|REL-IPV4)   DEV_MODE=false; ENABLE_IPV4=true  ;;
+        1|dev|DEV|d|D)         DEV_MODE=true  ;;
+        2|release|RELEASE|r|R) DEV_MODE=false ;;
         *)
-            echo "❌ Invalid choice. Please enter 1, 2, 3, or 4."
+            echo "❌ Invalid choice. Please enter 1 (DEV) or 2 (RELEASE)."
             exit 1
             ;;
     esac
@@ -61,12 +55,6 @@ choose_variant() {
 
 if [ -z "$DEV_MODE" ]; then
     choose_variant
-fi
-
-if $ENABLE_IPV4; then
-    SERVER_HOST="127.0.0.1"
-else
-    SERVER_HOST="::"
 fi
 
 # ─── Configure variant-specific values ───────────────────────────────
