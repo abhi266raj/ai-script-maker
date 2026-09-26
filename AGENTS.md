@@ -60,3 +60,27 @@
      ```bash
      git branch -d feature/<descriptive-feature-name>
      ```
+
+---
+
+## 📋 Release Governance & Requirement Lifecycle Rules
+
+### 1. REQUIREMENT-DRIVEN RELEASES & COMMIT GATE
+- **Every release must be bound to a formal specification**: Every release requires a dedicated requirements document (`vX.Y_REQUIREMENTS.md` or `docs/REQUIREMENTS_vX.Y.md`) and a corresponding implementation plan (`vX.Y_IMPLEMENTATION_PLAN.md`). Every requirement must be part of an explicit release scope.
+- **Strict Commit Gate**: The AI agent is **STRICTLY FORBIDDEN from committing code** without both an approved requirements document and an approved implementation plan.
+- **AI Coding Permissions**:
+  - The AI agent must NOT write autonomous feature code without prior requirement and implementation plan approval.
+  - The AI agent is explicitly **permitted** to write/update documentation, author specifications, and develop bug fixes or patches on appropriate branches.
+
+### 2. POST-RELEASE TRANSITION & REQUIREMENT AUDIT
+- Once a release is tagged and finalized on `main`:
+  1. The AI agent must immediately begin work on the requirement document for the **next version** (`vX.Y_REQUIREMENTS.md`).
+  2. **Previous Requirement Audit Gate**: Before finalizing the next version's requirements, the AI agent MUST systematically audit every requirement from the previous release:
+     - Verify which requirements were completely implemented and tested.
+     - Identify any uncompleted, partially completed, or unverified requirements.
+  3. **Explicit User Decision on Uncompleted Requirements**:
+     - The AI agent MUST prompt the user directly regarding each uncompleted item to confirm whether it should be:
+       - **Abandoned / Deprecated**, or
+       - **Carried Over / Deferred** into the upcoming release.
+  4. The AI agent must record these decisions in the new requirements document and act strictly in accordance with the user's instructions.
+
