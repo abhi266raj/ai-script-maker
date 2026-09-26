@@ -73,31 +73,32 @@ fi
 if $DEV_MODE; then
     APP_NAME="Hindi Reel Studio DEV"
     IDENTIFIER="com.hindireel.studio.dev"
-    DMG_NAME="Hindi-Reel-Studio-DEV-v${VERSION}-macOS.dmg"
+    DMG_NAME=""
     ICON_SRC="AppIcon-Dev.icns"
     SERVER_PORT=8502
+    OUTPUT_DIR="dev"
+    APP_BUNDLE="${OUTPUT_DIR}/${APP_NAME}.app"
     echo "🛠️  Target: DEV variant"
     echo "   Bundle ID:  ${IDENTIFIER}"
     echo "   Port:       ${SERVER_PORT}"
     echo "   Host:       ${SERVER_HOST}"
-    echo "   App Name:   ${APP_NAME}.app"
-    echo "   DMG Name:   ${DMG_NAME}"
+    echo "   Output:     ${APP_BUNDLE}"
 else
     APP_NAME="Hindi Reel Studio"
     IDENTIFIER="com.hindireel.studio"
     DMG_NAME="Hindi-Reel-Studio-v${VERSION}-macOS.dmg"
     ICON_SRC="AppIcon.icns"
     SERVER_PORT=8501
+    OUTPUT_DIR="dist"
+    APP_BUNDLE="${OUTPUT_DIR}/${APP_NAME}.app"
     echo "📦 Target: RELEASE variant"
     echo "   Bundle ID:  ${IDENTIFIER}"
     echo "   Port:       ${SERVER_PORT}"
     echo "   Host:       ${SERVER_HOST}"
-    echo "   App Name:   ${APP_NAME}.app"
-    echo "   DMG Name:   ${DMG_NAME}"
+    echo "   Output App: ${APP_BUNDLE}"
+    echo "   Output DMG: ${OUTPUT_DIR}/${DMG_NAME}"
 fi
 echo ""
-
-APP_BUNDLE="dist/${APP_NAME}.app"
 
 # ─── Phase 1: Verify tools & environment ─────────────────────────────
 echo "━━━ 1/5  VERIFY — checking build tools & dependencies ━━━"
@@ -152,12 +153,13 @@ echo "✅ Using icon: ${ACTUAL_ICON}"
 # ─── Phase 3: PyInstaller Freeze ─────────────────────────────────────
 echo ""
 echo "━━━ 3/5  FREEZE — freezing runtime via PyInstaller ━━━"
-# We freeze into dist/run_standalone directory
-rm -rf build/run_standalone dist/run_standalone
+rm -rf build/pyi_dist build/pyi_work
 
 "$PYTHON_EXEC" -m PyInstaller \
     --noconfirm \
     --onedir \
+    --distpath "build/pyi_dist" \
+    --workpath "build/pyi_work" \
     --name run_standalone \
     --add-data "prompts:prompts" \
     --add-data "core:core" \
@@ -174,7 +176,7 @@ rm -rf build/run_standalone dist/run_standalone
     --hidden-import bs4 \
     scripts/run_standalone.py
 
-if [ ! -x "dist/run_standalone/run_standalone" ]; then
+if [ ! -x "build/pyi_dist/run_standalone/run_standalone" ]; then
     echo "❌ PyInstaller freeze failed: executable not found"
     exit 1
 fi
@@ -182,14 +184,15 @@ echo "✅ PyInstaller standalone runtime built successfully"
 
 # ─── Phase 4: Assemble & Sign macOS .app Bundle ──────────────────────
 echo ""
-echo "━━━ 4/5  ASSEMBLE — constructing ${APP_NAME}.app ━━━"
+echo "━━━ 4/5  ASSEMBLE — constructing ${APP_NAME}.app in ${OUTPUT_DIR}/ ━━━"
+mkdir -p "${OUTPUT_DIR}"
 rm -rf "${APP_BUNDLE}"
 mkdir -p "${APP_BUNDLE}/Contents/MacOS"
 mkdir -p "${APP_BUNDLE}/Contents/Resources"
 
 # 1. Copy frozen runtime into Contents/Resources/runtime
 echo "   Copying standalone runtime into app bundle..."
-cp -R "dist/run_standalone" "${APP_BUNDLE}/Contents/Resources/runtime"
+cp -R "build/pyi_dist/run_standalone" "${APP_BUNDLE}/Contents/Resources/runtime"
 
 # 2. Compile native Cocoa/WKWebView runner
 echo "   Compiling native Swift Cocoa wrapper..."
@@ -256,10 +259,9 @@ echo ""
 DMG_PATH=""
 if $DEV_MODE; then
     echo "━━━ 5/5  DMG — skipped for DEV build (DMG is created for Release only) ━━━"
-    rm -f "dist/${DMG_NAME}"
 else
     echo "━━━ 5/5  DMG — generating ${DMG_NAME} ━━━"
-    DMG_PATH="dist/${DMG_NAME}"
+    DMG_PATH="${OUTPUT_DIR}/${DMG_NAME}"
     rm -f "${DMG_PATH}"
 
     if command -v create-dmg >/dev/null 2>&1; then

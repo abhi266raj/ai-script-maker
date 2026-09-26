@@ -18,9 +18,9 @@ studio_config.json
 # macOS
 .DS_Store
 
-# Build artifacts (Release builds strictly untracked)
+# Build artifacts (all .app bundles strictly outside version control)
 *.app/
-!Hindi Reel Studio DEV.app/
+dev/
 dist/
 build/
 *.spec
