@@ -2,6 +2,7 @@
 
 > **Specification Source:** [`V3.md`](file:///Users/abhiraj/Documents/news/agent/v3/V3.md)  
 > **Exploration & Gap Analysis:** [`V3_EXPLORATION.md`](file:///Users/abhiraj/Documents/news/agent/v3/V3_EXPLORATION.md)  
+> **Critical Requirements Audit:** [**`AUDIT.md`**](file:///Users/abhiraj/Documents/news/agent/v3/AUDIT.md) *(Nonsense vs Feasible vs Issues)*  
 > **Target Architecture:** Multi-Agent Editorial Pipeline (9:16 Vertical Reel Studio)
 
 ---

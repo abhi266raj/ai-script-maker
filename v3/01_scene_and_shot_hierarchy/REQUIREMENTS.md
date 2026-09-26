@@ -1,6 +1,6 @@
 # Sub-Feature 01: Scene & Shot Hierarchy Specification
 
-> **Parent Specification:** [`V3.md`](file:///Users/abhiraj/Documents/news/agent/V3.md) — *Scene Scope & Duration* & *Shot Structure*  
+> **Parent Specification:** [`v3/V3.md`](file:///Users/abhiraj/Documents/news/agent/v3/V3.md) — *Scene Scope & Duration* & *Shot Structure*  
 > **Status:** Pending Implementation  
 > **Feature Branch:** `feature/v3-01-scene-shot-hierarchy`
 
@@ -11,8 +11,9 @@
 Establish a true two-level narrative hierarchy (**Scene $\to$ Shot**) for 9:16 vertical reels:
 1. Replace flat beat sequences with structured scenes dynamically derived from narrative complexity or user constraints.
 2. Enforce a strict ceiling of **10 seconds maximum per individual scene** (flexible minimum).
-3. Standardize scene headings to: `### SCENE X: Title [X Seconds]`.
-4. Standardize shot headings within scenes to clean numbered headings without timestamps: `#### Shot 1`, `#### Shot 2`.
+3. **Eliminate Rigid Word Limits:** Scenes are bounded by runtime ($\le 10\text{s}$) and natural speech velocity (2 to 3 wps), not rigid integer word budgets.
+4. Standardize scene headings to: `### SCENE X: Title [X Seconds]`.
+5. Standardize shot headings within scenes to clean numbered headings without timestamps: `#### Shot 1`, `#### Shot 2`.
 
 ---
 
@@ -22,9 +23,10 @@ Establish a true two-level narrative hierarchy (**Scene $\to$ Shot**) for 9:16 v
 - The pipeline MUST dynamically determine the number of scenes based on the story arc (e.g. setup, escalation, twist/resolution), the news scope, or explicit user requests.
 - Scene count MUST NOT be locked to arbitrary 5-second integer buckets unless no narrative guidance is provided.
 
-### FR-01.2: Maximum 10-Second Scene Cap
+### FR-01.2: Maximum 10-Second Scene Cap (No Rigid Word Limits)
 - No single scene may exceed 10.0 seconds in runtime.
 - For reels with total duration $> 10$ seconds (e.g. 15s, 30s, 60s), the orchestrator must divide the narrative across at least $\lceil \text{target\_seconds} / 10 \rceil$ distinct scenes.
+- Rigid word count limits per beat/scene (e.g. max 11 words) are removed. The 10s duration ceiling is the authoritative physical boundary.
 
 ### FR-01.3: Standardized Scene Headings
 - Every scene heading MUST strictly follow the syntax:
@@ -56,16 +58,16 @@ class ShotItem(BaseModel):
     on_screen_text: Optional[str] = None
     video_prompt: Optional[VideoScenePrompt] = None
 
-class SceneItemV3(BaseModel):
-    """V3 Master Scene (max 10 seconds)."""
+class SceneItem(BaseModel):
+    """V3 Clean-Break Master Scene (max 10 seconds)."""
     scene_number: int  # 1, 2, 3...
     title: str  # Short descriptive title
-    duration_sec: int  # <= 10 seconds
+    duration_sec: float  # <= 10.0 seconds
     heading: str = ""  # "### SCENE 1: The Escalation [8 Seconds]"
     character: str
     dialogue: str
-    dialogue_timestamp: str  # "[0:01 – 0:06]"
-    delivery_cue: str  # "[Frantic delivery ~2.8 wps]"
+    dialogue_timestamp: str  # "[0:01 – 0:04.5]"
+    tone: str  # e.g. "Frantic", "Sarcastic"
     audio_sfx: str
     audio_sfx_timestamp: str  # "[0:00 – 0:02]"
     visual_anchor: Optional[str] = None

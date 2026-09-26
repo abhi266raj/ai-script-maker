@@ -38,6 +38,51 @@ Prompt rules are suggestions. Code validators are enforcement.
 
 ---
 
+## 🌿 V3 Master Scriptwriting Specifications & Dynamic Pacing (Zero Rigid Word Limits)
+
+> **Authoritative Specification:** [`v3/V3.md`](file:///Users/abhiraj/Documents/news/agent/v3/V3.md) | **Execution Roadmap:** [`v3/README.md`](file:///Users/abhiraj/Documents/news/agent/v3/README.md) | **Sub-Features Matrix:** [`v3/SUB_FEATURES.md`](file:///Users/abhiraj/Documents/news/agent/v3/SUB_FEATURES.md)
+
+### 1. Spoken Dialogue Syntax & Speech Velocity Pacing
+* **Canonical Spoken Line Syntax:**
+  ```text
+  ⚬ CHARACTER [Tone] [0:XX – 0:XX]:
+    "Dialogue"
+  ```
+  or single-line: `CHARACTER [Tone] [0:XX – 0:XX]: "Dialogue"`.
+* **Complete Elimination of Strict Word Count Limits:**  
+  Rigid per-beat integer word caps (e.g. `max_words = 11`, `recommended_words = 10` in legacy `core/metrics.py` and `agents/dialogue_writer.py`) are **completely eliminated**.
+* **Dynamic Speech Velocity (2 to 3 WPS):**  
+  Speech is paced dynamically relative to the line's timestamp duration ($\Delta t \le 10\text{s}$) and character emotional tone:
+  - **Urgent / Fast / Frantic tones:** Paced near **3 words per second** (~2.8 to 3.2 wps).
+  - **Calm / Sarcastic / Deadpan tones:** Paced near **2 words per second** (~1.8 to 2.2 wps).
+  - Target words $\approx (\text{End Time} - \text{Start Time}) \times \text{Pacing WPS}$.
+* **Example:**
+  ```markdown
+  ⚬ RAMESHWAR [Frantic] [0:01 – 0:04.5]:
+    "अरे भगाने गए तो हाथ में काट लिया, और खुद पूरी बोतल गटक गई!"
+
+  ⚬ SUNITA [Sarcastic] [0:05 – 0:09]:
+    "बिना चखने के पूरी बोतल साफ, अब वन विभाग ही संभाले!"
+  ```
+
+### 2. Scene Scope, Duration & Hierarchy
+* **10-Second Scene Cap:** Individual scenes are strictly capped at a maximum of 10.0 seconds.
+* **Heading Syntax:** `### SCENE X: Title [X Seconds]`.
+* **Shot Hierarchy:** Clean, plain numbered headings without timestamps: `#### Shot 1`, `#### Shot 2`.
+* **Per-Scene Timestamp Resets:** All audio, dialogue, and SFX timestamps reset to `[0:00]` at the start of each scene.
+
+### 3. Generative Video Stability & Continuity
+* **Minimal Stationary Props:** Props must remain stationary within the environment to prevent AI video generation artifacts (morphing hands/objects). Driving narrative through facial expressions, body posture, gestures, and environmental staging.
+* **Seamless Connectivity:**
+  - *Direct Consequence:* Subsequent scenes immediately react to the outcome of the previous scene.
+  - *Visual Anchors:* Focal character states or environmental points remain visible across cuts.
+  - *Audio Bleed:* Trailing SFX carry over into the opening 1–2 seconds `[0:00 – 0:02]` of the next scene.
+  - *Conversational Carryover:* Opening lines directly reference the preceding event.
+* **Cast Isolation:** Characters featured in Scene $N$ must not appear on-screen in Scene $N+1$ ($\text{Cast}(N) \cap \text{Cast}(N+1) = \emptyset$).
+* **Clean Break Architecture:** Direct upgrade to V3 with zero backward compatibility baggage.
+
+---
+
 ### 1. Executive Summary & Objective
 
 In production reel creation, users need both:
@@ -150,7 +195,7 @@ This architectural enhancement makes the generation pipeline modular, scalable, 
 - **FR-7.6 (No Default Tapri Anywhere):** No module (contextual selector, scene catalog, scene director, dialogue writer personas, app scene-context extraction) may default to a chai tapri/tea stall for non-tea topics. Words like `friends`, `street`, `roadside`, `teacher`, `दोस्त` alone MUST NOT trigger a tapri selection.
 - **FR-7.7 (Topical Tea-Stall Exception):** A tapri/tea-stall setting or persona is allowed ONLY when the verified news topic or the sample story is genuinely about tea/chai or a tea stall (matched with word boundaries, e.g. `chai`, `tea stall`, `चाय की दुकान`).
 - **FR-7.8 (Deterministic Stage-2 Tapri Guard):** After Stage 2 finalizes scene locations, a deterministic guard (`sanitize_scene_location` / `validate_scene_locations`) MUST replace any tapri/tea-stall location that is not topically justified — with the first verified news location, or a neutral public setting when none exists. Stage 3/4 fallbacks MUST NOT reintroduce a removed tapri.
-- **FR-7.9 (Centralized App Version):** The app version lives in ONE constant (`APP_VERSION = "1.1"`); the top navigation renders `v{APP_VERSION}`. No duplicate hardcoded version literals are permitted.
+- **FR-7.9 (Centralized App Version):** The app version lives in ONE constant (`APP_VERSION = "1.2.0"`); the top navigation renders `v{APP_VERSION}`. No duplicate hardcoded version literals are permitted.
 
 **Acceptance tests for §2.7** (`tests/test_tapri_guard.py`): irrelevant tapri locations are sanitized; `friends`/`street`/`teacher` topics never select a tapri; genuine chai news may; generated instructions contain no tapri example, no `script version`/`retry attempt` prose, and sample style-reference-only language; personas, guidelines, and scene catalog contain zero tapri references.
 
