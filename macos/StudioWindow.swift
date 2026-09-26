@@ -27,7 +27,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         return 8501
     }()
 
-    /// Server host — read from Info.plist "HRSServerHost" or HRS_HOST environment variable, default "localhost"
+    /// Server host — read from Info.plist "HRSServerHost" or HRS_HOST environment variable, default "::1" (IPv6 loopback)
     private let host: String = {
         if let h = ProcessInfo.processInfo.environment["HRS_HOST"], !h.isEmpty {
             return h
@@ -35,7 +35,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         if let h = Bundle.main.object(forInfoDictionaryKey: "HRSServerHost") as? String, !h.isEmpty {
             return h
         }
-        return "localhost"
+        return "::1"
     }()
 
     /// Window title — read from Info.plist "CFBundleDisplayName", fallback to CFBundleName

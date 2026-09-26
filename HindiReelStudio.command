@@ -16,12 +16,14 @@ DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" >/dev/null 2>&1 && pwd)"
 cd "$DIR"
 
 PORT=${HRS_PORT:-8501}
-HOST="${HRS_HOST:-127.0.0.1}"
+HOST="${HRS_HOST:-::1}"
 
-# Check for --ipv6 argument
+# Check for --ipv4 or --ipv6 arguments
 for arg in "$@"; do
     if [ "$arg" = "--ipv6" ]; then
         HOST="::1"
+    elif [ "$arg" = "--ipv4" ]; then
+        HOST="127.0.0.1"
     fi
 done
 

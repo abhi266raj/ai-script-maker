@@ -19,16 +19,17 @@ VERSION="1.3.0"
 cd "$PROJECT_DIR"
 
 # ─── Determine variant ───────────────────────────────────────────────
-ENABLE_IPV6=false
+ENABLE_IPV4=false
 DEV_MODE=""
 
 for arg in "$@"; do
     case "$arg" in
         --dev)     DEV_MODE=true ;;
         --release) DEV_MODE=false ;;
-        --ipv6)    ENABLE_IPV6=true ;;
+        --ipv4)    ENABLE_IPV4=true ;;
+        --ipv6)    ENABLE_IPV4=false ;;
         -h|--help)
-            echo "Usage: $0 [--dev | --release] [--ipv6]"
+            echo "Usage: $0 [--dev | --release] [--ipv4 | --ipv6]"
             exit 0
             ;;
     esac
@@ -39,18 +40,18 @@ choose_variant() {
     echo "┌────────────────────────────────────────────────────────┐"
     echo "│         Hindi Reel Studio — Build Menu                 │"
     echo "├────────────────────────────────────────────────────────┤"
-    echo "│  1)  🛠️  DEV     standalone (Dual-stack / IPv6 + IPv4) │"
-    echo "│  2)  🛠️  DEV     standalone (IPv6 ::1 loopback only)   │"
-    echo "│  3)  📦 RELEASE standalone (Dual-stack / IPv6 + IPv4) │"
-    echo "│  4)  📦 RELEASE standalone (IPv6 ::1 loopback only)   │"
+    echo "│  1)  🛠️  DEV     standalone (IPv6 ::1 loopback)        │"
+    echo "│  2)  🛠️  DEV     standalone (IPv4 127.0.0.1 fallback)  │"
+    echo "│  3)  📦 RELEASE standalone (IPv6 ::1 loopback)        │"
+    echo "│  4)  📦 RELEASE standalone (IPv4 127.0.0.1 fallback)  │"
     echo "└────────────────────────────────────────────────────────┘"
     echo ""
     read -rp "Choose option [1-4]: " choice
     case "$choice" in
-        1|dev|DEV|d|D)             DEV_MODE=true;  ENABLE_IPV6=false ;;
-        2|dev-ipv6|DEV-IPV6)       DEV_MODE=true;  ENABLE_IPV6=true  ;;
-        3|release|RELEASE|r|R)     DEV_MODE=false; ENABLE_IPV6=false ;;
-        4|release-ipv6|REL-IPV6)   DEV_MODE=false; ENABLE_IPV6=true  ;;
+        1|dev|DEV|d|D)             DEV_MODE=true;  ENABLE_IPV4=false ;;
+        2|dev-ipv4|DEV-IPV4)       DEV_MODE=true;  ENABLE_IPV4=true  ;;
+        3|release|RELEASE|r|R)     DEV_MODE=false; ENABLE_IPV4=false ;;
+        4|release-ipv4|REL-IPV4)   DEV_MODE=false; ENABLE_IPV4=true  ;;
         *)
             echo "❌ Invalid choice. Please enter 1, 2, 3, or 4."
             exit 1
@@ -62,10 +63,10 @@ if [ -z "$DEV_MODE" ]; then
     choose_variant
 fi
 
-if $ENABLE_IPV6; then
-    SERVER_HOST="::1"
+if $ENABLE_IPV4; then
+    SERVER_HOST="127.0.0.1"
 else
-    SERVER_HOST="localhost"
+    SERVER_HOST="::1"
 fi
 
 # ─── Configure variant-specific values ───────────────────────────────

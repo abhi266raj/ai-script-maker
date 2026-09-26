@@ -58,8 +58,8 @@ def main():
 
     # Port and host from environment (set by native Cocoa wrapper via Info.plist)
     port = os.environ.get("HRS_PORT", "8501")
-    raw_host = os.environ.get("HRS_HOST", "localhost").strip()
-    host = raw_host.strip("[]") if raw_host else "localhost"
+    raw_host = os.environ.get("HRS_HOST", "::1").strip()
+    host = raw_host.strip("[]") if raw_host else "::1"
     os.environ["STREAMLIT_SERVER_ADDRESS"] = host
 
     from streamlit.web import cli as st_cli
