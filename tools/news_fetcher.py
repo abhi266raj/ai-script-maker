@@ -1,5 +1,6 @@
 """Live India news: Google News/Trends, Reddit, Mastodon (free public APIs)."""
 
+import html
 import re
 import urllib.parse
 import datetime
@@ -90,6 +91,31 @@ def clean_html(raw_html: str) -> str:
         return ""
     soup = BeautifulSoup(raw_html, "html.parser")
     return soup.get_text(separator=" ", strip=True)
+
+
+def is_english_text(text: str) -> bool:
+    """True when the alphabetic characters are Latin (English hashtags only)."""
+    letters = [c for c in (text or "") if c.isalpha()]
+    if len(letters) < 3:
+        return False
+    latin = sum(1 for c in letters if ("a" <= c.lower() <= "z"))
+    return (latin / len(letters)) >= 0.9
+
+
+def phrase_to_hashtag(phrase: str) -> str:
+    """Turn a short English trend name into a single #Tag. Empty if not English."""
+    if not is_english_text(phrase):
+        return ""
+    words = re.findall(r"[A-Za-z0-9]+", phrase)
+    if not words or len(words) > 5:
+        return ""
+    parts = []
+    for w in words:
+        parts.append(w if w.isupper() or any(ch.isdigit() for ch in w) else w[:1].upper() + w[1:])
+    tag = "#" + "".join(parts)
+    if len(tag) < 4 or len(tag) > 40:
+        return ""
+    return tag
 
 
 def _norm_title(title: str) -> str:
@@ -488,6 +514,127 @@ class NewsFetcher:
                             break
         except Exception as e:
             print(f"Warning: google trends fetch failed: {e}")
+        return articles
+
+    def fetch_famous_english_hashtags(self, limit: int = 12) -> list:
+        """English hashtags already trending on X, plus English Google Trends topics.
+
+        Instagram has no public hashtag feed, so X (trends24) and Google Trends
+        stand in for tags people are actually posting. Non-Latin topics are dropped.
+        Each entry is {tag, headline, link, source}.
+        """
+        entries: list = []
+        seen = set()
+
+        def _push(tag: str, headline: str, link: str, source: str) -> None:
+            tag = (tag or "").strip()
+            key = tag.lower()
+            if not tag.startswith("#") or key in seen or not is_english_text(tag):
+                return
+            headline = (headline or "").strip()
+            if not is_english_text(headline):
+                headline = tag.lstrip("#")
+            seen.add(key)
+            entries.append({
+                "tag": tag,
+                "headline": headline,
+                "link": link or "",
+                "source": source,
+            })
+
+        for label, link in self._fetch_x_trend_labels():
+            raw = label.strip()
+            if raw.startswith("#"):
+                tag = "#" + re.sub(r"[^A-Za-z0-9_]", "", raw[1:])
+            else:
+                tag = phrase_to_hashtag(raw)
+            if not tag:
+                continue
+            _push(tag, raw.lstrip("#"), link, "X")
+            if len(entries) >= limit:
+                return entries[:limit]
+
+        # Fill remaining slots with English Google Trends search topics.
+        for art in self._fetch_google_trends_topics(limit=20):
+            tag = phrase_to_hashtag(art.title.replace("Trending in India:", "").strip())
+            _push(tag, art.title, art.link, art.source or "Google Trends")
+            if len(entries) >= limit:
+                break
+        return entries[:limit]
+
+    def _fetch_x_trend_labels(self) -> list:
+        """Ordered (label, search_url) pairs from the public India X trends page."""
+        url = "https://trends24.in/india/"
+        found = []
+        try:
+            with httpx.Client(headers=_HTTP_HEADERS, timeout=self._timeout, follow_redirects=True) as client:
+                r = client.get(url)
+                if r.status_code != 200:
+                    return []
+            for href, text in re.findall(
+                r'href="(https://twitter\.com/search\?q=[^"]+)"[^>]*>([^<]+)',
+                r.text,
+            ):
+                label = html.unescape(text).strip()
+                if not label or not is_english_text(label):
+                    continue
+                found.append((label, html.unescape(href)))
+        except Exception as e:
+            print(f"Warning: X trends fetch failed: {e}")
+        # Preserve order, drop duplicates.
+        out, seen = [], set()
+        for label, link in found:
+            key = label.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append((label, link))
+        # Actual #hashtags first — those are the names already used on X.
+        out.sort(key=lambda pair: (0 if pair[0].startswith("#") else 1))
+        return out
+
+    def _fetch_google_trends_topics(self, limit: int = 15) -> List[NewsArticle]:
+        """English-only Google Trends search topics (the query, not a regional headline)."""
+        articles: List[NewsArticle] = []
+        url = "https://trends.google.com/trending/rss?geo=IN"
+        try:
+            import xml.etree.ElementTree as ET
+            with httpx.Client(headers=_HTTP_HEADERS, timeout=self._timeout, follow_redirects=True) as client:
+                r = client.get(url)
+                if r.status_code != 200:
+                    return []
+            root = ET.fromstring(r.content)
+            ns = {"ht": "https://trends.google.com/trending/rss"}
+            for item in root.findall(".//item"):
+                topic = item.findtext("title") or ""
+                topic = clean_html(topic).strip()
+                if not is_english_text(topic):
+                    continue
+                news_title = ""
+                news_link = ""
+                news_source = "Google Trends"
+                for ni in item.findall("ht:news_item", ns):
+                    title_el = ni.find("ht:news_item_title", ns)
+                    url_el = ni.find("ht:news_item_url", ns)
+                    src_el = ni.find("ht:news_item_source", ns)
+                    candidate = clean_html(title_el.text if title_el is not None and title_el.text else "")
+                    if is_english_text(candidate):
+                        news_title = candidate
+                        news_link = url_el.text if url_el is not None and url_el.text else ""
+                        news_source = src_el.text if src_el is not None and src_el.text else "Google Trends"
+                        break
+                articles.append(
+                    NewsArticle(
+                        title=news_title or f"Trending in India: {topic}",
+                        link=news_link or "https://trends.google.com/trends/trendingsearches/daily?geo=IN",
+                        source=f"Google Trends ({news_source})" if news_title else "Google Trends",
+                        snippet=f"Popular search: {topic}",
+                    )
+                )
+                if len(articles) >= limit:
+                    break
+        except Exception as e:
+            print(f"Warning: english google trends fetch failed: {e}")
         return articles
 
     def get_india_trending(self, limit: int = 8) -> List[NewsArticle]:

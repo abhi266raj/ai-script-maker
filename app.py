@@ -44,7 +44,7 @@ ENGINE_OPTIONS = {
 ENGINE_NAMES_REV = {v: k for k, v in ENGINE_OPTIONS.items()}
 
 # Centralized app version — bump here; the top nav renders it automatically.
-APP_VERSION = "1.1"
+APP_VERSION = "1.2.1"
 
 # Merged story source: manual topic entry plus every news feed (replaces the
 # Stage names for display in collapsible history (continuous + step-wise).
@@ -925,23 +925,22 @@ with col_settings:
                         unsafe_allow_html=True,
                     )
             if selected_source == TRENDING_HASHTAG_SOURCE:
-                # Trending hashtags: derived from live Google Trends India topics.
-                # One go: hashtags (each with its headline) AND news load together.
+                # Same English famous-tag list as Instagram (X first, then Google Trends).
+                st.caption("English hashtags already trending on X and Google. Pick one, or type your own.")
                 _trend_cache = st.session_state.get("trending_hashtags")
                 if not _trend_cache or refresh_news:
-                    with st.spinner("Loading trending hashtags & headlines…"):
+                    with st.spinner("Loading famous English hashtags…"):
                         try:
-                            _trend_arts = news_fetcher._fetch_google_trends_trending(limit=15)
-                            st.session_state.trending_hashtags = _build_hashtag_entries(_trend_arts)
+                            st.session_state.trending_hashtags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             st.session_state.trending_hashtags = []
-                            st.warning(f"Could not load Google Trends hashtags: {_gt_err}")
+                            st.warning(f"Could not load English hashtags: {_gt_err}")
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("trending_hashtag_dropdown")
                         _prev_tags = [e["tag"] for e in _trend_cache]
                         _default_tag = _prev_pick if _prev_pick in _prev_tags else (_trend_cache[0]["tag"] if _trend_cache else "")
-                        if _default_tag:
+                        if _default_tag and _default_tag != OPTION_TYPE_OWN:
                             st.session_state.active_hashtag = _default_tag
                             _entry = next((e for e in _trend_cache if e["tag"] == _default_tag), None)
                             if _entry:
@@ -949,36 +948,40 @@ with col_settings:
                                 st.session_state.loaded_news_cat = selected_news_cat
                                 st.session_state.loaded_hashtag = _default_tag
                 _trend_cache = st.session_state.get("trending_hashtags") or []
-                if _trend_cache:
-                    ht_lbl, ht_dd = st.columns([2.5, 5.5])
-                    with ht_lbl:
-                        st.markdown('<div class="cfg-label">Hashtag</div>', unsafe_allow_html=True)
-                    with ht_dd:
-                        _tag_options = [e["tag"] for e in _trend_cache]
-                        _picked_tag = st.selectbox("Trending Hashtag", _tag_options,
-                            format_func=lambda t: _hashtag_label(next(e for e in _trend_cache if e["tag"] == t)),
-                            label_visibility="collapsed", key="trending_hashtag_dropdown")
+                ht_lbl, ht_dd = st.columns([2.5, 5.5])
+                with ht_lbl:
+                    st.markdown('<div class="cfg-label">Hashtag</div>', unsafe_allow_html=True)
+                with ht_dd:
+                    _tag_options = [e["tag"] for e in _trend_cache] + [OPTION_TYPE_OWN]
+                    _picked_tag = st.selectbox("Trending Hashtag", _tag_options,
+                        format_func=lambda t: _hashtag_label(next(e for e in _trend_cache if e["tag"] == t)) if t != OPTION_TYPE_OWN else t,
+                        label_visibility="collapsed", key="trending_hashtag_dropdown")
+                    if _picked_tag == OPTION_TYPE_OWN:
+                        _ht_raw = st.text_input("Custom Hashtag", value=st.session_state.get("trending_hashtag_custom", ""), placeholder="e.g. #MakeInIndia", label_visibility="collapsed", key="trending_hashtag_input")
+                        _ht_raw = (_ht_raw or "").strip()
+                        if _ht_raw:
+                            st.session_state.trending_hashtag_custom = _ht_raw
+                            active_hashtag = _ht_raw if _ht_raw.startswith("#") else f"#{_ht_raw}"
+                    elif _picked_tag:
                         active_hashtag = _picked_tag
                         active_hashtag_article = next((e for e in _trend_cache if e["tag"] == _picked_tag), None)
-                        # Real-time warning BEFORE the headline loads: flag bad content now.
                         if active_hashtag_article:
                             _ht_sev, _ht_msg = _verify_hashtag(active_hashtag_article)
                             _show_config_issue(_ht_sev, _ht_msg)
-                else:
+                if not _trend_cache and _picked_tag != OPTION_TYPE_OWN:
                     st.caption("No trending hashtags available right now.")
             elif selected_source == INSTAGRAM_HASHTAG_SOURCE:
-                # Instagram hashtag: trending list (each with its headline) plus
-                # free-text fallback. Instagram offers no public hashtag-feed API.
-                st.caption("Pick a trending hashtag or type your own. The hashtag's headline loads below.")
+                # Instagram hashtag: same English famous-tag list (X + Google Trends).
+                # Instagram offers no public hashtag-feed API.
+                st.caption("English hashtags already trending on X and Google. Instagram has no public tag feed, so these are the famous tags people are posting. Type your own if you want.")
                 _trend_cache = st.session_state.get("trending_hashtags")
                 if not _trend_cache or refresh_news:
-                    with st.spinner("Loading trending hashtags & headlines…"):
+                    with st.spinner("Loading famous English hashtags…"):
                         try:
-                            _trend_arts = news_fetcher._fetch_google_trends_trending(limit=15)
-                            st.session_state.trending_hashtags = _build_hashtag_entries(_trend_arts)
+                            st.session_state.trending_hashtags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             st.session_state.trending_hashtags = []
-                            st.warning(f"Could not load Google Trends hashtags: {_gt_err}")
+                            st.warning(f"Could not load English hashtags: {_gt_err}")
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("instagram_hashtag_dropdown")

@@ -1,15 +1,15 @@
 {
-  "default_engine": "codex_only",
-  "default_tone": "Cinematic",
-  "default_duration": 10,
+  "default_engine": "agy_only",
+  "default_tone": "Joke",
+  "default_duration": 20,
   "batch_count": 1,
   "max_retries": 3,
-  "story_source": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance",
-  "selected_headline": "Indian Medical Parliamentarians\u2019 Forum Organises National Policy Summit on \u2018Swasth Bharat Se Saksham Bharat\u2019 to Reimagine MedTech Access in India",
+  "story_source": "\ud83d\udcbb Technology & AI",
+  "selected_headline": "Amazon India investment: why Jeff Bezos\u2019 company is betting billions on AI, cloud and e-commerce",
   "selected_script_index": 0,
   "default_angle": "Funny & Relatable",
-  "character_count": 2,
-  "scene_style": "Narration",
+  "character_count": 3,
+  "scene_style": "Dialogue",
   "workflow_mode": "\u26a1 Continuous",
   "source_mode": "\ud83d\udce1 Live News",
   "news_category": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance",
@@ -18,103 +18,103 @@
   "studio_layout": "2_frame",
   "cached_headlines": [
     {
-      "title": "Ritika Chopra: The Calm Journo Behind Stormy Election Commision Story",
-      "link": "https://news.google.com/rss/articles/CBMinAFBVV95cUxPXzliT0VvSGc3OHFPSzIxQTNnc3RGS2VYN0gwTXJhWmhLUThVemwzT3dSLVhoQkdWSmVCSGpmVm55QzIydUF2OWpTZU5HcU9LV2Y0YkRsa1BHYWRjdmlpWXFvQkhmSktoa1VQdjlWQUlrTWhtaEpXSkxGZWtKQTRzYm9MZHNCQmNnQUxLYmxIb1oySWc4Nzg3YkVOcng?oc=5",
-      "source": "The Indian Awaaz",
-      "time_label": "16m ago"
+      "title": "ICX Ethernet Switch Manufacturing Begins in Pune as RUCKUS Networks Expands India Operations With Belden",
+      "link": "https://news.google.com/rss/articles/CBMiswFBVV95cUxNMnRkc2lTVVRheWs5c3k1enRUYy02SW5LT2o3VVRpemE2TFVfQmo3aF9lVWtIaERUbGYtaFV6TnBOOU5ubUhoN2t0TjZnNm1qYTg4US1IS3BQUjYzLVpjSlhEbVhGRDh1d0I5OHNuM3RuM3I0YlB4UFJtemtOem4wMTNkbnlnWnZ6RGxWbHRsSUNzUTdzc3VrTUUtaGI1cWdQOTN6dDQ5U2RMakpPN2xPVlFjYw?oc=5",
+      "source": "Prittle Prattle News",
+      "time_label": "1h ago"
     },
     {
-      "title": "Why is the 2023 Election Commissioner appointment law controversial, and why did SC refer it to CJI?",
-      "link": "https://news.google.com/rss/articles/CBMiygFBVV95cUxPR3RLcHM5aXhKQlR1MXdSdTNHd1FPVnl3QjEtY0d1VDhvSW55dlZBSjEtZW4wbDNlS1BJVWlPcmVRYlc2Z2ExdDhTWkVhem12V1ExLXM4dGZBTlZBSXd5bzhHcjlpUHg0Z3pDRm9BX3NWXzZRSWhobzVmM3BCN0dJSFZFbWZ2Q2N6ZVdMTnh3bmlhWFNqczVYSW0zMngtdHBiLXR3c0ExaDRock41bXBaX0l6bUViZDgzbjFFMmRHWk95MVBPekNQX0lB0gHQAUFVX3lxTE96R1dEQlhVOGxYWHZiNVNPcTRnaDMxUHBCSXNfaXBOQ1kwZGk3TEdjMFE3V0JfRXE1VjFlVGZNWnVha3FyR0dqX1dmMVZac2YzSTdsX2t3TnVjZFN5NzFOcDdtSUdadUhXMi0wTjFkb0RxZ2ZIQzVQM2JfVDVmSlJZN1d5OWxZOFR3TUY0RS1leERnTEJSOWJSVzg0UzFhNGN6dWlHU25hdVkyUm9wTlB4S3lYQ21NcmJyWnROUGdtQ3JLTklSeEdoOHZDOFU0T0k?oc=5",
-      "source": "The Indian Express",
-      "time_label": "2h ago"
-    },
-    {
-      "title": "CEC must go, Supreme Court should act, pause SIR: Opposition after Election Commission divide out in open",
-      "link": "https://news.google.com/rss/articles/CBMiwwFBVV95cUxPbXJGeURYUDlGbWNHSzVVZEpuMUhRUXFwVDhLdzI5V3BvemFqLVA2Z1lHMU9FNU45alNiMFVWRGRNcDF1MXA5U1h3SDN1UVIwaldNcHg0WUFXU3lzZ0FpWHowRTBfZ3VJLXNIUExCa0lmTmx5MTFyYk5YX3d1N0syTVZkelcwZVhydjV4Smg2dzJkS09WUDR4dHlISmo5WEtraUgxZ2JMNEEwbnM3SW9wNldMTnhtQ3VQY1ZPOFk3UzhkM0HSAcoBQVVfeXFMTTdPbW83dndFc3RjVExiRW52VTZWelB4eHAzTzZaU2ZHUzFyMkc4V3hLUUNvWUkxbUd5M1JFd3JJZFhQQkVSMkZ1cC13Y2RFTXdNdmFTZnhZUzBuNW1uanZpWURSYlozM19Fa052eERJaGVwck4wOVdSOS0tOUZEUmY0VnFUR0tBSE5rRmt0WnRRVEZWeThEX0t1NG1Kekg2VjRaUC1XcmpxemtDSGtvTmdpSm1GTWJMREVDXzNaMFc0a0RjZnhTMGdwdw?oc=5",
-      "source": "The Indian Express",
-      "time_label": "3h ago"
-    },
-    {
-      "title": "Supreme Court delivers split verdict on pleas challenging CEC appointment law; matter sent to CJI for Constitution bench",
-      "link": "https://news.google.com/rss/articles/CBMi8wFBVV95cUxPcGRHV3RRQjE3S3hPNEhHTGpidXBMVE5CZk5EZFZHLTFpUVdhNWY1YzMwZkJ6RThBS2wya1VkeEU2U3NlQ25ZcTZjWUVKd09wdGRfUzgxXzNBNFE2Nk9SVlV6QUV1Vm1HR19iaWtnalhXVnp0MmhzSkhacFFlODRNU2dUQ3NDcHllRFJjcTNNTTFXNXZPYlFyTmNQeENxQTltWDBfMHBrZnFoT0QxdUVKem5ubU1VZkxhZnVoR0kweXpQVHduT21mQ2hiRUJDcFluZ2NaaU1IQkp5MWhGcjRXQXM3eHVaWTNIN1VMZUMyelE2Uk0?oc=5",
+      "title": "HAL and SkyPulse Solutions IFSC Sign MoU for Proposed 30-Helicopter Programme Valued at 2,491 Crore",
+      "link": "https://news.google.com/rss/articles/CBMi1wFBVV95cUxPSk5zdWtReEtGRGlFVW5OTHhRc1ZMWFV2dGl6TGYzU2FMRWpYQUZrTVhnQWZQVEJrakg3REVRQXBNOTFkeUtaOEp4dUk3OGNrX25BWUdFSHJPclhnNG50MTlNS1l1Z0g2eklxNHlwQUFxN2VmOUZEREtRRjNYUlZUdTdxLUloS05vclZjQl9QaEtsVVlYcWxZQzh3QVVrbFpXaF9PdkVkc0UxWEgzREwxYVlwZktlSXAyU0FvNjd5QUJOTFJ2QjdRQ253R2Fkbmg0YWhpSGpvMA?oc=5",
       "source": "India's News.Net",
-      "time_label": "4h ago"
+      "time_label": "1h ago"
     },
     {
-      "title": "Who appoints India\u2019s Election Commissioners? Supreme Court sends law challenge to larger bench",
-      "link": "https://news.google.com/rss/articles/CBMisAFBVV95cUxNaHVrTUxraEJGUjhLblRUTEh4bExqcFlzTXk4ejlrUGNLTkt4eWpYNXVqR2NyeUl5X3pKSVBaemdmZmJnalgzNmZxNFZ1Yml3X2JMcTVoekJwWWlSY2pIOGFSaHBEVHl5VjFyVTdhVm5tV1lBVTJSVTVIWkxxTFVDVEZMVEVwZjdiVFdMRFpxSzlkdG8zOUF5UEt4MDlVNGhkZlZVLVlNV3lxMDNMQjI5ZtIBtgFBVV95cUxOQ2t6NTZleWtaVlZWcDZhNFZlcW9mekdteV9GdUluNFJLOHhjUWVYYVV2R1lQYTlWRjRwN3JCYWtNSDNuSGdSVnhVVXRWeTVOcXh1ZjdrelNmSTktdXVoWmxSS3JFWVlIZEdxOEJCc2FMV2VueUlrWU1ZSVEzQ012MHpGRGduX3pUbDZ0M0hHTTVocURMdnhTaTN2ZXV4c3AzTi0ydVh0YlZJRmJiYXRFVVdldmdyUQ?oc=5",
-      "source": "Mathrubhumi English",
-      "time_label": "2h ago"
-    },
-    {
-      "title": "AAP, Left parties renew \u2018vote chori\u2019 allegations",
-      "link": "https://news.google.com/rss/articles/CBMimwFBVV95cUxOVkx4S3Z1emFJb2hZb2t0NW9hNkRuUnl1NGV1TmxhVUVNMHllMkxLa2dESk1ubnNWNTd0WnRGT3QxS3pidUlJWm5ieFAwQW1ha3Z2cXBFSmdDRDVCNnpZcWotSXpMNDdnZmotd1A2RnVjajduVUFneFd1ZElrSTdjTlNUQzBmRXBKNmdTcmpqOGVQM2NpUVVYaEVKY9IBogFBVV95cUxOOFFIWlNodkpiZ09HbGkzTDFvUjNmdFR0dDFncnNhcDlyYWx0ZW9US011REpldFAxSWZfSGlYMk1SWjhoWXREQWM2bXRZMVRud3g3el9CX29MZmxFajZPRXpiLUZQX0d3ZlpEU21YZDlUSGFjbVE3ckRUSHE4SWI5Zllmc1g4TjFjc21pTk9aYzdhRUtaWUFGVFRVWUpQY3BmOVE?oc=5",
-      "source": "The Indian Express",
+      "title": "Two Brothers India Farms Launches Fasting Atta Range Ahead of Navratri",
+      "link": "https://news.google.com/rss/articles/CBMipgFBVV95cUxObm12QkVCU1JwYzgzR0FOcTQtSDlNS0dXYjVzZFh2Qk5ESHRuNzhkbkg4QkplOXd3QU5ZTkgwUnZ1bWpYSWE5bjJQODJERU1lbWZRdlZaR05lYmY3TGdfaW1fblU4aC1fREw1Y2ZUaGJob0c4eW5vTFR3QkxVcTFfQ2tnRC0xSk1OVlp4ZDd3QWdrQ3NTeGppQXRYdy1BY0Rjdi1WV2RR?oc=5",
+      "source": "Indian Retailer",
       "time_label": "5h ago"
     },
     {
-      "title": "EC appointment law: The key takeaways from Supreme Court\u2019s split verdict",
-      "link": "https://news.google.com/rss/articles/CBMi1gFBVV95cUxNUURpZzdVRV9mLVVNZXlzWGNGLVRJaWMxLTA3STFhRFMta2hWNEhZZEJ4ZktTbU1VSG9ORTFGbWZUbzZ2ejhUQ1JzTEdNZEh6dFNoRDJQRjFEZF95aDBTQkdSZTl2a1FkLWs5LXV4TmxFejh1aEFGNVVsZ1k0WUJacnU1YUhQZTVnalRMUFdlbGVrOHpyUDQzcXpSOWZLZVJhbk1Od0dsZEJ1bDZQWGo1ZEY0eEVvczZRb2NKcl9od0VfQmt1Y1h6bUl1WnlTNXg3Mnp4ZHBn0gHcAUFVX3lxTE9OTDR4Qmk4eWFHTFlWQWZYcXNjSTRIdElsMUVQZWF6Tmg2Tnl2WmkzUFMtQW1MQzdOTFBZT3hwVGNmS2Y0U3dUUDFoLXRneml4TjNBSEZxdHVCc01WMm5ZUVVGUjZCdzhJcnctYmhERXZzS19OaEF2N1NQSDdjZ19yYjI5b1dJRVR3U3V4R3J4MElVT3RnUFFzRm1CbGk4QXE2Z0t3aUhwQXN0OEtuc0UzMXc1YjV0X2hacWJhSDFKYldCMDVraXpTYk1PQ0pFVmJjdFpRR2dGR1E3czc?oc=5",
-      "source": "The Indian Express",
-      "time_label": "16h ago"
+      "title": "Make in India initiative Completes 12 years:Gains and Gaps in Journey towards a Manufacturing Nation",
+      "link": "https://news.google.com/rss/articles/CBMi7AFBVV95cUxOUW5SX28zLVZnRXJ0bG5XTnFfR3k2bDUwQ0ZyQS1MVDRlYVFFM3RqX0c3UnNpck5TZXdNZmxjZ0RzbGpjZTBJM2lmTkttXzZ0UG1CLWx1ZU9RQ3U5U2ZlWXhPdnR3SVJENldNdk9CdGROSlBnWnItUGtUakZGekw1ejIzcTZFZ0ZIVDNiUTYwakV5SFV0OGRwUVQ4d1ZJOXZGUi1ScVhFWUVmVzRjMXVTZXZudi1CYTJRakZVakJobm5fbGJFRDZmcmxMcXg1ZmZPemp0SW9ZZm5HbF9MLXVhMVFnRjVkcWdSN0FrbA?oc=5",
+      "source": "jharkhandstatenews.com",
+      "time_label": "2h ago"
     },
     {
-      "title": "\u2018Invisible hand running ECI\u2019: Congress attacks Gyanesh Kumar after Express report on poll panel",
-      "link": "https://news.google.com/rss/articles/CBMizgFBVV95cUxPR3dLZnJ2b2tDNGRKOHdiY3JwbndYRWh6LVZQU09fc1pjYi02YmJTdGxzTzNxbUFra0R4V0xGSDVvYnFqR3ZReE9oTmZTV1dZYWgxamh1RnhYb0RRWm5vcHJNQ3VIS3Zrb0k5UDB5M2VIWW1DVmtvM1gyaXJnaC1NZE93T3pjUGx3eV9IeExlRjlWTFZMSnRraVJ0SDB2MXpieThnMzFaUFNZNFRnN0hoMC1rcGNGTHUtdWdYYTBoQXRmY3pZODVjNlI1aXhIUdIB1AFBVV95cUxNenBKWVlmRVZmOWVzRVEtUVMxNGF1bGxVbDhXMUYzRnoyQWFIVmFKZXUzZDluMkIwYzU2ZkhOQTlhZklqZlJuVzRKanE0bUdhdjJXVXNuazFZSkF1RVpPUll1UzdDUmFON0hOendlTWFyYWx5cHJaajMxNjdKSVBSWTNfX2x1S1VQOXJrRWhGc3Y5amhNUTJoX2hHc1pPSGZhYUtJQXVqN0tXNnlpSmtUbzctaTQwNUF2VWdFRDNaMklYLVR4QU42NHhqNjRodEI3S09vMg?oc=5",
-      "source": "The Indian Express",
-      "time_label": "23h ago"
+      "title": "Amazon India investment: why Jeff Bezos\u2019 company is betting billions on AI, cloud and e-commerce",
+      "link": "https://news.google.com/rss/articles/CBMijAJBVV95cUxPemE4clZDQUt1YXB6TXhHcjJxSzdMeUd6VU1wQ0djWTB4UlJrcW9Lc1hVZUFOemtOdFpxbXI1a0hGSnpZQkVHN3ppY2tVR1VuNVdFTUwweHRuY3ZMSWY4UllMMkowLWczdHZKUG91clNKNHdEYVR6eEx5SUt5X3BmWWZtVVlqNXJ1ZmN1dnhQVnhoTEVRZXp1RWM2bHk1X2poYVR5QnBnMGZjUEZ3VjdpNHNEREJXX1V3d21ybl9qOWEwSDlBMUFpS0RjcUVKODR4UDVfR0pyaFY5bHJQbTRXdDVMSy00SWE3VmJmTUNvZDVIYzc2RWQ4MmpjWVFHNzJuZjMwR3BKNDdQcVlp0gGMAkFVX3lxTE96YThyVkNBS3VhcHpNeEdyMnFLN0x5R3pVTXBDR2NZMHhSUmtxb0tzWFVlQU56a050WnFtcjVrSEZKellCRUc3emlja1VHVW41V0VNTDB4dG5jdkxJZjhSWUwySjAtZzN0dkpQb3VyU0o0d0RhVHp4THlJS3lfcGZZZm1VWWo1cnVmY3V2eFBWeGhMRVFlenVFYzZseTVfamhhVHlCcGcwZmNQRndWN2k0c0REQldfVXd3bXJuX2o5YTBIOUExQWlLRGNxRUo4NHhQNV9HSnJoVjlsclBtNFd0NUxLLTRJYTdWYmZNQ29kNUhjNzZFZDgyamNZUUc3Mm5mMzBHcEo0N1BxWWk?oc=5",
+      "source": "ET BrandEquity",
+      "time_label": "2h ago"
     },
     {
-      "title": "Indian Supreme Court Judge likens Election Commission Selection Law to Batting Team Picking Umpire",
-      "link": "https://news.google.com/rss/articles/CBMizAFBVV95cUxPX09GVG5XTDFtUHotVEk5T3hJaFYzMFhQNmtUVWdUNzNfUndaLWc3UHdoUFlqUDA3REFyeTBPcmo4X2llZzJJT1l2b3Q3bVRSMmZmczRkZ3RBVS0wTHJQbktRSVFHRGpDVHE0QUxrYjRPYjVxa1FHWEtiR3FZS0Vsd0dueUlvMjVhZzFhZzFKbEc0ZFh3cEFkS29IakVTTXNQdW50VTJSbXlQQ2xxTnYtaUNMdV9SUEZOQVVvT1Y1ZENTNzJxTE52NUdoZGU?oc=5",
-      "source": "streamlinefeed.co.ke",
-      "time_label": "14h ago"
+      "title": "India Rips Into Pak\u2019s \u2018Falsehoods\u2019 And \u2018Deceit\u2019 At UN; Warns Terrorism Will Have Consequences",
+      "link": "https://news.google.com/rss/articles/CBMi8wFBVV95cUxQLWRBN2ZiR2JkbGZPY2tKdGZaajZULXRXa0x1NWVodm8wMFRwQ3VCM0VwVmx6SlZQNDhJR1ZrSVpOTXBiWXNFM05MZjIzSmptNU0xU3o0Z2RxQlBXRkJzdkphY0VhLTB4eVV4SFpYeUV5TllZV2ExczVFX0l5QUtldzZVNmNTVG43VUJjcTRraGhRNkdCM0N6ZVZ0NUZZMnR1NEZsamEwNWo2MlRuUm9qYjNtMnJ0YkVIczJhNWZkc29Hd0daMjNWMkdoV2Q3akZ4bFFWVWs2WlZEbDdDdTc1ODlaNFRua0NuTHNubU9fUGM1MDTSAfgBQVVfeXFMUHJ6QmNIUTJGRTd6TFp1b2pDVUhpWm9LM2ZDUmZsTmJLa0k2WmotNDNiRjlIVDMzbVBqTXVfOUZSdnBSZXRmQUJkWWx2RXhGQk9Bc2x3c0dNaVVoSC1Hb0huSklzeTR6bE9XTjNvTTFhNDRnNjRIcUFoeUZ3TF94TFZlXzIzUUxuMUgtUlBQeDl3YUhidU5vejhGOVA5VXVSdWp3N1hqQ29XVjZ2NzgtT0RST1RyTFNra0hSUVNkQlNUVGNrdVRWYUhmTEItSUYtQjR2eHktZEZVUWNBbUtWLWtMLTBReld3THJkTV81WnlKRHJ5UVQzeE0?oc=5",
+      "source": "ETV Bharat",
+      "time_label": "8h ago"
     },
     {
-      "title": "Indian Medical Parliamentarians\u2019 Forum Organises National Policy Summit on \u2018Swasth Bharat Se Saksham Bharat\u2019 to Reimagine MedTech Access in India",
-      "link": "https://news.google.com/rss/articles/CBMirgJBVV95cUxPR3BlNjRaNWJGN3BZc2llaDFsVlM2ekU5VVA5WU5NSV9kd1pIY1hndFI2QkczUm5XeExDRkwzYThYZ0Rhenp2bm5vNTN3elV6MXBhQnZoQnJUejdqZnFLeTRJcTNzWXd2TEdzNTVtbGVfS19wcXU1QUJhcGt4TTliVzRCMWhibWw2cUNsOTVjN2FhOS05aVpKQl9hN2YtYlVfc3hzaWVEWDZ2eVR1bHdGWVFKNTgwc0h4VFN2Zi1ESlBIX200SGRoMklaamc0Z1hseGhQOWdwbmR2dnpUZnIyek1FSG1obkxBOHBMX1Y1MW13TVhkUGh2blJRRGgxRFpJcmtWRUNsR2E2NnpIc3RtSXdqckZaazB5Y1kxVklPSlFGZThjMnl0RUpsMXIwZ9IBrgJBVV95cUxPR3BlNjRaNWJGN3BZc2llaDFsVlM2ekU5VVA5WU5NSV9kd1pIY1hndFI2QkczUm5XeExDRkwzYThYZ0Rhenp2bm5vNTN3elV6MXBhQnZoQnJUejdqZnFLeTRJcTNzWXd2TEdzNTVtbGVfS19wcXU1QUJhcGt4TTliVzRCMWhibWw2cUNsOTVjN2FhOS05aVpKQl9hN2YtYlVfc3hzaWVEWDZ2eVR1bHdGWVFKNTgwc0h4VFN2Zi1ESlBIX200SGRoMklaamc0Z1hseGhQOWdwbmR2dnpUZnIyek1FSG1obkxBOHBMX1Y1MW13TVhkUGh2blJRRGgxRFpJcmtWRUNsR2E2NnpIc3RtSXdqckZaazB5Y1kxVklPSlFGZThjMnl0RUpsMXIwZw?oc=5",
-      "source": "TheWire.in",
-      "time_label": "18h ago"
+      "title": "Vikas Bhi, Virasat Bhi : Narendra Modi\u2019s Vision for a Modern and Rooted India",
+      "link": "https://news.google.com/rss/articles/CBMi0gFBVV95cUxNeE85OGVMTWdSR3B6ZGdIT3FfT1JmejdqMjlmamhiQkpFb1I1NUU3TC1Zb2hBZTE3WlJVZVFiUXZXc3E2MVlFb0JsVUUzeEtZMFFmOG1ZN3ZKYXNSTGJPTkJsS0tDSWFhMGQ2czAxS1k1alFqVUZTZHBzWElpS1lLWmx6M01aSGQ2QmJIaUNGd3FSdUFTUWRUMlI2ZDV5MnJ0Sld3RFRXdGw0UmwxRmNDeDRsd2dEUXdUcGVDbUw4RG0wdE9nU2JwNkhpS3VBRmY2R0E?oc=5",
+      "source": "Indianmasterminds",
+      "time_label": "21h ago"
     },
     {
-      "title": "Supreme Court of India Bench Splits on Election Commissioner Appointment Law",
-      "link": "https://news.google.com/rss/articles/CBMiygFBVV95cUxPTWlQR3V6ZGFQSU1ucVJkWFNGZmtmNDctWXdGNUs5dEFZUkJkQzRaNEZFLTB1SVZiMzhYMnp3alhVZXJGN3ZvRERRMEd1SmxpdHRSbGFyWWFvYjU5UXlGMHNPWVhSNXFfX00xUVBsaWJ2YjctbnpCQi1KZGJSTWhKNmVHMml5YlNkV3prN1owNmFuX2dXZ21PWGR0SmsxV0V3SVQzOUktR2pCUmRzOTVZSldvRExEVWVfZnRCS2JiSEZQZzE3VE1MZ2lR0gHPAUFVX3lxTFBCUF9KNlNjalZWUk9pZ3BpckszSldYYThDRVl4YUNuTHFlU2xmN1JSMUNFd1lYN2VXbFMtak1rVzdpcTRQN2R1MnFWdGh1NEtzaTVvUU81cktwTWgzM0tIRmRrT3plNkFfWURKY3JaVHhpN3ZPeHVKMmxmRFpRZVNJV2RrSlk0UVFCQy0xRzlpdXJEbWdNQkM4WWNDMXZKR3RBREM1MHVFX090aEM2aGJoOXJ3Q0FxVDc0bExSdURGWDhqemVXU19HQ2Z6Q19fcw?oc=5",
-      "source": "illustrated Daily News",
+      "title": "Rajnath Singh, top military leaders to lead NDTV Defence Summit 2026",
+      "link": "https://news.google.com/rss/articles/CBMigAFBVV95cUxPZEVZZ0xyS0FlUERPWEwxTXA3NGNRbXNDd0RjanNCOXNFNmdVMTJjVi1hQmxCdmJVMHhCME5UMnBjNFVLWlltUGFocFctcUVyVFcwWGpTUzFnMnRCV1FIYllrOVo0MXpYT21ya3Y3Q2ZPVGcwakg2OHlKM01CNlFQeA?oc=5",
+      "source": "Indian Broadcasting World",
       "time_label": "11h ago"
     },
     {
-      "title": "'Impeach Gyanesh Kumar to save democracy': Opposition closes ranks against CEC, calls for his arrest",
-      "link": "https://news.google.com/rss/articles/CBMi4AFBVV95cUxOZlBFaEJtWG9JSGdJVmRwSHZ4R1M3ZnJQMG5OVkJGeHhPV1FNMXA5bkxpZVhaNkd2eHZ6Y2dFV0gzaDdxR1V2MTZPZ3pfOGp3Q3dhOVZuenFQNW93LWtZU1FTS0pMRFBJLVJaNkJIaS1JUElxNGVTR0gyUExUYmNiQWhEUVlnV3U4RElxcEdXZnhWNldIVGZTenVZZnI2eE5Eb1h0Z1l4bWxsZEpMdi1UdnNvRURfeXhtQS1RN0JjNmNnbGRVYV82SUJnOUxZcnhUMUpvcDZmaUdxdVFfQzFXNNIB7gFBVV95cUxNYXBtOVc4MjYyV1lNdXU4WXMzNEhzOXVaMktsa0NyTlFBVFBXVHJXaGlwT1Vlem5WSld4NHd6VlVieUVLRjdQcmpmX1pnQTJCRHNReGRKcGxZSEdBb1NiNVVTaS0yN0dPaVlYVnp2d3VwckYtMjF2eWV4OEp6MWNiY1ctYm9FU2lPVnFXYzk1NUEyUUpsdnVrT211VlhIM1NHWFhwSkVnbGhfTTN6anhERXhEdHV2RUNzQzVNaTljOENwcGVXUjlHclBYdXFyUTFnMWtxUnE5c1hPUXUzaG10bzJjNDE1RG0yalhzcDN3?oc=5",
-      "source": "The New Indian Express",
-      "time_label": "12h ago"
+      "title": "IITM Unicorn Frontier Fund I hits Rs 450 Cr first close",
+      "link": "https://news.google.com/rss/articles/CBMijgFBVV95cUxNY19qeHBtT09VdUJuc3JRRFlKeXRpalNubGRSOGZYeldfenBGYUxaXzlzRVdsZlBxbzVkNThheEJnS1VVZFZ6ZmdGUnU4NUFCc2FnQkQza29Ecld4d014d3NGMUZOTGxLT2dGZmFQQlA1WWdueTVnM2VXTDduUHRSbGlxTWhOVFZkNlZQVVpn?oc=5",
+      "source": "YourStory.com",
+      "time_label": "1h ago"
     },
     {
-      "title": "EC 'dissent' row: Opposition seeks CEC's arrest, fresh polls in states; BJP lauds 'pure democracy' - top",
-      "link": "https://news.google.com/rss/articles/CBMihgJBVV95cUxOcHNfaXZXTXRpdTFnUEphU1pCbi1PZVhPdDh4YXVHR1RSRWdpMFVTVVJISHdUakY0aUZ5Q280MTZiMnEyTmdkRGJaZnQ4TjdqTmRGRXZGRjd4bkNOV21NSTJoWU1EMS1FYjFrSWVoQ25hdnE0TWFvdzFoWkFJeDJfUFhib2pBYmQyM3dqWnY4SVZHVnh1QUlKQ0JZT0kxYTZ2aGZLcmthUE50NUFHSXZ0R21fR3pzRWo0ZEdsQmxpTnFaX1k3eGdDenZFOWdNaGlOZGpTaWlxOWZyU3ZmazE5WHBpc0hZQWRoUG1fTXJGQTRZakhZVkFqUFR1YU5sV0dZc3FMR19n0gGLAkFVX3lxTFBWdW9oZU9WSXFLaldzd3VHS3ZYM3lMN3FNMWQ0bHpfUWhISUFUMG9vTkMzRFZack11cElqR1Ficjdfc19NR1FIMloyb2hNdDBFbnpaODdzQnVMUU9kTnFzVHlqSXRqY0thZ3Rfd3o1NzEzc2FrcnUtaENtaUhIOEpfUFpaZUhUZFcydExHNDlMT0dxbWJDOUhFOXVYZFNuR0IwX25iMVFTS2JmUW4zNkRtN1l2VzhSNUY1Nm9VaGhqMFhlNjBuOFNwZ09mZVdNS3FFQ0V1ajlhZkVIdDk3bjl4WnZGb2s4Q0lfSkVWRE1kdGxldVBBT05uWU9Ecl9fN0tmeWFGaGkyRFJlVQ?oc=5",
+      "title": "Weekly Defence Dispatch: Tejas and Zorawar delays may be costing India readiness, US F-35s fly with IAF, Ag...",
+      "link": "https://news.google.com/rss/articles/CBMijgJBVV95cUxON0Z2bjZ3cEdpUEpSVl9zbkpuWVMxc3JOMFl4TWw0VkNJeHFaeHd4RlF0ZXUtdWt2YzFwVWF2Nkx5S2RlOVNfQlpQeEo2bmJIYnVCUlNmd1FLVUktd3A1Mjc1ZzZ5UERrNkR1X1JqMl9WRkJFTDNnODhLdlU5VWI2ZFRGN1FiU2JVYktrVXo5UzM0Q3o3TWxldllCQW92Rm1vMUpwbEg0d0NGS1FkM1QxVktaTmI0Wm8ta3Z5QVIzbkFWLUhjcUlNZXlTbGdzZWVLZjc1MC03Yy1Jcm05UzFheFF3UXJBaHd5bGFkSTdnazFFMy1TcWZrUnRNaWdTU1BhNDlCVktXRUVHNmRnU2fSAY4CQVVfeXFMTjdGdm42d3BHaVBKUlZfc25KbllTMXNyTjBZeE1sNFZDSXhxWnh3eEZRdGV1LXVrdmMxcFVhdjZMeUtkZTlTX0JaUHhKNm5iSGJ1QlJTZndRS1VJLXdwNTI3NWc2eVBEazZEdV9SajJfVkZCRUwzZzg4S3ZVOVViNmRURjdRYlNiVWJLa1V6OVMzNEN6N01sZXZZQkFvdkZtbzFKcGxINHdDRktRZDNUMVZLWk5iNFpvLWt2eUFSM25BVi1IY3FJTWV5U2xnc2VlS2Y3NTAtN2MtSXJtOVMxYXhRd1FyQWh3eWxhZEk3Z2sxRTMtU3Fma1J0TWlnU1NQYTQ5QlZLV0VFRzZkZ1Nn?oc=5",
+      "source": "Firstpost",
+      "time_label": "4h ago"
+    },
+    {
+      "title": "FIIs unlikely to return in large numbers without new growth engines in India: Bernstein",
+      "link": "https://news.google.com/rss/articles/CBMizAFBVV95cUxPbFNlSE16bTUtVm1BU0pweWZpbndsZkptcnJMN01QMnJ1dy1RSWdsNHZERVB1WHRDdklTdHFnQ3J6bDN3d0hkd19JTlJWelVUVkE0X3ZiRDZ5cGZva05GRWtvS0JQTnpPejJqNHBlcDdYV2ZwbmxYZElfVGd4alRtZUFRT2paUmJjc25OZ1Iwb0lfNlZ0TTFxTWwzd2tlZWZjUmVBUVpUeEtucW02VHA4SUlrOXNLQV9VaU5FLXNYV0ZHUHhuTF9lQUU2N0k?oc=5",
+      "source": "Big News Network.com",
+      "time_label": "5h ago"
+    },
+    {
+      "title": "Sarvam AI updates model to boost Indian language OCR accuracy",
+      "link": "https://news.google.com/rss/articles/CBMi4AFBVV95cUxOVTF3a3d6NDdLWklYWGNPcFhacDZBaG9qZTJ4WnkwV19pcHViTUxUYWdnSUhwMjl3ekNOT21CUEpZQTU3MVZ4LThHcTRPOFY5Vm0zQ0IwV0ZsVk9RbkxSb2EzSHNYMXI0ajJfMlIxb1MydWNWOG1BUno1M0xYWXZFaV9CWkhpd1FRSm5kVDE1bDFRVWVOOHc2ZW1hT3lBT243cnRPdExmdkpUbTBQUEdpeFUzMFNZLXBmb3cxQXN6bzVLbEx4YXpYSlI5Y01BRzQ2bS1fMTFIT3hDaU5wMnR2ZdIB5gFBVV95cUxPb25ySzhuMG41TFVZdExIdWExV2JRUmhlMnpPeWx0VGxUS2J1SUh0VFprNnZ3Wk9pUGdtWV9yYkJvQVhTYl9weFpkTk02N1ZTeEFxZmUtMHI3bk9WMi1Ec0VQUHowUHdzc1hGVlYycm1EWE0xSHZ1dDN0VjVVc2FwNGlSOVJhbW1zY0VDbDdDeWtKUjQyUGdZQkRnZW5Fd1pOUEtNbjlPd09oblIyVEl5RFRoM0NQd056d3FDVmZKdk1YcFJHNTcxTkNLS3BiLWZEOTljZHBmX1ByTHVVa2lzTldLaEdrZw?oc=5",
       "source": "The Times of India",
-      "time_label": "14h ago"
+      "time_label": "20h ago"
     },
     {
-      "title": "Opposition closes ranks against CEC Gyanesh Kumar after report of dissent within poll panel",
-      "link": "https://news.google.com/rss/articles/CBMi2gFBVV95cUxOdVlXMnNkRUFJeThsSGVUTjFOcUpKdUtUU3Q5X2t0VVZhSGxaTU9mNHpoY2NqZWtuMHF1M0J1Qms2SDV3SVBWVnZlLTZHYVVrbGd3ZW1NNXJBQm9lRDhKM0dRcTRVZkZ5aWgyWTZwXzcwRm1XbU1BOVdQQWV3ZTFzWHp1RmlGRTNtc1praFJBdDU4Y1hxQW9xbXZ5MjAzdVlQeWFEWG1aRUM0N3dzU1J3M2hTamJ5dXZDNWNYTzc0TTdCblpMS3ZiMk9oS0pPUWJSZkhHMlp4UWNRZ9IB5wFBVV95cUxPdzJRcWZqcWNuN3ZCZlh4TUIyblI4Q3pIcG5WWjBzZk5FUEpNaGVPbC11WkRRSWsxVDhCTFdWbWxJaUlWRU9KWlhvSE1WUF9icVFneG1xdDdSLUxXYzhyLWxhZmhYR3dJdENXYWp2OUZZMzZYSzJKQ1g5c3VwaldBWjk5Y1l3aUpqSGdIUkw5VW1iQm9WZGthbkxmS2F4TGlpMDEwZ0RpWnpqM3Zqa1I4T3NpMEo1RjFyVUFyMnhnbVNTa2JxWWVtT2dGNFJQRXNjNWNfcFRkOGp4aGVLek1TeWdBa1R1Ulk?oc=5",
-      "source": "The New Indian Express",
-      "time_label": "18h ago"
+      "title": "Catalonia India Push: New Delhi Office to Boost AI and DeepTech Ties",
+      "link": "https://news.google.com/rss/articles/CBMizAFBVV95cUxPZmlpWlJhNEttRDAzMVh1WnIyZlBUOXktZ2xJOGUyMDhwX3dCbkFKN2UzclBWdl9BVTh2VTZVR203MGdqb09kVzMxYWVjTVN3Q2pLaHNHLS1hekl0SmpianZGWDBoOVVnalpmSlFaZnNua040anE2c2dEazJMQ2lsVUNVVjF6RVFkTlBuS0d3UXNfLXpiQlZJZ3JRalFvcElCY1VZU3lpTmhYYm5DNnB5ckNGT0ptOXc4c0ZETUtfSk9XbDE0a1N3VTMyOWM?oc=5",
+      "source": "Kalkine India",
+      "time_label": "21h ago"
     },
     {
-      "title": "\"Gyanesh Kumar should be suspended, legal action should be taken against him\": Sanjay Raut targets CEC",
-      "link": "https://news.google.com/rss/articles/CBMi1wFBVV95cUxORWJXdkswZEZYUGxMaU5jWXMyQW5DUjAtTU1QekJEYkpsc0NXM0NKVk83dGV4OG9PRzg5d1F1ZVpMZUVuck9rQzR5NllLQi03aGdyZ3ZRZW9weXdwMHd6WE11bmxtYmFVeWZhdm93d0hJYTFocl9yYnowNWJlcTVvSnRvZVdJc0xpdFM0dE00VGUzZ3BPWU9jQ3RhSVJGVVZac1NRMWgwQ3IzaXduOVlwTUI4bjVUUU1RUS1MbkFadUxBTGtXekJpZy00djN2VkJWRVFrQnJxNA?oc=5",
-      "source": "India's News.Net",
-      "time_label": "9h ago"
+      "title": "Visage Lines Strengthens Consumer Brand and Digital Commerce Strategy with New Appointments",
+      "link": "https://news.google.com/rss/articles/CBMivwFBVV95cUxOcFF3ZFNNWDZNTDFlSktSY0hHRk4wb21Dc2lYenUwTjZ3SXBzOUUzZEE1WEMtS1Iwc0ZxaHdlVnU2WWxidlZXeVNIQXpfOHQybldiMVQ4QXRqemc2MTljTlVGbzR6bzM2Y3ZuR2VWTmxJR2g3Tm4xNWpVcVVYNnZfaGZ0ZDd6VkY3Zk5wamx1VFFpanM3Tl9yZDZad2tmb2t3V1BjaU1TTldGdWQ2d1ZPSkhZeUZ1WkZkZG8wME9ETQ?oc=5",
+      "source": "Indian Retailer",
+      "time_label": "23h ago"
     },
     {
-      "title": "Who chooses India\u2019s election commissioners \u2014 and why is the Supreme Court divided?",
-      "link": "https://news.google.com/rss/articles/CBMixwFBVV95cUxPNlVQRVV0VnJTWW5iUmd4X1BWWHFDbk1zcENJdjRXUWItcDVIWUU1bW5xWW9NTGJpRGRjZDdTN3lmSFBFZ3ZJV1RKNHFiWjRHdUhJWGVLN0ZlWkZvOXVDczl6WUs4U041TXN3a0poX3JuYnM0Q0VKRHc3VHFEY1d0bVBGcHhBdUVZU080TEhPMk5YOGltdVZ0OE8xcjUtN1dTMHR6OGd2cE54cllEOXFfdkw5SlJiQjNXUkZlbGtGMEtqcjBjendB0gHcAUFVX3lxTE4xbXJKbDFZbVdDUmlWbXYyUWhDb1gyeHhCUkFxX05uNWktclBzeDhrSVBtWlhRcGltNC0yWVRDd3dXSW80dUJyU1k3WU8xSzBmUEx3NFZLaW41ZnFhcDdfZzRJQUZYTFhKMDhYSEtCNXA0SGh3SzQtVDU5Q2JIMWRhMTlEdDNtRmdfbElGdEZKTmp3X3F5NVhUbnZxc2dzdVpkY2FIN3RScHRrNGw0RGlqeldFYnNqN2gwM2NFa3VqRHA4UEdpOWlLa2U4bGJldXZjcllUUjJyZU81TnQ?oc=5",
-      "source": "Gulf News",
-      "time_label": "13h ago"
+      "title": "Anmasa Targets Expansion in 10\u201312 Cities in 3 Years",
+      "link": "https://news.google.com/rss/articles/CBMiswFBVV95cUxNY2dZUFdrQnQ5WmlkSjh4Skd3RFB6bklQcEw4dGhBQUhDQ1RkTkRUT3pIRExUblBEOWEzRE9nVHdOVlItVEtTRTBjVW1sajEyaDUyTEJpekkwb3h3LVZUeVlTd1Zjck5YUnJRNDZibHBFWVdQNndrYV85REUwcU5jUHhKeTRXd1pEa1BrclhrbWNUaE9waF9sUTFGRkYzbTY2MmpLcDhaX3kyYmxmQmFySmRoWQ?oc=5",
+      "source": "Indian Retailer",
+      "time_label": "23h ago"
+    },
+    {
+      "title": "IACC Summit Unites 100+ Leaders to Shape India\u2019s AI\u2011Ready Digital Infrastructure",
+      "link": "https://news.google.com/rss/articles/CBMihgFBVV95cUxQS1lZTkJpTVBiaVhuZHpiMW9vQlZNNjF6dTFkSENXX0ZYV1RLZ1NrTVdULXgyU0tiaUZ2cnpsRWtIM2lkMnRaWDdjUk91M0NOSjJqVG9XQ1U4OFdJTW9jUEc2aGZfR2dDZFhkUWt1cUVHYUw4bVQyMmVNZnI5YkhXZmZNc0tVdw?oc=5",
+      "source": "Indianweb2.com",
+      "time_label": "23h ago"
     }
   ],
-  "cached_headlines_cat": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance",
+  "cached_headlines_cat": "\ud83d\udcbb Technology & AI",
   "cached_headlines_hashtag": "",
-  "cached_headlines_ts": 1790220575.7503538
+  "cached_headlines_ts": 1790425148.982945
 }
