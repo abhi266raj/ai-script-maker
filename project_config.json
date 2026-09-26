@@ -4,8 +4,8 @@
   "description": "Autonomous multi-agent system transforming breaking news into viral, fact-checked Hindi reels with Google Flow / Veo 9:16 prompts",
   "default_language": "Hindi (Devanagari)",
   "interface_language": "English",
-  "default_engine": "codex_only",
-  "default_duration": 10,
+  "default_engine": "agy_only",
+  "default_duration": 20,
   "default_batch_count": 1,
   "local_llm_support": {
     "status": "work_in_progress",
@@ -17,7 +17,7 @@
     ],
     "note": "Generic local LLM server integration is not yet production-ready; On-device strictly means Apple Foundation Models."
   },
-  "default_tone": "Cinematic",
+  "default_tone": "Joke",
   "news_category": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance",
   "workflow_mode": "\u26a1 Continuous",
   "engines": {
@@ -253,12 +253,12 @@
   "batch_count": 1,
   "selected_script_index": 0,
   "default_angle": "Funny & Relatable",
-  "character_count": 2,
-  "scene_style": "Narration",
+  "character_count": 3,
+  "scene_style": "Dialogue",
   "enable_self_healing": true,
   "frame_count": 3,
   "studio_layout": "2_frame",
   "source_mode": "\ud83d\udce1 Live News",
-  "selected_headline": "Indian Medical Parliamentarians\u2019 Forum Organises National Policy Summit on \u2018Swasth Bharat Se Saksham Bharat\u2019 to Reimagine MedTech Access in India",
-  "story_source": "\ud83c\udfdb\ufe0f Indian Politics, Elections & Governance"
+  "selected_headline": "Amazon India investment: why Jeff Bezos\u2019 company is betting billions on AI, cloud and e-commerce",
+  "story_source": "\ud83d\udcbb Technology & AI"
 }

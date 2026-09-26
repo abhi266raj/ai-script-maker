@@ -1,8 +1,11 @@
-streamlit>=1.35.0
-feedparser>=6.0.10
-httpx>=0.27.0
-beautifulsoup4>=4.12.0
-rich>=13.7.0
-pydantic>=2.7.0
-python-dotenv>=1.0.0
-watchdog>=4.0.0
+# Hindi Reel Studio — direct Python dependencies.
+#
+# Used by HindiReelStudio.command to rebuild .venv when the environment is
+# broken. Versions are intentionally unpinned: pip resolves a working tree
+# and the launcher re-validates afterwards. Transitive deps (numpy, pandas,
+# protobuf, …) come in automatically via streamlit.
+streamlit        # UI framework (app.py)
+pydantic         # data models (core/models.py)
+httpx            # news fetching (tools/news_fetcher.py)
+feedparser       # RSS parsing (tools/news_fetcher.py)
+beautifulsoup4   # HTML cleaning (tools/news_fetcher.py)
