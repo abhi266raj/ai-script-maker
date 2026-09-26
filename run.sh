@@ -13,5 +13,7 @@ else
     source .venv/bin/activate
 fi
 
-echo "🍏 Starting The Editorial Room (Apple Foundation Models Streamlit Web App)..."
-streamlit run app.py
+HOST="${HRS_HOST:-localhost}"
+PORT="${HRS_PORT:-8501}"
+echo "🍏 Starting The Editorial Room (Apple Foundation Models Streamlit Web App on ${HOST}:${PORT})..."
+streamlit run app.py --global.developmentMode false --server.address "${HOST}" --server.port "${PORT}"

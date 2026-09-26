@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Entrypoint for the PyInstaller-frozen Hindi Reel Studio.
 
-Launches Streamlit in headless mode, serving app.py on 127.0.0.1.
+Launches Streamlit in headless mode, serving app.py on dual-stack localhost,
+supporting IPv6 loopback ([::1]) as well as IPv4 (127.0.0.1).
 The native Cocoa window (app_runner) connects to this local server.
 
-Port is read from the HRS_PORT environment variable:
-  - Release: 8501 (default)
-  - Dev:     8502
+Configuration via environment variables:
+  - HRS_PORT: 8501 (Release default) or 8502 (Dev default)
+  - HRS_HOST: Server bind address (default: "localhost" for dual-stack, or "::1" / "127.0.0.1")
 """
 import os
 import sys
@@ -14,6 +15,9 @@ import sys
 
 def _setup_paths():
     """Configure paths so frozen Streamlit finds all project modules."""
+    # Ensure Streamlit development mode conflict check is suppressed in frozen build
+    os.environ["STREAMLIT_GLOBAL_DEVELOPMENT_MODE"] = "false"
+
     if getattr(sys, "frozen", False):
         # Running inside PyInstaller bundle
         bundle_dir = sys._MEIPASS
@@ -44,7 +48,7 @@ def _setup_paths():
 
 
 def main():
-    """Boot Streamlit headlessly on the configured port."""
+    """Boot Streamlit headlessly on the configured port and IPv4/IPv6 host."""
     bundle_dir = _setup_paths()
     app_py = os.path.join(bundle_dir, "app.py")
 
@@ -52,8 +56,11 @@ def main():
         print(f"❌ app.py not found at: {app_py}", file=sys.stderr)
         sys.exit(1)
 
-    # Port from environment (set by native Cocoa wrapper via Info.plist)
+    # Port and host from environment (set by native Cocoa wrapper via Info.plist)
     port = os.environ.get("HRS_PORT", "8501")
+    raw_host = os.environ.get("HRS_HOST", "localhost").strip()
+    host = raw_host.strip("[]") if raw_host else "localhost"
+    os.environ["STREAMLIT_SERVER_ADDRESS"] = host
 
     from streamlit.web import cli as st_cli
 
@@ -61,12 +68,10 @@ def main():
         "streamlit",
         "run",
         app_py,
-        "--server.headless",
-        "true",
-        "--server.address",
-        "127.0.0.1",
-        "--server.port",
-        port,
+        "--global.developmentMode=false",
+        "--server.headless=true",
+        f"--server.address={host}",
+        f"--server.port={port}",
     ]
     st_cli.main()
 

@@ -25,6 +25,7 @@ build/
 *.spec
 
 # Generated icons (rebuilt by scripts/generate_dev_icon.py)
+AppIcon.icns
 AppIcon-Dev.icns
 
 # Editors
