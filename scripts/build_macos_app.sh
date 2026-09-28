@@ -15,7 +15,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
 # Resolve version dynamically from single source of truth (core/version.py)
-VERSION="$(grep -E '^__version__[[:space:]]*=' "${PROJECT_DIR}/core/version.py" | sed -E 's/__version__[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/' || echo "1.3.0")"
+VERSION="$(grep -E '^__version__[[:space:]]*=' "${PROJECT_DIR}/core/version.py" | sed -E 's/__version__[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+)["'"'"'].*/\1/' || echo "1.3.1")"
 
 cd "$PROJECT_DIR"
 
