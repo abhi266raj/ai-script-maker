@@ -35,7 +35,18 @@ Current launcher behavior:
 - Put `/opt/homebrew/bin` and the usual system bins on `PATH` for both the packaged runtime and the virtualenv fallback.
 - Write launch failures into the server log instead of dropping them.
 
-Port and host come from `Info.plist`: `HRSServerPort` and `HRSServerHost`. Release uses port `8501`. Dev uses `8502` and bundle id `com.hindireel.studio.dev`. Release bundle id is `com.hindireel.studio`.
+Port and host come from `Info.plist`: `HRSServerPort`, `HRSServerHTTPSPort`, and `HRSServerHost`. Release uses default port `80` (HTTP) with HTTPS candidate port `443`. Dev uses `8502` and bundle id `com.hindireel.studio.dev`. Release bundle id is `com.hindireel.studio`.
+
+## Menu Bar & Web Lifecycle Controls
+
+Server management is accessible in both the macOS native application and the self-contained Web UI:
+- **macOS System Menu Bar (`NSApp.mainMenu`)**:
+  - **Server** menu with **Start Server** (`⌘R`), **Stop Server** (`⌘.`), and **Restart Server** (`⇧⌘R`).
+  - Native window toolbar with Start, Stop, and Restart icons.
+  - Automatic status tracking and window title updates.
+- **Web UI Menu Bar ([`app.py`](file:///Users/abhiraj/Documents/news/agent/app.py) & [`core/server_manager.py`](file:///Users/abhiraj/Documents/news/agent/core/server_manager.py))**:
+  - Top navigation bar `⚡ Server` menu popover displaying live status, PID, host, and port.
+  - In-browser **Stop Server** and **Restart Server** controls with automatic reconnection polling.
 
 ## Logs
 
@@ -44,12 +55,6 @@ Writable project directory: `<project>/.server_<port>.log`.
 Installed app (for example `/Applications`): `~/Library/Logs/HindiReelStudio/server_<port>.log`.
 
 Last resort: `/tmp/hindi_reel_studio_<port>.log`.
-
-## Existing builds
-
-The tree currently has `dist/v1.3.0/Hindi-Reel-Studio-v1.3.0-macOS.dmg` from before the server controls. That DMG still contains the old `app_runner`. There is no leftover `.app` beside it, because the release script deletes the app after the disk image is written. No `dev/` app is present.
-
-Python inside that image did not change. A new PyInstaller freeze is not required for Start / Stop / Restart. Those controls exist only in `macos/StudioWindow.swift`, so the native `app_runner` inside the dev app and the release DMG has to be recompiled and the DMG repacked. Running `./scripts/build_macos_app.sh` does both the freeze and the Swift compile.
 
 ## Rebuild
 
@@ -63,6 +68,6 @@ Python, prompts, and config inside a frozen runtime are copied at freeze time. T
 
 ## Version
 
-Server controls are **1.3.1**. The single version string is `__version__` in `core/version.py`. The build script reads that string, so the next dev app lands in `dev/v1.3.1/` and the next release disk image is `dist/v1.3.1/Hindi-Reel-Studio-v1.3.1-macOS.dmg`. The existing `dist/v1.3.0/` image stays the previous release.
+Server controls and port 80/443 defaults are **1.3.2**. The single version string is `__version__` in `core/version.py`. The build script reads that string, so the next dev app lands in `dev/v1.3.2/` and the next release disk image is `dist/v1.3.2/Hindi-Reel-Studio-v1.3.2-macOS.dmg`.
 
-This work is on branch `fix/background-server-controls`, created off `main` before the edits. Do not commit or merge until the user asks.
+This work is on branch `fix/background-server-controls`. Do not commit or merge until the user asks.

@@ -77,15 +77,17 @@ else
     IDENTIFIER="com.hindireel.studio"
     DMG_NAME="Hindi-Reel-Studio-v${VERSION}-macOS.dmg"
     ICON_SRC="AppIcon.icns"
-    SERVER_PORT=8501
+    SERVER_PORT=80
+    SERVER_HTTPS_PORT=443
     OUTPUT_DIR="dist/v${VERSION}"
     APP_BUNDLE="${OUTPUT_DIR}/${APP_NAME}.app"
     echo "📦 Target: RELEASE variant"
-    echo "   Bundle ID:  ${IDENTIFIER}"
-    echo "   Port:       ${SERVER_PORT}"
-    echo "   Host:       ${SERVER_HOST}"
-    echo "   Output App: ${APP_BUNDLE}"
-    echo "   Output DMG: ${OUTPUT_DIR}/${DMG_NAME}"
+    echo "   Bundle ID:   ${IDENTIFIER}"
+    echo "   Port (HTTP): ${SERVER_PORT}"
+    echo "   Port (HTTPS):${SERVER_HTTPS_PORT}"
+    echo "   Host:        ${SERVER_HOST}"
+    echo "   Output App:  ${APP_BUNDLE}"
+    echo "   Output DMG:  ${OUTPUT_DIR}/${DMG_NAME}"
 fi
 echo ""
 
@@ -223,6 +225,8 @@ cat > "${APP_BUNDLE}/Contents/Info.plist" << PLIST
     <string>${VERSION}</string>
     <key>HRSServerPort</key>
     <integer>${SERVER_PORT}</integer>
+    <key>HRSServerHTTPSPort</key>
+    <integer>${SERVER_HTTPS_PORT:-443}</integer>
     <key>HRSServerHost</key>
     <string>${SERVER_HOST}</string>
     <key>LSMinimumSystemVersion</key>

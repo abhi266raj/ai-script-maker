@@ -56,8 +56,8 @@ def main():
         print(f"❌ app.py not found at: {app_py}", file=sys.stderr)
         sys.exit(1)
 
-    # Port and host from environment (default: "::" for simultaneous dual-stack IPv6 + IPv4)
-    port = os.environ.get("HRS_PORT", "8501")
+    # Port and host from environment (default: port 80 for release, "::" for simultaneous dual-stack IPv6 + IPv4)
+    port = os.environ.get("HRS_PORT", "80")
     raw_host = os.environ.get("HRS_HOST", "::").strip()
     host = raw_host.strip("[]") if raw_host else "::"
     os.environ["STREAMLIT_SERVER_ADDRESS"] = host

@@ -14,7 +14,7 @@ import WebKit
 ///   - Dual-stack localhost, IPv4 (127.0.0.1), and IPv6 ([::1])
 ///   - Port and window title are read from Info.plist so the same code
 ///     serves both Release (port 8501) and Dev (port 8502) variants.
-final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
+final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate, NSWindowDelegate {
     private var window: NSWindow!
     private var webView: WKWebView!
     private var server: Process?
@@ -23,12 +23,20 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
     private var stopItem: NSMenuItem?
     private var restartItem: NSMenuItem?
 
-    /// Server port — read from Info.plist "HRSServerPort" key, default 8501
+    /// Server port — read from Info.plist "HRSServerPort" key, default 80
     private let port: Int = {
         if let p = Bundle.main.object(forInfoDictionaryKey: "HRSServerPort") as? Int, p > 0 {
             return p
         }
-        return 8501
+        return 80
+    }()
+
+    /// Server HTTPS port — read from Info.plist "HRSServerHTTPSPort" key, default 443
+    private let httpsPort: Int = {
+        if let p = Bundle.main.object(forInfoDictionaryKey: "HRSServerHTTPSPort") as? Int, p > 0 {
+            return p
+        }
+        return 443
     }()
 
     /// Server host — read from Info.plist "HRSServerHost" or HRS_HOST environment variable, default "::" (dual-stack IPv6 + IPv4)
@@ -64,8 +72,8 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
+        setupMainMenu()
         buildWindow()
-        buildServerMenu()
         // Packaged and dev launches both boot the server off the main thread.
         serverQueue.async { self.startServer(reload: true) }
         NSApp.activate(ignoringOtherApps: true)
@@ -75,9 +83,17 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         true
     }
 
+    func windowWillClose(_ notification: Notification) {
+        // Lifecycle strictly tied to window: closing window stops server process immediately
+        serverQueue.sync {
+            self.stopServer()
+        }
+    }
+
     func applicationWillTerminate(_ notification: Notification) {
-        if let server, server.isRunning {
-            server.terminate()
+        // Lifecycle strictly tied to app: quitting app ensures server and port listeners are killed
+        serverQueue.sync {
+            self.stopServer()
         }
     }
 
@@ -95,6 +111,7 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.titlebarAppearsTransparent = false
         window.minSize = NSSize(width: 900, height: 640)
         window.center()
+        window.delegate = self
         window.setFrameAutosaveName("HindiReelStudio_\(port)")
 
         let config = WKWebViewConfiguration()
@@ -113,8 +130,49 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         window.toolbar = toolbar
     }
 
-    private func buildServerMenu() {
+    private func setupMainMenu() {
+        let mainMenu = NSMenu()
+        NSApp.mainMenu = mainMenu
+
+        // 1. Application Menu
+        let appMenuItem = NSMenuItem()
+        let appMenu = NSMenu()
+        appMenuItem.submenu = appMenu
+        mainMenu.addItem(appMenuItem)
+
+        appMenu.addItem(NSMenuItem(title: "About \(windowTitle)", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem.separator())
+        let hideItem = NSMenuItem(title: "Hide \(windowTitle)", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        hideItem.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(hideItem)
+        let hideOthersItem = NSMenuItem(title: "Hide Others", action: #selector(NSApplication.hideOtherApplications(_:)), keyEquivalent: "h")
+        hideOthersItem.keyEquivalentModifierMask = [.command, .option]
+        appMenu.addItem(hideOthersItem)
+        appMenu.addItem(NSMenuItem(title: "Show All", action: #selector(NSApplication.unhideAllApplications(_:)), keyEquivalent: ""))
+        appMenu.addItem(NSMenuItem.separator())
+        let quitItem = NSMenuItem(title: "Quit \(windowTitle)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        quitItem.keyEquivalentModifierMask = [.command]
+        appMenu.addItem(quitItem)
+
+        // 2. Edit Menu
+        let editMenuItem = NSMenuItem()
+        let editMenu = NSMenu(title: "Edit")
+        editMenuItem.submenu = editMenu
+        mainMenu.addItem(editMenuItem)
+        editMenu.addItem(NSMenuItem(title: "Undo", action: #selector(UndoManager.undo), keyEquivalent: "z"))
+        editMenu.addItem(NSMenuItem(title: "Redo", action: #selector(UndoManager.redo), keyEquivalent: "Z"))
+        editMenu.addItem(NSMenuItem.separator())
+        editMenu.addItem(NSMenuItem(title: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x"))
+        editMenu.addItem(NSMenuItem(title: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c"))
+        editMenu.addItem(NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v"))
+        editMenu.addItem(NSMenuItem(title: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a"))
+
+        // 3. Server Menu
+        let serverMenuItem = NSMenuItem()
         let serverMenu = NSMenu(title: "Server")
+        serverMenuItem.submenu = serverMenu
+        mainMenu.addItem(serverMenuItem)
+
         let start = NSMenuItem(title: "Start Server", action: #selector(startServerAction), keyEquivalent: "r")
         start.keyEquivalentModifierMask = [.command]
         start.target = self
@@ -131,9 +189,14 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         stopItem = stop
         restartItem = restart
 
-        let top = NSMenuItem(title: "Server", action: nil, keyEquivalent: "")
-        top.submenu = serverMenu
-        NSApp.mainMenu?.addItem(top)
+        // 4. Window Menu
+        let windowMenuItem = NSMenuItem()
+        let windowMenu = NSMenu(title: "Window")
+        windowMenuItem.submenu = windowMenu
+        mainMenu.addItem(windowMenuItem)
+        windowMenu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        windowMenu.addItem(NSMenuItem(title: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
+
         refreshServerControls()
     }
 
@@ -163,10 +226,17 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
 
     private func refreshServerControls() {
         let running = serverIsRunning()
-        startItem?.isEnabled = !running
-        stopItem?.isEnabled = running
-        restartItem?.isEnabled = true
-        window.toolbar?.validateVisibleItems()
+        DispatchQueue.main.async {
+            self.startItem?.isEnabled = !running
+            self.stopItem?.isEnabled = running
+            self.restartItem?.isEnabled = true
+            self.window.toolbar?.validateVisibleItems()
+            if running && self.window.title.hasSuffix("Server stopped") {
+                self.setStatus("Server running")
+            } else if !running && !self.window.title.contains("Starting") && !self.window.title.hasSuffix("Server stopped") {
+                self.setStatus("Server stopped")
+            }
+        }
     }
 
     private func serverIsRunning() -> Bool {
@@ -174,41 +244,60 @@ final class StudioApp: NSObject, NSApplicationDelegate, WKNavigationDelegate {
         return probeServer(timeout: 0.4) != nil
     }
 
-    /// Candidate URLs supporting IPv6 loopback ([::1]), IPv4 (127.0.0.1), and localhost
+    /// Candidate URLs supporting IPv6 loopback ([::1]), IPv4 (127.0.0.1), and localhost on port 80 (HTTP) and 443 (HTTPS)
     private func candidateURLs() -> [URL] {
         var urls: [URL] = []
         let cleanHost = host.trimmingCharacters(in: CharacterSet(charactersIn: "[]"))
-
+        let baseHosts: [String]
         if cleanHost == "::" || cleanHost.isEmpty || cleanHost == "localhost" {
-            // Dual-stack: both IPv6 and IPv4 loopback are active
-            let dualStackEndpoints = [
-                "http://[::1]:\(port)/",
-                "http://127.0.0.1:\(port)/",
-                "http://localhost:\(port)/"
-            ]
-            for ep in dualStackEndpoints {
-                if let u = URL(string: ep), !urls.contains(u) { urls.append(u) }
-            }
-        } else if cleanHost.contains(":") {
-            // Explicit IPv6 literal address e.g. ::1
-            if let u = URL(string: "http://[\(cleanHost)]:\(port)/") { urls.append(u) }
+            baseHosts = ["[::1]", "127.0.0.1", "localhost"]
         } else {
-            // Explicit IPv4 or hostname
-            if let u = URL(string: "http://\(cleanHost):\(port)/") { urls.append(u) }
+            baseHosts = [cleanHost]
         }
 
-        // Dual-stack and IPv6/IPv4 fallback probe candidates
-        let fallbacks = [
-            "http://[::1]:\(port)/",
-            "http://127.0.0.1:\(port)/",
-            "http://localhost:\(port)/"
-        ]
-        for fb in fallbacks {
-            if let u = URL(string: fb), !urls.contains(u) {
+        // Port 80 (standard HTTP)
+        let httpPortStr = (port == 80) ? "" : ":\(port)"
+        for h in baseHosts {
+            if let u = URL(string: "http://\(h)\(httpPortStr)/"), !urls.contains(u) {
                 urls.append(u)
             }
         }
+
+        // Port 443 (standard HTTPS)
+        let httpsPortStr = (httpsPort == 443) ? "" : ":\(httpsPort)"
+        for h in baseHosts {
+            if let u = URL(string: "https://\(h)\(httpsPortStr)/"), !urls.contains(u) {
+                urls.append(u)
+            }
+        }
+
+        // Development port fallbacks if port 80/443 fell back to 8501 / 8502
+        for p in [8501, 8502] {
+            if p != port && p != httpsPort {
+                for h in baseHosts {
+                    if let u = URL(string: "http://\(h):\(p)/"), !urls.contains(u) {
+                        urls.append(u)
+                    }
+                }
+            }
+        }
+
         return urls
+    }
+
+    func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
+        handleNavigationFailure(error: error)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        handleNavigationFailure(error: error)
+    }
+
+    private func handleNavigationFailure(error: Error) {
+        DispatchQueue.main.async {
+            self.setStatus("Server not responding — Use Server > Start Server (⌘R)")
+            self.refreshServerControls()
+        }
     }
 
     /// Start the studio server in the background. Safe to call when it is already up.
