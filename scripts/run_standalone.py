@@ -11,6 +11,16 @@ Configuration via environment variables:
 """
 import os
 import sys
+import socket
+
+# Explicit imports to ensure PyInstaller dependency analysis bundles all application modules
+try:
+    import core.workflow  # noqa: F401
+    import core  # noqa: F401
+    import agents  # noqa: F401
+    import tools  # noqa: F401
+except ImportError:
+    pass
 
 
 def _setup_paths():
@@ -29,9 +39,14 @@ def _setup_paths():
         if os.path.isfile(os.path.join(project_root, "app.py")):
             bundle_dir = project_root
 
-    # Add bundle root to sys.path so 'core', 'agents', 'tools' are importable
+    # Add bundle root to sys.path so 'workflow', 'core', 'agents', 'tools' are importable
     if bundle_dir not in sys.path:
         sys.path.insert(0, bundle_dir)
+
+    # Ensure PYTHONPATH includes bundle directory for scriptrunner threads
+    existing_pythonpath = os.environ.get("PYTHONPATH", "")
+    if bundle_dir not in existing_pythonpath.split(os.pathsep):
+        os.environ["PYTHONPATH"] = f"{bundle_dir}{os.pathsep}{existing_pythonpath}" if existing_pythonpath else bundle_dir
 
     # Point Streamlit config to bundled config directory
     # PyInstaller bundles .streamlit as _streamlit to avoid dot-prefix issues
@@ -57,10 +72,34 @@ def main():
         sys.exit(1)
 
     # Port and host from environment (default: port 80 for release, "::" for simultaneous dual-stack IPv6 + IPv4)
-    port = os.environ.get("HRS_PORT", "80")
+    port_str = os.environ.get("HRS_PORT", "80")
+    try:
+        port = int(port_str)
+    except ValueError:
+        port = 80
+
     raw_host = os.environ.get("HRS_HOST", "::").strip()
     host = raw_host.strip("[]") if raw_host else "::"
     os.environ["STREAMLIT_SERVER_ADDRESS"] = host
+
+    # Validate binding to privileged ports (< 1024) on macOS/Unix without elevated privileges
+    if port < 1024:
+        can_bind = False
+        try:
+            test_sock = socket.socket(socket.AF_INET6 if ":" in host else socket.AF_INET, socket.SOCK_STREAM)
+            test_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            test_sock.bind(("", port))
+            test_sock.close()
+            can_bind = True
+        except PermissionError:
+            can_bind = False
+        except Exception:
+            can_bind = True
+
+        if not can_bind:
+            print(f"⚠️ Port {port} requires root privileges; falling back to 8501 (or run with sudo / fronting reverse proxy)", file=sys.stderr)
+            port = 8501
+            os.environ["HRS_PORT"] = "8501"
 
     from streamlit.web import cli as st_cli
 

@@ -5,5 +5,5 @@ this version string so that app display, documentation, and build bundles remain
 in complete synchronization.
 """
 
-__version__ = "1.3.2"
+__version__ = "1.3.3"
 VERSION = __version__

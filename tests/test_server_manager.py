@@ -6,8 +6,8 @@ from core.version import __version__
 
 
 class TestServerManager(unittest.TestCase):
-    def test_version_bump_1_3_2(self):
-        self.assertEqual(__version__, "1.3.2")
+    def test_version_bump_1_3_3(self):
+        self.assertEqual(__version__, "1.3.3")
 
     def test_get_current_port_default(self):
         # When HRS_PORT is unset
