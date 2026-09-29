@@ -1,11 +1,17 @@
 """Hindi Reel Studio — compact Apple-style master-detail UI."""
 
+import os
+import sys
+
+_app_dir = os.path.dirname(os.path.abspath(__file__))
+if _app_dir not in sys.path:
+    sys.path.insert(0, _app_dir)
+
 import re
 import copy
 import json
 import contextlib
 import streamlit as st
-import sys
 from core.constants import (
     VIBE_DESI_SWAG, VIBE_HERITAGE, VIBE_VIRAL, VIBE_COMEDY, VIBE_BREAKING,
     VIBE_ANALYSIS, VIBE_CINEMATIC, VIBE_EMOTIONAL, VIBE_HEATED,
@@ -21,7 +27,7 @@ from core.metrics import get_duration_budget
 from core.prompt_matrix import build_tailored_instruction
 from core.config import load_config, save_config, reset_to_defaults
 from tools.news_fetcher import news_fetcher
-from workflow import reel_workflow
+from core.workflow import reel_workflow
 from agents.dialogue_writer import strip_commenting_and_cta
 from core.screenplay_formatter import (
     format_industry_screenplay,

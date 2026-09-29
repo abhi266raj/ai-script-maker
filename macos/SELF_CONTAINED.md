@@ -68,6 +68,6 @@ Python, prompts, and config inside a frozen runtime are copied at freeze time. T
 
 ## Version
 
-Server controls and port 80/443 defaults are **1.3.2**. The single version string is `__version__` in `core/version.py`. The build script reads that string, so the next dev app lands in `dev/v1.3.2/` and the next release disk image is `dist/v1.3.2/Hindi-Reel-Studio-v1.3.2-macOS.dmg`.
+Server controls, port 80/443 defaults, and `core.workflow` bundling are **1.3.3**. The single version string is `__version__` in `core/version.py`. The build script reads that string, so the next dev app lands in `dev/v1.3.3/` and the next release disk image is `dist/v1.3.3/Hindi-Reel-Studio-v1.3.3-macOS.dmg`.
 
 This work is on branch `fix/background-server-controls`. Do not commit or merge until the user asks.

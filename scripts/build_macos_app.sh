@@ -164,6 +164,7 @@ rm -rf build/pyi_dist build/pyi_work
     --add-data "tools:tools" \
     --add-data ".streamlit:_streamlit" \
     --add-data "app.py:." \
+    --add-data "workflow.py:." \
     --collect-all streamlit \
     --copy-metadata streamlit \
     --hidden-import streamlit \
@@ -171,6 +172,10 @@ rm -rf build/pyi_dist build/pyi_work
     --hidden-import httpx \
     --hidden-import feedparser \
     --hidden-import bs4 \
+    --hidden-import core.workflow \
+    --hidden-import core \
+    --hidden-import agents \
+    --hidden-import tools \
     scripts/run_standalone.py
 
 if [ ! -x "build/pyi_dist/run_standalone/run_standalone" ]; then
