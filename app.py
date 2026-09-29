@@ -45,6 +45,8 @@ ENGINE_NAMES_REV = {v: k for k, v in ENGINE_OPTIONS.items()}
 
 # Centralized app version — imported from core.version single source of truth
 from core.version import __version__ as APP_VERSION
+import streamlit.components.v1 as components
+from core.server_manager import get_server_info, stop_server_async, restart_server_async
 
 # Merged story source: manual topic entry plus every news feed (replaces the
 # Stage names for display in collapsible history (continuous + step-wise).
@@ -822,16 +824,84 @@ if "stepwise_run_requested" not in st.session_state:
 if "stepwise_completed_steps" not in st.session_state:
     st.session_state.stepwise_completed_steps = {}
 
-st.markdown(
-    f"""
-    <div class="nav">
-        <div>
-            <div class="nav-title">Hindi Reel Studio <span style="font-size:0.7rem; font-weight:600; color:#8e8e93;">v{APP_VERSION}</span></div>
+# Server action handlers (Self-contained Web Controls)
+server_action = st.session_state.get("server_action")
+if server_action == "stop":
+    st.session_state.server_action = None
+    st.markdown(
+        """
+        <div style="padding: 24px; border-radius: 12px; background: #fff1f0; border: 1px solid #ffa39e; margin: 30px auto; max-width: 650px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            <h2 style="color: #cf1322; margin-top: 0;">🛑 Studio Server Stopped</h2>
+            <p style="color: #434343; font-size: 15px;">The server process has shut down cleanly. To resume, launch the app from the macOS Dock / Applications folder or restart it from your terminal.</p>
         </div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
+        """,
+        unsafe_allow_html=True,
+    )
+    stop_server_async()
+    st.stop()
+elif server_action == "restart":
+    st.session_state.server_action = None
+    st.markdown(
+        """
+        <div style="padding: 24px; border-radius: 12px; background: #e6f7ff; border: 1px solid #91d5ff; margin: 30px auto; max-width: 650px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+            <h2 style="color: #096dd9; margin-top: 0;">🔄 Studio Server Restarting</h2>
+            <p style="color: #434343; font-size: 15px;">The studio server is rebooting. This page will automatically reconnect once the service is back online...</p>
+            <div style="margin-top: 15px; font-size: 13px; color: #8c8c8c;">Reconnecting in seconds...</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    restart_server_async()
+    components.html(
+        """
+        <script>
+        setTimeout(() => {
+            const check = setInterval(() => {
+                fetch(window.location.href, { method: 'HEAD', cache: 'no-cache' })
+                    .then(res => {
+                        if (res.ok) {
+                            clearInterval(check);
+                            window.location.reload();
+                        }
+                    })
+                    .catch(() => {});
+            }, 1000);
+        }, 1500);
+        </script>
+        """,
+        height=0,
+    )
+    st.stop()
+
+srv_info = get_server_info()
+col_brand, col_srv = st.columns([7.8, 2.2], vertical_alignment="center")
+with col_brand:
+    st.markdown(
+        f"""
+        <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
+            <div>
+                <div class="nav-title">Hindi Reel Studio <span style="font-size:0.7rem; font-weight:600; color:#8e8e93;">v{APP_VERSION}</span></div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with col_srv:
+    with st.popover(f"⚡ Server ({srv_info['port']})", help="Server status & controls", use_container_width=True):
+        st.markdown("**Server Status: Running**")
+        st.caption(f"Host: `{srv_info['host']}` • Port: `{srv_info['port']}` • PID: `{srv_info['pid']}`")
+        if srv_info['is_standard_port']:
+            st.caption("Standard HTTP/HTTPS release ports active")
+
+        btn_stop, btn_restart = st.columns(2)
+        with btn_stop:
+            if st.button("🛑 Stop", help="Stop server process", use_container_width=True, key="web_srv_stop"):
+                st.session_state.server_action = "stop"
+                st.rerun()
+        with btn_restart:
+            if st.button("🔄 Restart", help="Restart server process", use_container_width=True, key="web_srv_restart"):
+                st.session_state.server_action = "restart"
+                st.rerun()
 
 col_settings, col_output = st.columns([6, 4], gap="large")
 
