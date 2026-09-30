@@ -349,10 +349,121 @@ st.markdown(
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;600;700&display=swap');
 
-    :root, html, body, .stApp, [data-testid="stAppViewContainer"] {
-        color-scheme: light only;
-        background-color: #f5f5f7 !important;
-        color: #1d1d1f !important;
+    /* Light: 60% Paper canvas, 30% Card & typography, 10% Terracotta orange actions.
+       Dark: 60% Warm earth canvas, 30% Elevated cards & parchment type, 10% Terracotta orange. */
+    :root,
+    [data-theme="light"] {
+        /* Standard 60-30-10 Color Tokens */
+        --bg-primary: #FAF7F0;
+        --bg-secondary: #FFFCF6;
+        --bg-tertiary: #F5EFE6;
+        --bg-hover: #EFE6D8;
+        --border-primary: #E4D9C8;
+        --text-primary: #1F1A14;
+        --text-secondary: #5C5348;
+        --text-tertiary: #8C8275;
+        --primary: #E0692A;
+        --primary-hover: #C4551C;
+        --primary-subtle: #FDF1EA;
+        --secondary: #5C5348;
+        --tertiary: #8C8275;
+        
+        /* Direct token aliases */
+        --paper: var(--bg-primary);
+        --card: var(--bg-secondary);
+        --field: var(--bg-tertiary);
+        --hover: var(--bg-hover);
+        --line: var(--border-primary);
+        --ink: var(--text-primary);
+        --ink-deep: #1C1712;
+        --muted: var(--text-secondary);
+        --orange: var(--primary);
+        --orange-press: var(--primary-hover);
+        --scheme: light;
+    }
+
+    @media (prefers-color-scheme: dark) {
+        :root:not([data-theme="light"]),
+        html:not([data-theme="light"]),
+        body:not([data-theme="light"]) {
+            --bg-primary: #2C261F;
+            --bg-secondary: #3A3229;
+            --bg-tertiary: #342C24;
+            --bg-hover: #4A4036;
+            --border-primary: #5A4E42;
+            --text-primary: #FAF7F0;
+            --text-secondary: #D4C7B6;
+            --text-tertiary: #A89B8B;
+            --primary: #E0692A;
+            --primary-hover: #F08A52;
+            --primary-subtle: #3D291C;
+            --secondary: #D4C7B6;
+            --tertiary: #A89B8B;
+
+            --paper: var(--bg-primary);
+            --card: var(--bg-secondary);
+            --field: var(--bg-tertiary);
+            --hover: var(--bg-hover);
+            --line: var(--border-primary);
+            --ink: var(--text-primary);
+            --ink-deep: var(--text-primary);
+            --muted: var(--text-secondary);
+            --orange: var(--primary);
+            --orange-press: var(--primary-hover);
+            --scheme: dark;
+        }
+    }
+
+    :root[data-theme="dark"],
+    html[data-theme="dark"],
+    body[data-theme="dark"],
+    [data-theme="dark"] {
+        --bg-primary: #2C261F;
+        --bg-secondary: #3A3229;
+        --bg-tertiary: #342C24;
+        --bg-hover: #4A4036;
+        --border-primary: #5A4E42;
+        --text-primary: #FAF7F0;
+        --text-secondary: #D4C7B6;
+        --text-tertiary: #A89B8B;
+        --primary: #E0692A;
+        --primary-hover: #F08A52;
+        --primary-subtle: #3D291C;
+        --secondary: #D4C7B6;
+        --tertiary: #A89B8B;
+
+        --paper: var(--bg-primary);
+        --card: var(--bg-secondary);
+        --field: var(--bg-tertiary);
+        --hover: var(--bg-hover);
+        --line: var(--border-primary);
+        --ink: var(--text-primary);
+        --ink-deep: var(--text-primary);
+        --muted: var(--text-secondary);
+        --orange: var(--primary);
+        --orange-press: var(--primary-hover);
+        --scheme: dark;
+    }
+
+    :root, html, body,
+    .stApp,
+    [data-testid="stApp"],
+    [data-testid="stAppViewContainer"],
+    [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"],
+    [data-testid="stHeader"],
+    [data-testid="stBottom"],
+    [data-testid="stBottomBlockContainer"],
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarContent"],
+    [data-testid="stSidebarUserContent"],
+    section[data-testid="stSidebar"],
+    [data-testid="stDialog"],
+    [data-testid="stTabs"],
+    [data-testid="stNotification"] {
+        color-scheme: var(--scheme) !important;
+        background-color: var(--paper) !important;
+        color: var(--ink) !important;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial,
                      "Noto Sans Devanagari", sans-serif !important;
     }
@@ -368,211 +479,634 @@ st.markdown(
 
     [data-testid="stMarkdownContainer"],
     [data-testid="stMarkdownContainer"] p,
+    [data-testid="stMarkdownContainer"] span,
+    [data-testid="stMarkdownContainer"] li,
+    [data-testid="stMarkdownContainer"] h1,
+    [data-testid="stMarkdownContainer"] h2,
+    [data-testid="stMarkdownContainer"] h3,
+    [data-testid="stMarkdownContainer"] h4,
+    [data-testid="stMarkdownContainer"] h5,
+    [data-testid="stMarkdownContainer"] h6,
     [data-testid="stWidgetLabel"],
     [data-testid="stWidgetLabel"] p,
     label, .stCaption, .stCaption p {
-        color: #1d1d1f !important;
+        color: var(--ink) !important;
     }
     [data-testid="stWidgetLabel"] p {
-        color: #3a3a3c !important;
+        color: var(--muted) !important;
         font-size: 0.8rem !important;
         font-weight: 600 !important;
+    }
+    .stCaption, .stCaption p {
+        color: var(--muted) !important;
     }
 
     .nav { padding: 4px 2px 18px 2px; }
     .nav-title {
-        font-size: 1.35rem; font-weight: 700; color: #1d1d1f !important;
+        font-size: 1.35rem; font-weight: 700; color: var(--ink) !important;
         letter-spacing: -0.03em;
     }
-    .nav-sub { font-size: 0.8rem; color: #3a3a3c !important; margin-top: 2px; }
+    .nav-sub { font-size: 0.8rem; color: var(--muted) !important; margin-top: 2px; }
+    .nav-ver { font-size: 0.7rem; font-weight: 600; color: var(--muted) !important; }
+    .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: #1c7c3a; padding: 4px 0; border-bottom: 3px solid #1c7c3a; }
+    .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--orange); padding: 4px 0; border-bottom: 3px solid var(--orange); }
+    .step-wait { text-align: center; font-size: 0.75rem; font-weight: 500; color: var(--muted); padding: 4px 0; border-bottom: 3px solid var(--line); }
 
     .ios-section-label {
-        font-size: 0.78rem; font-weight: 700; color: #3a3a3c !important;
+        font-size: 0.78rem; font-weight: 700; color: var(--muted) !important;
         text-transform: uppercase; letter-spacing: 0.05em;
         padding: 0 4px 8px 4px;
     }
 
     div[data-testid="stVerticalBlockBorderWrapper"] {
-        background: #ffffff !important;
-        border: 1px solid #d2d2d7 !important;
+        background: var(--card) !important;
+        border: 1px solid var(--line) !important;
         border-radius: 14px !important;
         box-shadow: none !important;
         padding: 8px 12px 12px 12px !important;
-        color: #1d1d1f !important;
+        color: var(--ink) !important;
     }
 
-    .stButton > button {
+    /* — Universal Button Styles — */
+    button svg,
+    button path {
+        fill: currentColor !important;
+        stroke: currentColor !important;
+    }
+
+    /* Primary buttons */
+    button[data-testid="stBaseButton-primary"],
+    button[data-testid="baseButton-primary"],
+    button[kind="primary"],
+    .stButton > button[kind="primary"],
+    .stButton > button[data-testid="stBaseButton-primary"],
+    .stButton > button[data-testid="baseButton-primary"],
+    [data-testid="stFormSubmitButton"] button[kind="primary"],
+    [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"] {
+        background-color: var(--orange) !important;
+        background: var(--orange) !important;
+        color: #FAF7F0 !important;
+        border: 1px solid var(--orange) !important;
         border-radius: 10px !important;
         font-weight: 600 !important;
-        border: 1px solid #d2d2d7 !important;
-        background: #ffffff !important;
-        color: #1d1d1f !important;
         box-shadow: none !important;
-        min-height: 40px;
+        min-height: 40px !important;
         font-size: 0.88rem !important;
-    }
-    .stButton > button:hover {
-        background: #e8e8ed !important;
-        color: #1d1d1f !important;
-        border-color: #c7c7cc !important;
-    }
-    .stButton > button[kind="primary"],
-    .stButton > button[data-testid="baseButton-primary"] {
-        background: #0071e3 !important;
-        color: #ffffff !important;
-        border: 1px solid #0071e3 !important;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background: #005bb5 !important;
-        color: #ffffff !important;
+        transition: background 120ms ease, border-color 120ms ease !important;
     }
 
-    /* Firefox + Streamlit form controls: force light, high-contrast */
+    button[data-testid="stBaseButton-primary"]:hover,
+    button[data-testid="baseButton-primary"]:hover,
+    button[kind="primary"]:hover,
+    .stButton > button[kind="primary"]:hover,
+    .stButton > button[data-testid="stBaseButton-primary"]:hover,
+    .stButton > button[data-testid="baseButton-primary"]:hover,
+    [data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
+    [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"]:hover {
+        background-color: var(--orange-press) !important;
+        background: var(--orange-press) !important;
+        color: #FAF7F0 !important;
+        border-color: var(--orange-press) !important;
+    }
+
+    button[data-testid="stBaseButton-primary"] *,
+    button[data-testid="baseButton-primary"] *,
+    button[kind="primary"] *,
+    .stButton > button[kind="primary"] *,
+    .stButton > button[data-testid="stBaseButton-primary"] *,
+    .stButton > button[data-testid="baseButton-primary"] * {
+        color: #FAF7F0 !important;
+    }
+
+    /* Secondary buttons */
+    button[data-testid="stBaseButton-secondary"],
+    button[data-testid="baseButton-secondary"],
+    button[kind="secondary"],
+    .stButton > button,
+    .stDownloadButton > button,
+    [data-testid="stDownloadButton"] button,
+    [data-testid="stFormSubmitButton"] button,
+    [data-testid="stPopover"] button,
+    [data-testid="stPopover"] > button,
+    [data-testid="stPopoverButton"],
+    button[data-testid="stPopoverButton"],
+    div[data-testid="stButton"] button {
+        background-color: var(--card) !important;
+        background: var(--card) !important;
+        color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 10px !important;
+        font-weight: 600 !important;
+        box-shadow: none !important;
+        min-height: 40px !important;
+        font-size: 0.88rem !important;
+        transition: background 120ms ease, border-color 120ms ease, color 120ms ease !important;
+    }
+
+    button[data-testid="stBaseButton-secondary"]:hover,
+    button[data-testid="baseButton-secondary"]:hover,
+    button[kind="secondary"]:hover,
+    .stButton > button:hover,
+    .stDownloadButton > button:hover,
+    [data-testid="stDownloadButton"] button:hover,
+    [data-testid="stFormSubmitButton"] button:hover,
+    [data-testid="stPopover"] button:hover,
+    [data-testid="stPopover"] > button:hover,
+    [data-testid="stPopoverButton"]:hover,
+    button[data-testid="stPopoverButton"]:hover,
+    div[data-testid="stButton"] button:hover {
+        background-color: var(--hover) !important;
+        background: var(--hover) !important;
+        color: var(--ink) !important;
+        border-color: var(--line) !important;
+    }
+
+    button[data-testid="stBaseButton-secondary"]:active,
+    button[data-testid="baseButton-secondary"]:active,
+    button[kind="secondary"]:active,
+    .stButton > button:active,
+    .stDownloadButton > button:active,
+    [data-testid="stDownloadButton"] button:active,
+    [data-testid="stFormSubmitButton"] button:active,
+    [data-testid="stPopover"] button:active,
+    [data-testid="stPopover"] > button:active,
+    [data-testid="stPopoverButton"]:active,
+    button[data-testid="stPopoverButton"]:active,
+    div[data-testid="stButton"] button:active {
+        background-color: var(--hover) !important;
+        background: var(--hover) !important;
+        color: var(--ink) !important;
+    }
+
+    button[data-testid="stBaseButton-secondary"]:focus,
+    button[data-testid="stBaseButton-secondary"]:focus-visible,
+    .stButton > button:focus,
+    .stButton > button:focus-visible,
+    [data-testid="stPopover"] button:focus,
+    [data-testid="stPopover"] button:focus-visible,
+    [data-testid="stPopoverButton"]:focus,
+    [data-testid="stPopoverButton"]:focus-visible {
+        outline: none !important;
+        box-shadow: 0 0 0 2px var(--orange) !important;
+    }
+
+    button[data-testid="stBaseButton-secondary"] *,
+    button[data-testid="baseButton-secondary"] *,
+    button[kind="secondary"] *,
+    .stButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]) *,
+    .stDownloadButton > button *,
+    [data-testid="stDownloadButton"] button *,
+    [data-testid="stPopover"] button *,
+    [data-testid="stPopover"] > button *,
+    [data-testid="stPopoverButton"] *,
+    div[data-testid="stButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]) * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+
+    /* Form controls: input, textarea, select */
     textarea, input, select,
+    [data-baseweb="input"],
     [data-baseweb="input"] input,
+    [data-baseweb="textarea"],
     [data-baseweb="textarea"] textarea,
+    [data-baseweb="select"],
     [data-baseweb="select"] > div,
     [data-baseweb="select"] span,
     [data-baseweb="base-input"],
+    [data-baseweb="base-input"] input,
     [data-testid="stNumberInput"] input,
     [data-testid="stTextInput"] input,
-    [data-testid="stTextArea"] textarea {
+    [data-testid="stTextArea"] textarea,
+    [data-testid="stSelectbox"] div[class*="e1fp86qc0"] {
         -moz-appearance: none !important;
         appearance: none !important;
-        color-scheme: light !important;
-        background-color: #ffffff !important;
-        color: #1d1d1f !important;
-        caret-color: #1d1d1f !important;
-        border: 1px solid #c7c7cc !important;
+        color-scheme: var(--scheme) !important;
+        background-color: var(--field) !important;
+        color: var(--ink) !important;
+        caret-color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
         border-radius: 10px !important;
     }
-    [data-baseweb="select"] > div {
-        background-color: #ffffff !important;
-        color: #1d1d1f !important;
+
+    textarea::placeholder, input::placeholder,
+    [data-baseweb="input"] input::placeholder,
+    [data-baseweb="textarea"] textarea::placeholder,
+    ::placeholder {
+        color: var(--muted) !important;
+        opacity: 0.8 !important;
     }
+
+    /* Selectbox closed trigger container */
+    [data-baseweb="select"] > div,
+    [data-testid="stSelectbox"] div[class*="e1fp86qc0"],
+    [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
+        background-color: var(--field) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 10px !important;
+        min-height: 40px !important;
+        height: 40px !important;
+        box-sizing: border-box !important;
+        overflow: hidden !important;
+    }
+    [data-baseweb="select"],
+    [data-baseweb="select"] *,
+    [data-testid="stSelectbox"],
+    [data-testid="stSelectbox"] * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-baseweb="select"] svg,
+    [data-baseweb="select"] path,
+    [data-baseweb="select"] [role="button"] svg,
+    [data-baseweb="select"] [role="button"] path,
+    [data-baseweb="input"] svg,
+    [data-baseweb="input"] path,
+    [data-baseweb="base-input"] svg,
+    [data-baseweb="base-input"] path,
+    [data-testid="stSelectbox"] svg,
+    [data-testid="stSelectbox"] path {
+        fill: currentColor !important;
+        stroke: currentColor !important;
+        color: var(--ink) !important;
+    }
+    /* Selectbox dropdown right arrow, button trigger, and icons */
+    [data-baseweb="select"] button,
+    [data-baseweb="select"] [role="button"],
+    [data-testid="stSelectbox"] button,
+    [data-testid="stSelectbox"] [role="button"],
+    [data-testid="stSelectbox"] div[class*="e1fp86qc2"],
+    [data-testid="stSelectbox"] div[class*="e1fp86qc3"],
+    [data-testid="stSelectbox"] [aria-label="Open"],
+    [data-testid="stSelectbox"] [aria-haspopup="listbox"] {
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: var(--ink) !important;
+    }
+    [data-baseweb="select"] button svg,
+    [data-baseweb="select"] [role="button"] svg,
+    [data-testid="stSelectbox"] button svg,
+    [data-testid="stSelectbox"] div[class*="e1fp86qc2"] svg,
+    [data-testid="stSelectbox"] [aria-label="Open"] svg {
+        fill: var(--ink) !important;
+        stroke: var(--ink) !important;
+        color: var(--ink) !important;
+    }
+
+    /* Clear (cross) icon in selectbox and input */
+    [data-baseweb="select"] [role="button"] svg,
+    [data-baseweb="select"] [role="button"] path,
+    [data-baseweb="select"] [data-icon="clear"],
+    [data-baseweb="input"] [role="button"] svg,
+    [data-baseweb="input"] [role="button"] path {
+        fill: var(--muted) !important;
+        stroke: var(--muted) !important;
+        color: var(--muted) !important;
+        opacity: 0.8 !important;
+    }
+    [data-baseweb="select"] [role="button"]:hover svg,
+    [data-baseweb="select"] [role="button"]:hover path,
+    [data-baseweb="input"] [role="button"]:hover svg,
+    [data-baseweb="input"] [role="button"]:hover path {
+        fill: var(--orange) !important;
+        stroke: var(--orange) !important;
+        color: var(--orange) !important;
+        opacity: 1 !important;
+    }
+
+    /* Popover outer container & overlay portal: transparent wrapper */
     [data-baseweb="popover"],
-    [data-baseweb="menu"],
-    ul[role="listbox"],
-    li[role="option"] {
-        background-color: #ffffff !important;
-        color: #1d1d1f !important;
+    [data-baseweb="popover"] > div,
+    #stFloatingOverlayPortal {
+        background-color: transparent !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
-    li[role="option"]:hover {
-        background-color: #e8e8ed !important;
-        color: #1d1d1f !important;
+
+    /* Popover body / dropdown menu list / virtual listbox / dialog popup */
+    [data-testid="stPopoverBody"],
+    div[class*="ecfxx9g0"],
+    div[data-testid="stPopoverBody"],
+    div[data-st-overlay-root="true"],
+    [data-baseweb="menu"],
+    [data-testid="stSelectboxVirtualDropdown"],
+    div[class*="e1fp86qc4"],
+    ul[role="listbox"],
+    div[role="listbox"] {
+        background-color: var(--card) !important;
+        background: var(--card) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 12px !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28) !important;
+        padding: 12px !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        max-height: min(450px, 70vh) !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+
+    /* All content inside popover body */
+    [data-testid="stPopoverBody"] *,
+    div[class*="ecfxx9g0"] *,
+    div[data-st-overlay-root="true"] * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+
+    [data-testid="stPopoverBody"] code,
+    div[class*="ecfxx9g0"] code {
+        background: var(--field) !important;
+        color: var(--orange) !important;
+        -webkit-text-fill-color: var(--orange) !important;
+        padding: 2px 6px !important;
+        border-radius: 4px !important;
+        border: 1px solid var(--line) !important;
+    }
+
+    /* Inner scroll container inside dropdown */
+    div[class*="e1fp86qc4"] > ul,
+    ul[class*="e1fp86qc5"],
+    ul[role="listbox"] {
+        border-radius: 8px !important;
+        max-height: min(320px, 70vh) !important;
+        overflow-y: auto !important;
+        overflow-x: hidden !important;
+        -webkit-overflow-scrolling: touch !important;
+    }
+
+    /* Individual dropdown list items */
+    li[role="option"],
+    div[class*="e1fp86qc7"],
+    div[class*="e1fp86qc8"] {
+        background-color: var(--card) !important;
+        background: var(--card) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        border-radius: 6px !important;
+        padding: 8px 12px !important;
+        margin: 2px 0 !important;
+        cursor: pointer !important;
+        transition: background 100ms ease, color 100ms ease !important;
+    }
+    li[role="option"] *,
+    [data-baseweb="menu"] *,
+    ul[role="listbox"] *,
+    div[class*="e1fp86qc7"] *,
+    div[class*="e1fp86qc8"] * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    li[role="option"]:hover,
+    li[role="option"]:focus,
+    li[role="option"][aria-selected="true"],
+    div[class*="e1fp86qc7"][data-hovered],
+    div[class*="e1fp86qc7"][data-focused],
+    div[class*="e1fp86qc7"] [data-item-hl] {
+        background-color: var(--hover) !important;
+        background: var(--hover) !important;
+    }
+    li[role="option"]:hover *,
+    li[role="option"]:focus *,
+    li[role="option"][aria-selected="true"] *,
+    div[class*="e1fp86qc7"][data-hovered] *,
+    div[class*="e1fp86qc7"][data-focused] * {
+        color: var(--orange) !important;
+        -webkit-text-fill-color: var(--orange) !important;
+        font-weight: 600 !important;
     }
 
     [data-testid="stExpander"] {
-        background: #ffffff !important;
-        border: 1px solid #d2d2d7 !important;
+        background: var(--card) !important;
+        border: 1px solid var(--line) !important;
         border-radius: 14px !important;
-        color: #1d1d1f !important;
+        color: var(--ink) !important;
     }
     [data-testid="stExpander"] summary,
     [data-testid="stExpander"] p,
     [data-testid="stExpander"] span {
-        color: #1d1d1f !important;
+        color: var(--ink) !important;
+    }
+    [data-testid="stExpander"] summary svg {
+        fill: var(--ink) !important;
+        color: var(--ink) !important;
     }
 
     [data-testid="stRadio"] label,
-    [data-testid="stRadio"] p { color: #1d1d1f !important; }
-
-    code, pre, [data-testid="stCode"] pre {
-        background: #f2f2f7 !important;
-        color: #1d1d1f !important;
+    [data-testid="stRadio"] p,
+    [data-testid="stCheckbox"] label,
+    [data-testid="stCheckbox"] p,
+    [data-testid="stCheckbox"] span {
+        color: var(--ink) !important;
+    }
+    [data-testid="stCheckbox"] [data-baseweb="checkbox"] span {
+        border-color: var(--line) !important;
     }
 
+    code, pre, [data-testid="stCode"], [data-testid="stCode"] pre, pre code {
+        background: var(--field) !important;
+        color: var(--ink) !important;
+        border-color: var(--line) !important;
+    }
+
+    [data-testid="stAlert"],
+    [data-testid="stNotification"],
+    [data-testid="stDialog"] > div,
+    [data-testid="stStatusWidget"],
+    [data-testid="stToast"],
+    div[class*="stToast"],
+    div[data-testid="stAlert"] > div {
+        background-color: var(--card) !important;
+        background: var(--card) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 10px !important;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22) !important;
+    }
+    [data-testid="stAlert"] *,
+    [data-testid="stNotification"] *,
+    [data-testid="stToast"] *,
+    [data-testid="stStatusWidget"] * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+
+    /* Spinner visibility & contrast during refresh / background fetching */
+    [data-testid="stSpinner"],
+    div[class*="stSpinner"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stSpinner"] div,
+    [data-testid="stSpinner"] span,
+    [data-testid="stSpinner"] p {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stSpinnerIcon"],
+    [data-testid="stSpinner"] span[class*="e1ocqwh"] {
+        border-color: var(--line) !important;
+        border-top-color: var(--orange) !important;
+    }
+
+    [data-baseweb="tab-list"] {
+        background-color: transparent !important;
+        border-bottom: 1px solid var(--line) !important;
+    }
+    [data-baseweb="tab"],
+    [data-baseweb="tab-highlight"] {
+        color: var(--muted) !important;
+        background-color: transparent !important;
+    }
+    [data-baseweb="tab"]:hover {
+        color: var(--ink) !important;
+        background-color: var(--hover) !important;
+    }
+    [data-baseweb="tab"][aria-selected="true"] {
+        color: var(--orange) !important;
+    }
+    [data-baseweb="tab-border"] {
+        background-color: var(--line) !important;
+    }
+
+    /* — Phone Mockup & Script Elements (Cohesive Canvas) — */
     .phone {
-        background: #111111;
+        background: var(--card) !important;
         border-radius: 14px;
         padding: 16px;
-        border: 1px solid #2c2c2e;
+        border: 1px solid var(--line) !important;
         width: 100%;
         aspect-ratio: 9 / 16;
         min-height: 560px;
         overflow-y: auto;
-        color: #f5f5f7;
+        color: var(--ink) !important;
     }
     .phone-empty {
-        color: #d1d1d6 !important; text-align: center; padding: 120px 24px;
+        color: var(--muted) !important;
+        text-align: center;
+        padding: 120px 24px;
         font-size: 0.95rem;
     }
     .script-preview {
-        background: #ffffff;
-        border: 1px solid #d2d2d7;
+        background: var(--card);
+        border: 1px solid var(--line);
         border-radius: 14px;
         padding: 18px 20px;
-        color: #1d1d1f;
+        color: var(--ink);
     }
     .script-format {
         font-size: 0.82rem;
         font-weight: 700;
         letter-spacing: 0.04em;
-        color: #3a3a3c;
-        border-bottom: 1px solid #d2d2d7;
+        color: var(--muted);
+        border-bottom: 1px solid var(--line);
         padding-bottom: 12px;
         margin-bottom: 16px;
     }
     .script-scene { margin-bottom: 18px; }
-    .script-time { font-weight: 700; font-size: 0.9rem; color: #0071e3; margin-bottom: 6px; }
+    .script-time { font-weight: 700; font-size: 0.9rem; color: var(--orange); margin-bottom: 6px; }
     .script-visual { font-size: 0.92rem; line-height: 1.5; margin-bottom: 10px; }
     .script-character { font-size: 0.82rem; font-weight: 700; margin-bottom: 4px; }
     .script-dialogue { font-family: "Noto Sans Devanagari", sans-serif; font-size: 1rem; line-height: 1.6; }
     .phone-title {
-        color: #ffffff !important; font-weight: 600; font-size: 0.95rem;
+        color: var(--ink) !important; font-weight: 600; font-size: 0.95rem;
         margin-bottom: 10px; padding: 0 6px;
     }
     .pill {
         display: inline-block; font-size: 0.7rem; font-weight: 600;
         padding: 3px 8px; border-radius: 999px; margin: 0 4px 8px 0;
-        background: #3a3a3c; color: #ffffff !important;
+        background: var(--hover) !important; color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
     }
-    .pill-ok { background: #1c7c3a; color: #ffffff !important; }
-    .pill-bad { background: #c41e3a; color: #ffffff !important; }
+    .pill-ok { background: #1c7c3a !important; color: #ffffff !important; border-color: #1c7c3a !important; }
+    .pill-bad { background: #c41e3a !important; color: #ffffff !important; border-color: #c41e3a !important; }
 
     .frame-card {
-        background: #2c2c2e; border-radius: 16px; padding: 12px 14px; margin-bottom: 10px;
-        color: #ffffff;
+        background: var(--field) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: 16px;
+        padding: 12px 14px;
+        margin-bottom: 10px;
+        color: var(--ink) !important;
     }
     .frame-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; }
-    .frame-title { color: #ffffff !important; font-size: 0.82rem; font-weight: 600; }
-    .frame-time { color: #d1d1d6 !important; font-size: 0.72rem; }
+    .frame-title { color: var(--ink) !important; font-size: 0.82rem; font-weight: 600; }
+    .frame-time { color: var(--muted) !important; font-size: 0.72rem; }
     .character-badge {
         display: inline-block; font-size: 0.7rem; font-weight: 600;
-        color: #111111 !important; background: #7fd0ff; padding: 2px 8px;
-        border-radius: 6px; margin-bottom: 6px;
+        color: #FAF7F0 !important; background: var(--orange) !important;
+        padding: 2px 8px; border-radius: 6px; margin-bottom: 6px;
     }
     .dialogue-text {
         font-family: "Noto Sans Devanagari", sans-serif;
-        font-size: 1.02rem; line-height: 1.65; color: #ffffff !important;
-        background: #000000; border-radius: 12px; padding: 10px 12px; margin: 6px 0;
+        font-size: 1.02rem; line-height: 1.65; color: var(--ink) !important;
+        background: var(--card) !important; border: 1px solid var(--line) !important;
+        border-radius: 12px; padding: 10px 12px; margin: 6px 0;
     }
-    .meta { font-size: 0.78rem; color: #e5e5ea !important; margin-top: 6px; line-height: 1.4; }
+    .meta { font-size: 0.78rem; color: var(--muted) !important; margin-top: 6px; line-height: 1.4; }
     .teleprompter-box {
-        background: #2c2c2e; border-radius: 16px; padding: 12px 14px; margin-top: 8px;
+        background: var(--field) !important; border: 1px solid var(--line) !important;
+        border-radius: 16px; padding: 12px 14px; margin-top: 8px;
     }
-    .dialogue-target-badge { font-size: 0.7rem; color: #d1d1d6 !important; font-weight: 600; }
+    .dialogue-target-badge { font-size: 0.7rem; color: var(--muted) !important; font-weight: 600; }
     .hindi-dialogue-text {
         font-family: "Noto Sans Devanagari", sans-serif;
-        font-size: 1.05rem; line-height: 1.75; color: #ffffff !important; margin-top: 8px;
+        font-size: 1.05rem; line-height: 1.75; color: var(--ink) !important; margin-top: 8px;
     }
     .news-item {
-        background: #ffffff;
-        border: 1px solid #d2d2d7;
+        background: var(--card);
+        border: 1px solid var(--line);
         border-radius: 12px;
         padding: 10px 12px;
         margin-bottom: 8px;
-        color: #1d1d1f;
+        color: var(--ink);
     }
-    .news-rank { font-size: 0.72rem; font-weight: 700; color: #0071e3; }
-    .news-title { font-size: 0.92rem; font-weight: 600; color: #1d1d1f !important; line-height: 1.35; }
-    .news-meta { font-size: 0.72rem; color: #3a3a3c !important; margin-top: 4px; }
+    .news-rank { font-size: 0.72rem; font-weight: 700; color: var(--orange); }
+    .news-title { font-size: 0.92rem; font-weight: 600; color: var(--ink) !important; line-height: 1.35; }
+    .news-meta { font-size: 0.72rem; color: var(--muted) !important; margin-top: 4px; }
+
+    /* Alert and notification banner classes */
+    .banner-error {
+        background-color: var(--field) !important;
+        border: 1px solid #c41e3a !important;
+        border-radius: 8px !important;
+        padding: 10px 12px !important;
+        margin: 8px 0 !important;
+        color: var(--ink) !important;
+    }
+    .banner-warning {
+        background-color: var(--field) !important;
+        border: 1px solid var(--orange) !important;
+        border-radius: 8px !important;
+        padding: 10px 12px !important;
+        margin: 8px 0 !important;
+        color: var(--ink) !important;
+    }
+    .server-status-card {
+        padding: 24px;
+        border-radius: 12px;
+        background: var(--card) !important;
+        border: 1px solid var(--line) !important;
+        margin: 30px auto;
+        max-width: 650px;
+        text-align: center;
+        color: var(--ink) !important;
+    }
+    .server-status-card p {
+        color: var(--muted) !important;
+        font-size: 15px;
+    }
 
     /* — Uniform config-row alignment & polish — */
     .cfg-label {
         font-size: 0.88rem;
         font-weight: 600;
-        color: #3a3a3c !important;
+        color: var(--muted) !important;
         line-height: 40px;
         white-space: nowrap;
         padding: 0;
@@ -592,83 +1126,122 @@ st.markdown(
         margin-top: 0 !important;
     }
 
-    /* Stepper buttons polish */
-    [data-testid="stNumberInput"] button {
-        min-height: 36px !important;
-        min-width: 34px !important;
-        border-radius: 7px !important;
-        background: #e8e8ed !important;
-        border: 1px solid #d2d2d7 !important;
-        color: #1d1d1f !important;
-        margin: 0 !important;
-        font-size: 0.9rem !important;
-        transition: background 120ms ease, border-color 120ms ease !important;
-    }
-    [data-testid="stNumberInput"] button:hover {
-        background: #e8e8ed !important;
-    }
-    [data-testid="stNumberInput"] input {
-        text-align: center !important;
-        min-height: 36px !important;
-        padding: 0 8px !important;
-        font-variant-numeric: tabular-nums;
-        font-size: 0.88rem !important;
-        background: #f5f5f7 !important;
-    }
-
-    [data-testid="stNumberInput"] > div {
-        min-height: 40px !important;
+    /* — Stepper and NumberInput styling (Duration, Scripts, Retries, Characters) — */
+    [data-testid="stNumberInput"] {
         width: 100% !important;
-        box-sizing: border-box !important;
+    }
+    [data-testid="stNumberInput"] > div,
+    [data-testid="stNumberInput"] [data-testid="stWidgetLabel"] + div,
+    [data-testid="stNumberInput"] [data-testid="stNumberInputContainer"],
+    [data-testid="stNumberInput"] div[class*="e1rv0tzo0"],
+    [data-testid="stNumberInput"] div[data-baseweb="input"] {
+        background-color: var(--field) !important;
+        background: var(--field) !important;
+        border: 1px solid var(--line) !important;
         border-radius: 10px !important;
+        box-shadow: none !important;
+        min-height: 40px !important;
+        height: 40px !important;
+        box-sizing: border-box !important;
+        display: flex !important;
+        flex-direction: row !important;
+        align-items: center !important;
         overflow: hidden !important;
-        background: transparent !important;
-        display: block !important;
+        padding: 0 !important;
         position: relative !important;
     }
-    [data-testid="stNumberInput"] [data-baseweb="base-input"],
-    [data-testid="stNumberInput"] [data-baseweb="input"] {
-        width: 100% !important;
-        height: 40px !important;
-        min-height: 40px !important;
-        box-sizing: border-box !important;
-        border-radius: 10px !important;
-        background: #f5f5f7 !important;
-        border: 1px solid #c7c7cc !important;
-        box-shadow: none !important;
-        padding-left: 36px !important;
-        padding-right: 36px !important;
+
+    /* Make button wrapper participate directly in the parent flex row */
+    [data-testid="stNumberInput"] div[class*="e1rv0tzo1"] {
+        display: contents !important;
     }
-    [data-testid="stNumberInput"] [data-baseweb="base-input"] > div,
-    [data-testid="stNumberInput"] [data-baseweb="input"] > div {
-        background: #f5f5f7 !important;
-        border: 0 !important;
-        box-shadow: none !important;
+
+    /* Left Stepper Button: Decrement (-) */
+    [data-testid="stNumberInput"] button[data-testid="stNumberInputStepDown"],
+    [data-testid="stNumberInput"] button[aria-label*="decrease" i],
+    [data-testid="stNumberInput"] button[aria-label*="decrement" i],
+    [data-testid="stNumberInput"] div[class*="e1rv0tzo1"] button:first-child {
+        order: 1 !important;
+        border-right: 1px solid var(--line) !important;
+        border-left: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
     }
-    [data-testid="stNumberInput"] input {
+
+    /* Central Input Field: transparent background and centered text between buttons */
+    [data-testid="stNumberInput"] input,
+    [data-testid="stNumberInput"] input[data-testid="stNumberInputField"],
+    .stNumberInput input {
+        order: 2 !important;
+        flex: 1 1 0% !important;
+        min-width: 0 !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        caret-color: var(--ink) !important;
         background: transparent !important;
-        border: 0 !important;
+        background-color: transparent !important;
+        border: none !important;
         box-shadow: none !important;
+        outline: none !important;
+        text-align: center !important;
+        font-size: 0.92rem !important;
+        font-weight: 600 !important;
+        font-variant-numeric: tabular-nums !important;
         height: 38px !important;
+        min-height: 38px !important;
+        padding: 0 4px !important;
+        margin: 0 !important;
         width: 100% !important;
     }
-    [data-testid="stNumberInput"] > div > button,
-    [data-testid="stNumberInput"] > div button {
-        position: absolute !important;
-        top: 2px !important;
-        z-index: 2 !important;
-        height: 36px !important;
+
+    /* Right Stepper Button: Increment (+) pinned to rightmost edge */
+    [data-testid="stNumberInput"] button[data-testid="stNumberInputStepUp"],
+    [data-testid="stNumberInput"] button[aria-label*="increase" i],
+    [data-testid="stNumberInput"] button[aria-label*="increment" i],
+    [data-testid="stNumberInput"] div[class*="e1rv0tzo1"] button:last-child {
+        order: 3 !important;
+        margin-left: auto !important;
+        border-left: 1px solid var(--line) !important;
+        border-right: none !important;
+        border-top: none !important;
+        border-bottom: none !important;
     }
-    [data-testid="stNumberInput"] > div > button:first-of-type,
-    [data-testid="stNumberInput"] > div button:first-of-type {
-        left: 1px !important;
+
+    [data-testid="stNumberInput"] button {
+        background-color: var(--hover) !important;
+        background: var(--hover) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        border: none !important;
+        border-radius: 0 !important;
+        min-height: 38px !important;
+        height: 38px !important;
+        width: 36px !important;
+        min-width: 36px !important;
+        max-width: 36px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+        flex-grow: 0 !important;
+        position: static !important;
+        cursor: pointer !important;
+        transition: background 120ms ease, color 120ms ease !important;
     }
-    [data-testid="stNumberInput"] > div > button:last-of-type,
-    [data-testid="stNumberInput"] > div button:last-of-type {
-        right: 1px !important;
+    [data-testid="stNumberInput"] button:hover {
+        background-color: var(--card) !important;
+        background: var(--card) !important;
+        color: var(--orange) !important;
+        -webkit-text-fill-color: var(--orange) !important;
     }
-    [data-testid="stNumberInput"] button:first-child { margin-left: 0 !important; }
-    [data-testid="stNumberInput"] button:last-child { margin-right: 0 !important; }
+    [data-testid="stNumberInput"] button svg,
+    [data-testid="stNumberInput"] button path {
+        fill: currentColor !important;
+        stroke: currentColor !important;
+        color: inherit !important;
+    }
 
     /* One shared vertical rhythm for every config row. */
     div[data-testid="stVerticalBlockBorderWrapper"] .stSelectbox,
@@ -684,14 +1257,15 @@ st.markdown(
         box-sizing: border-box !important;
     }
     div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="select"] > div,
-    div[data-testid="stVerticalBlockBorderWrapper"] [data-baseweb="base-input"] {
+    div[data-testid="stVerticalBlockBorderWrapper"] [data-testid="stSelectbox"] div[class*="e1fp86qc0"] {
         width: 100% !important;
         min-height: 40px !important;
         height: 40px !important;
         box-sizing: border-box !important;
-        border: 1px solid #c7c7cc !important;
+        border: 1px solid var(--line) !important;
         border-radius: 10px !important;
         box-shadow: none !important;
+        overflow: hidden !important;
     }
 
     /* Keep every configuration control aligned to one shared row geometry. */
@@ -699,13 +1273,16 @@ st.markdown(
         min-height: 42px;
         align-items: center;
     }
+
     [data-testid="stNumberInput"],
     [data-testid="stSelectbox"] {
         width: 100% !important;
     }
-    [data-testid="stNumberInput"] > div,
-    [data-testid="stSelectbox"] > div {
-        min-height: 38px !important;
+    [data-testid="stSelectbox"] > div,
+    [data-testid="stSelectbox"] div[class*="e1fp86qc0"] {
+        min-height: 40px !important;
+        border-radius: 10px !important;
+        overflow: hidden !important;
     }
 </style>
 """,
@@ -726,7 +1303,6 @@ st.html(
                 return;
             }
             // Same-level accordion: when one section is expanded, others at the same level collapse.
-            // Two details elements are at the same level if they share the exact same closest parent details.
             var targetParentDetails = target.parentElement ? target.parentElement.closest('details') : null;
 
             var allDetails = document.querySelectorAll('details');
@@ -746,6 +1322,54 @@ st.html(
     } else {
         setupAccordion();
     }
+
+    /* Streamlit stores Light / Dark / System in localStorage and does not
+       set data-theme on html. Detect both explicit theme choice and system
+       preference, and mirror onto document.documentElement, body, and .stApp. */
+    function studioSyncTheme() {
+        var dark = false;
+        var foundExplicit = false;
+        try {
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                if (k && k.indexOf('stActiveTheme') !== -1) {
+                    var raw = localStorage.getItem(k);
+                    if (raw) {
+                        var val = JSON.parse(raw);
+                        if (typeof val === 'string') {
+                            if (val === 'Dark') { dark = true; foundExplicit = true; }
+                            else if (val === 'Light') { dark = false; foundExplicit = true; }
+                        } else if (val && typeof val === 'object' && val.name) {
+                            if (val.name.indexOf('Dark') !== -1) { dark = true; foundExplicit = true; }
+                            else if (val.name.indexOf('Light') !== -1) { dark = false; foundExplicit = true; }
+                        }
+                    }
+                }
+            }
+        } catch (err) {}
+
+        if (!foundExplicit) {
+            dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        }
+
+        var themeVal = dark ? 'dark' : 'light';
+        if (document.documentElement.getAttribute('data-theme') !== themeVal) {
+            document.documentElement.setAttribute('data-theme', themeVal);
+        }
+        if (document.body && document.body.getAttribute('data-theme') !== themeVal) {
+            document.body.setAttribute('data-theme', themeVal);
+        }
+        var stApp = document.querySelector('.stApp');
+        if (stApp && stApp.getAttribute('data-theme') !== themeVal) {
+            stApp.setAttribute('data-theme', themeVal);
+        }
+    }
+    studioSyncTheme();
+    setInterval(studioSyncTheme, 250);
+    if (window.matchMedia) {
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', studioSyncTheme);
+    }
+    window.addEventListener('storage', studioSyncTheme);
 })();
 </script>
 """,
@@ -836,9 +1460,9 @@ if server_action == "stop":
     st.session_state.server_action = None
     st.markdown(
         """
-        <div style="padding: 24px; border-radius: 12px; background: #fff1f0; border: 1px solid #ffa39e; margin: 30px auto; max-width: 650px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
+        <div class="server-status-card">
             <h2 style="color: #cf1322; margin-top: 0;">🛑 Studio Server Stopped</h2>
-            <p style="color: #434343; font-size: 15px;">The server process has shut down cleanly. To resume, launch the app from the macOS Dock / Applications folder or restart it from your terminal.</p>
+            <p>The server process has shut down cleanly. To resume, launch the app from the macOS Dock / Applications folder or restart it from your terminal.</p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -849,10 +1473,10 @@ elif server_action == "restart":
     st.session_state.server_action = None
     st.markdown(
         """
-        <div style="padding: 24px; border-radius: 12px; background: #e6f7ff; border: 1px solid #91d5ff; margin: 30px auto; max-width: 650px; text-align: center; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;">
-            <h2 style="color: #096dd9; margin-top: 0;">🔄 Studio Server Restarting</h2>
-            <p style="color: #434343; font-size: 15px;">The studio server is rebooting. This page will automatically reconnect once the service is back online...</p>
-            <div style="margin-top: 15px; font-size: 13px; color: #8c8c8c;">Reconnecting in seconds...</div>
+        <div class="server-status-card">
+            <h2 style="color: var(--orange); margin-top: 0;">🔄 Studio Server Restarting</h2>
+            <p>The studio server is rebooting. This page will automatically reconnect once the service is back online...</p>
+            <div style="margin-top: 15px; font-size: 13px; color: var(--muted);">Reconnecting in seconds...</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -886,7 +1510,7 @@ with col_brand:
         f"""
         <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
             <div>
-                <div class="nav-title">Hindi Reel Studio <span style="font-size:0.7rem; font-weight:600; color:#8e8e93;">v{APP_VERSION}</span></div>
+                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}</span></div>
             </div>
         </div>
         """,
@@ -986,16 +1610,14 @@ with col_settings:
             def _show_config_issue(severity, message):
                 if severity == "error":
                     st.markdown(
-                        "<div style='background-color:#fdecea;border:1px solid #f5c6cb;"
-                        "border-radius:8px;padding:10px;margin:8px 0;'>"
+                        "<div class='banner-error'>"
                         f"<b>❌ Config Error:</b> {message}"
                         "</div>",
                         unsafe_allow_html=True,
                     )
                 elif severity == "warning":
                     st.markdown(
-                        "<div style='background-color:#fff8e1;border:1px solid #ffe082;"
-                        "border-radius:8px;padding:10px;margin:8px 0;'>"
+                        "<div class='banner-warning'>"
                         f"<b>⚠️ Config Warning:</b> {message}"
                         "</div>",
                         unsafe_allow_html=True,
@@ -3073,11 +3695,11 @@ with col_output:
         for idx, (c_st, name) in enumerate(zip(cols_step, step_names), 1):
             with c_st:
                 if idx < curr_step:
-                    st.markdown(f'<div style="text-align:center; font-size:0.75rem; font-weight:700; color:#34c759; padding:4px 0; border-bottom:3px solid #34c759;">✓ {name}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="step-done">✓ {name}</div>', unsafe_allow_html=True)
                 elif idx == curr_step:
-                    st.markdown(f'<div style="text-align:center; font-size:0.75rem; font-weight:700; color:#0071e3; padding:4px 0; border-bottom:3px solid #0071e3;">▶ {name}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="step-now">▶ {name}</div>', unsafe_allow_html=True)
                 else:
-                    st.markdown(f'<div style="text-align:center; font-size:0.75rem; font-weight:500; color:#8e8e93; padding:4px 0; border-bottom:3px solid #d2d2d7;">{name}</div>', unsafe_allow_html=True)
+                    st.markdown(f'<div class="step-wait">{name}</div>', unsafe_allow_html=True)
 
         st.markdown('<div style="height:12px;"></div>', unsafe_allow_html=True)
 
@@ -3246,8 +3868,7 @@ with col_output:
         if _v_errors:
             with st.container():
                 st.markdown(
-                    "<div style='background-color:#fdecea;border:1px solid #f5c6cb;"
-                    "border-radius:8px;padding:12px;margin-bottom:8px;'>"
+                    "<div class='banner-error'>"
                     f"<b>❌ Errors ({len(_v_errors)})</b> — detected at Stage 6 (Integration & Validation), "
                     "but each issue below names the stage whose output needs fixing."
                     "</div>",
@@ -3266,8 +3887,7 @@ with col_output:
         if _v_warns:
             with st.container():
                 st.markdown(
-                    "<div style='background-color:#fff8e1;border:1px solid #ffe082;"
-                    "border-radius:8px;padding:12px;margin-bottom:8px;'>"
+                    "<div class='banner-warning'>"
                     f"<b>⚠️ Warnings ({len(_v_warns)})</b> — advisory only, the reel is not blocked."
                     "</div>",
                     unsafe_allow_html=True,

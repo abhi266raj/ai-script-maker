@@ -311,6 +311,34 @@ python tests/test_character_and_creative_scenes.py
 
 ---
 
+## 🎨 Studio Design System & 60-30-10 Color Palette
+
+The Hindi Reel Studio UI implements a warm, paper-inspired editorial design system adhering to the **60-30-10 color harmony rule** across both light and dark themes. CSS tokens and theme states dynamically sync with system preferences and Streamlit's native theme controls.
+
+### 📐 60-30-10 Rule Distribution
+
+- **60% Dominant Base (Canvas & Primary Background):** `--bg-primary` / `--paper` establishes the paper foundation without visual strain.
+- **30% Structural Surface (Cards, Popovers, & Dropdown Menus):** `--bg-secondary` / `--card` elevates content blocks, phone previews, and menus with crisp 1px borders (`--border-primary`). Sub-surfaces (`--bg-tertiary` / `--field`) house inputs and controls.
+- **10% Intentional Accent (Action & Focus Highlights):** `--primary` / `--orange` guides creator focus to primary CTAs, active step indicators, and selected menu items.
+
+### 🎨 Color Token Reference Table
+
+| Role | Ratio | CSS Token | Light Theme | Dark Theme | Applied Elements |
+| :--- | :---: | :--- | :--- | :--- | :--- |
+| **Canvas Primary** | **60%** | `--bg-primary` (`--paper`) | `#FAF7F0` | `#2C261F` | Main studio backdrop, sidebar background, phone canvas |
+| **Surface Secondary** | **30%** | `--bg-secondary` (`--card`) | `#FFFCF6` | `#3A3229` | Bordered cards, vertical containers, dropdown popover menus, dialogue cards, server status cards |
+| **Surface Tertiary** | *(Sub)* | `--bg-tertiary` (`--field`) | `#F5EFE6` | `#342C24` | Input boxes, textareas, select triggers, stepper central field, code blocks, teleprompter box |
+| **Surface Hover** | - | `--bg-hover` (`--hover`) | `#EFE6D8` | `#4A4036` | Stepper buttons, menu item hover, tab hover, secondary button hover |
+| **Primary Accent** | **10%** | `--primary` (`--orange`) | `#E0692A` | `#E0692A` | Primary action buttons, active tab indicators, selected dropdown items, character badges |
+| **Accent Hover/Press** | - | `--primary-hover` (`--orange-press`) | `#C4551C` | `#F08A52` | Primary button hover and pressed states |
+| **Accent Subtle** | - | `--primary-subtle` | `#FDF1EA` | `#3D291C` | Focus rings, accent badge backgrounds |
+| **Border Primary** | - | `--border-primary` (`--line`) | `#E4D9C8` | `#5A4E42` | Crisp 1px card borders, dividers, stepper separators, control borders |
+| **Text Primary** | - | `--text-primary` (`--ink`) | `#1F1A14` | `#FAF7F0` | Primary headings, body copy, active inputs, dialogue text |
+| **Text Secondary** | - | `--text-secondary` (`--muted`) | `#5C5348` | `#D4C7B6` | Subtitles, field labels (`Duration (s)`, etc.), captions, dropdown arrows |
+| **Text Tertiary** | - | `--text-tertiary` | `#8C8275` | `#A89B8B` | Minor timestamps, disabled metadata |
+
+---
+
 ## 🌿 Agent & Developer Workflow Rules (Universal)
 
 All AI agents and contributors must strictly adhere to the project's Git workflow:
