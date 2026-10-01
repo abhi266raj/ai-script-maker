@@ -139,3 +139,20 @@ def test_image_card_x_overlay_still_top_pinned():
             top_pinned = True
             break
     assert top_pinned, "image-card × lost its top-corner pinning"
+
+
+def test_story_title_hides_heading_anchor_link_icon():
+    """#68 follow-up: no 🔗 link icon on the story title.
+
+    The user's dark-mode screenshot showed Streamlit's heading-anchor link
+    icon after the story title. Streamlit appends that anchor to h1–h6
+    rendered through st.markdown — including the legacy raw-HTML
+    <h2 class="lib-doc-title"> title. #60 replaced the h2 with the glyph +
+    popover, so this rule is belt-and-braces, but the icon must never come
+    back on any title render path.
+    """
+    css, _ = _capture_library_css()
+    bodies = _rule_bodies(css, ".lib-doc-title a")
+    assert bodies, "no .lib-doc-title anchor rule in library CSS"
+    assert any("display: none !important;" in _normalized(b) for b in bodies), \
+        "story-title heading anchor is not hidden"

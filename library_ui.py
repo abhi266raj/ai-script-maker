@@ -553,6 +553,16 @@ def inject_library_css() -> None:
         outline: 2px solid currentColor !important;
         outline-offset: 2px !important;
     }
+    /* #68 follow-up: the story title never shows Streamlit's heading-anchor
+       🔗 link icon. Streamlit appends that anchor to h1–h6 rendered through
+       st.markdown — including the legacy raw-HTML <h2 class="lib-doc-title">
+       title, which is what the user's screenshot showed. #60 replaced the h2
+       with the glyph + popover (title now bold text, no heading possible),
+       so on current code this rule is belt-and-braces: if any build ever
+       renders the title as a heading again, the chrome stays hidden. */
+    .lib-doc-title a {
+        display: none !important;
+    }
     .lib-empty {
         text-align: center;
         padding: 48px 16px;
