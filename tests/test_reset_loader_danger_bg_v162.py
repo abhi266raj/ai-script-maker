@@ -68,8 +68,10 @@ def test_reset_spin_marker_immediately_before_popover_while_resetting(monkeypatc
     spin_at = next(i for i, s in enumerate(seq)
                    if s[0] == "md" and 'data-marker="lib-spin-reset"' in s[1])
     # The event right after the spin marker is the popover trigger itself.
+    # (#90: the trigger is icon-only — the reset glyph, tooltip keeps
+    # the "Reset" label.)
     assert kinds[spin_at + 1] == "popover"
-    assert seq[spin_at + 1][1] == "Reset"
+    assert seq[spin_at + 1][1] == lui._TB_ICON_RESET
     # The danger-pop marker still precedes the spin marker (its #24 collapse
     # contract is unchanged).
     danger_at = next(i for i, s in enumerate(seq)

@@ -249,8 +249,8 @@ def test_parse_refresh_outcome():
 # #53 — HIG progress buttons at the UI layer
 # ---------------------------------------------------------------------------
 
-def _kind_button_kwargs(**kw):
-    d = dict(story_id="sid1", kind="hashtags", label="#",
+def _kind_button_kwargs(lui, **kw):
+    d = dict(story_id="sid1", kind="hashtags", label=lui._TB_ICON_TAG,
              button_key="lib_tags_sid1", kick_label="hashtag",
              help_text="Update Hashtags",
              busy_kinds=set(), ai_engine=None)
@@ -259,13 +259,13 @@ def _kind_button_kwargs(**kw):
 
 
 def test_kind_button_label_stable_while_running():
-    """#53/#71: while hashtags runs the icon button still reads "#" (never
-    "Updating Hashtags…"), is disabled, keeps full width, and the spin
-    marker is emitted for the CSS spinner. The tooltip keeps the
+    """#53/#71/#90: while hashtags runs the icon button still reads the tag
+    glyph (never "Updating Hashtags…"), is disabled, keeps full width, and
+    the spin marker is emitted for the CSS spinner. The tooltip keeps the
     "Update Hashtags" label for discoverability."""
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_kind_button_kwargs(busy_kinds={"hashtags"}))
-    assert fake.buttons == [("#", "lib_tags_sid1")]
+    lui._render_kind_button(**_kind_button_kwargs(lui, busy_kinds={"hashtags"}))
+    assert fake.buttons == [(lui._TB_ICON_TAG, "lib_tags_sid1")]
     kw = fake.button_kwargs[0]
     assert kw["disabled"] is True
     assert kw["use_container_width"] is True
@@ -275,8 +275,8 @@ def test_kind_button_label_stable_while_running():
 
 def test_kind_button_idle_state():
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_kind_button_kwargs())
-    assert fake.buttons == [("#", "lib_tags_sid1")]
+    lui._render_kind_button(**_kind_button_kwargs(lui))
+    assert fake.buttons == [(lui._TB_ICON_TAG, "lib_tags_sid1")]
     assert fake.button_kwargs[0]["disabled"] is False
     assert fake.button_kwargs[0]["help"] == "Update Hashtags"
     assert "lib-spin-hashtags" not in "".join(fake.markup)
@@ -285,11 +285,11 @@ def test_kind_button_idle_state():
 def test_kind_button_independent_while_sibling_runs():
     """#54: the images icon button stays enabled while hashtags runs."""
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_kind_button_kwargs(
-        kind="images", label="🖼", button_key="lib_imgs_sid1",
+    lui._render_kind_button(**_kind_button_kwargs(lui,
+        kind="images", label=lui._TB_ICON_IMAGE, button_key="lib_imgs_sid1",
         kick_label="image", help_text="Update Images",
         busy_kinds={"hashtags"}))
-    assert fake.buttons == [("🖼", "lib_imgs_sid1")]
+    assert fake.buttons == [(lui._TB_ICON_IMAGE, "lib_imgs_sid1")]
     assert fake.button_kwargs[0]["disabled"] is False
     assert fake.button_kwargs[0]["help"] == "Update Images"
     assert "lib-spin-images" not in "".join(fake.markup)
@@ -301,7 +301,7 @@ def test_kind_button_click_kicks_refresh(monkeypatch):
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (
                             calls.append((sid, kind, ai_engine)) or (True, "")))
-    lui._render_kind_button(**_kind_button_kwargs())
+    lui._render_kind_button(**_kind_button_kwargs(lui))
     assert calls == [("sid1", "hashtags", None)]
     assert fake.reran is True
     assert fake.errors == []
@@ -311,7 +311,7 @@ def test_kind_button_kick_failure_is_loud(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_tags_sid1",))
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (False, "boom"))
-    lui._render_kind_button(**_kind_button_kwargs())
+    lui._render_kind_button(**_kind_button_kwargs(lui))
     assert fake.errors == ["Could not start the hashtag refresh: boom"]
     assert fake.reran is False
 
@@ -320,7 +320,7 @@ def test_reset_popover_emits_spin_marker_while_resetting():
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", {"reset"}, ai_engine=None)
     assert 'data-marker="lib-spin-reset"' in "".join(fake.markup)
-    assert fake.popover_kwargs["label"] == "Reset"
+    assert fake.popover_kwargs["label"] == lui._TB_ICON_RESET
     assert fake.popover_kwargs["disabled"] is True
 
 

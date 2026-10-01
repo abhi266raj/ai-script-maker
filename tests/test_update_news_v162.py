@@ -250,8 +250,8 @@ def test_news_worker_failure_outcome_is_loud(libdir, monkeypatch):
 # UI layer — icon-only button, spinner marker, toast
 # ---------------------------------------------------------------------------
 
-def _news_button_kwargs(**kw):
-    d = dict(story_id="sid1", kind="news", label="📰",
+def _news_button_kwargs(lui, **kw):
+    d = dict(story_id="sid1", kind="news", label=lui._TB_ICON_NEWS,
              button_key="lib_news_sid1", kick_label="news",
              help_text="Update News", busy_kinds=set(), ai_engine=None)
     d.update(kw)
@@ -259,11 +259,11 @@ def _news_button_kwargs(**kw):
 
 
 def test_news_button_icon_only_and_stable_while_running():
-    """#71/#80: icon-only 📰 button — glyph label never changes, tooltip
+    """#71/#80/#90: icon-only newspaper-glyph button — glyph label never changes, tooltip
     keeps "Update News", disabled + spin marker while running."""
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_news_button_kwargs(busy_kinds={"news"}))
-    assert fake.buttons == [("📰", "lib_news_sid1")]
+    lui._render_kind_button(**_news_button_kwargs(lui, busy_kinds={"news"}))
+    assert fake.buttons == [(lui._TB_ICON_NEWS, "lib_news_sid1")]
     kw = fake.button_kwargs[0]
     assert kw["disabled"] is True
     assert kw["use_container_width"] is True
@@ -273,8 +273,8 @@ def test_news_button_icon_only_and_stable_while_running():
 
 def test_news_button_idle_state():
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_news_button_kwargs())
-    assert fake.buttons == [("📰", "lib_news_sid1")]
+    lui._render_kind_button(**_news_button_kwargs(lui))
+    assert fake.buttons == [(lui._TB_ICON_NEWS, "lib_news_sid1")]
     assert fake.button_kwargs[0]["disabled"] is False
     assert "lib-spin-news" not in "".join(fake.markup)
 
@@ -282,7 +282,7 @@ def test_news_button_idle_state():
 def test_news_button_independent_while_sibling_runs():
     """#54/#80: the news button stays enabled while hashtags runs."""
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_news_button_kwargs(busy_kinds={"hashtags"}))
+    lui._render_kind_button(**_news_button_kwargs(lui, busy_kinds={"hashtags"}))
     assert fake.button_kwargs[0]["disabled"] is False
     assert "lib-spin-news" not in "".join(fake.markup)
 
@@ -293,7 +293,7 @@ def test_news_button_click_kicks_news_refresh(monkeypatch):
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (
                             calls.append((sid, kind, ai_engine)) or (True, "")))
-    lui._render_kind_button(**_news_button_kwargs())
+    lui._render_kind_button(**_news_button_kwargs(lui))
     assert calls == [("sid1", "news", None)]
     assert fake.reran is True
     assert fake.errors == []
@@ -303,7 +303,7 @@ def test_news_button_kick_failure_is_loud(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_news_sid1",))
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (False, "boom"))
-    lui._render_kind_button(**_news_button_kwargs())
+    lui._render_kind_button(**_news_button_kwargs(lui))
     assert fake.errors == ["Could not start the news refresh: boom"]
     assert fake.reran is False
 
