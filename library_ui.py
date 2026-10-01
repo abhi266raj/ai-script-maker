@@ -1414,10 +1414,59 @@ def _render_story_detail(story_id: str) -> None:
         st.caption("No news links yet.")
 
     # Whole script — always through the color-coded renderer so dialogue
-    # never falls back to plain markdown.
-    if script_md:
-        st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
-        _render_full_script(script_md)
+    # never falls back to plain markdown. The ✏️ edit control mirrors the
+    # title's inline edit: it swaps the renderer for a text area and
+    # persists through lib.update_story_script, which fails loudly.
+    _script_editing = bool(st.session_state.get(f"lib_edit_script_{story_id}"))
+    _script_saving = bool(st.session_state.get(f"lib_saving_script_{story_id}"))
+    if _script_saving:
+        # HIG save, phase 2: the Save button already painted "Saving…"
+        # and disabled on the rerun; now perform the write. Errors
+        # surface loudly and edit mode is kept — the save is never
+        # pretended to have landed.
+        st.session_state.pop(f"lib_saving_script_{story_id}", None)
+        _new_script = (st.session_state.get(f"lib_script_{story_id}") or "").strip()
+        if not _new_script:
+            st.error("The script can't be saved empty — keep editing or Cancel.")
+        else:
+            try:
+                lib.update_story_script(story_id, _new_script)
+            except Exception as e:
+                st.error(f"Could not save the script: {e}")
+            else:
+                st.session_state.pop(f"lib_edit_script_{story_id}", None)
+                st.rerun()
+    if script_md or _script_editing:
+        _sh1, _sh2 = st.columns([11, 1], vertical_alignment="center")
+        with _sh1:
+            st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
+        with _sh2:
+            if st.button("✏️", key=f"lib_script_edit_{story_id}",
+                         help="Edit script",
+                         disabled=_busy or _script_editing or _script_saving):
+                st.session_state[f"lib_edit_script_{story_id}"] = True
+                st.rerun()
+        if _script_editing:
+            st.text_area("Edit script", value=script_md,
+                         key=f"lib_script_{story_id}", height=400,
+                         label_visibility="collapsed", disabled=_script_saving)
+            _sb1, _sb2, _sbs = st.columns([1, 1, 6])
+            with _sb1:
+                # HIG, phase 1: the initiating control owns the loading
+                # state — it paints "Saving…" and stays disabled until
+                # the write lands on the rerun above.
+                if st.button("Saving…" if _script_saving else "Save",
+                             key=f"lib_script_save_{story_id}", type="primary",
+                             disabled=_script_saving or _busy):
+                    st.session_state[f"lib_saving_script_{story_id}"] = True
+                    st.rerun()
+            with _sb2:
+                if st.button("Cancel", key=f"lib_script_cancel_{story_id}",
+                             disabled=_script_saving):
+                    st.session_state.pop(f"lib_edit_script_{story_id}", None)
+                    st.rerun()
+        else:
+            _render_full_script(script_md)
     elif story["dialogue"].strip():
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',

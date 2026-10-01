@@ -373,6 +373,27 @@ def update_story_fields(story_id: str, **fields: Any) -> bool:
     return True
 
 
+def update_story_script(story_id: str, script_md: str) -> None:
+    """Replace the story's ``## Script`` section, preserving the title,
+    dialogue, and all frontmatter.
+
+    Raises FileNotFoundError if the story does not exist, ValueError for
+    a blank script or an invalid id. Any write error propagates — the
+    caller must surface it (fail loud), never pretend the save landed.
+    """
+    _check_id(story_id)
+    if not (script_md or "").strip():
+        raise ValueError("Script text must not be empty.")
+    path = story_path(story_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Story not found: {story_id}")
+    meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+    dialogue, _old_script = _split_sections(body)
+    path.write_text(
+        build_story_markdown(meta, dialogue, script_md.strip()),
+        encoding="utf-8")
+
+
 def delete_story(story_id: str) -> bool:
     """Delete a story and its media files. Returns True if anything was removed."""
     _check_id(story_id)
