@@ -2156,19 +2156,118 @@ def _normalize_news_url(url: str) -> str:
     return u[:-1] if u.endswith("/") and len(u) > 1 else u
 
 
+# Issue #82: news links target at least 5 related links per story, max 5.
+NEWS_LINKS_TARGET = 5
+
+
+def _news_query_variants(topic: str) -> List[str]:
+    """Progressively looser Google News queries for one topic (#82).
+
+    The full topic is tried first; when it under-fetches (a very
+    specific headline matches few articles), looser variants follow:
+    the first clause (parentheticals, quoted segments and trailing
+    ``; : ! ?`` clauses dropped), then the significant-keyword core
+    (reuses ``_keyword_list``). Variants are distinct and non-empty;
+    an empty topic yields [].
+    """
+    t = re.sub(r"\s+", " ", (topic or "")).strip()
+    if not t:
+        return []
+    variants: List[str] = []
+
+    def _push(q: str) -> None:
+        q = re.sub(r"\s+", " ", q).strip(" ;:!?-\u2013\u2014()[]\"'")
+        if len(q) >= 3 and q.lower() not in {v.lower() for v in variants}:
+            variants.append(q)
+
+    _push(t)
+    # Looser: drop parentheticals/quotes, keep the first clause.
+    loose = re.sub(r"\(.*?\)|\[.*?\]|\"[^\"]*\"|'[^']*'", " ", t)
+    loose = re.split(r"[;:!?\u2014\u2013]", loose, maxsplit=1)[0]
+    _push(loose)
+    # Loosest: significant keywords only.
+    _push(" ".join(_keyword_list(loose)[:8]))
+    return variants
+
+
+def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
+                                exclude_urls=()) -> List[Dict[str, str]]:
+    """Fetch up to ``count`` NEW news links for ``topic`` (#82).
+
+    Reusable "fetch up to N new links for topic T excluding existing
+    URLs" primitive — #91 (load more news references) composes with
+    this rather than duplicating it.
+
+    Tries the topic's query variants in order (full topic, then looser
+    variants) and pulls a pool from ``news_fetcher.search_news`` per
+    variant, keeping distinct links (normalized-URL dedupe, #21) that
+    are not in ``exclude_urls``. Stops as soon as ``count`` candidates
+    are gathered. ``count <= 0`` returns [] without searching.
+
+    Fail-loud: when every variant's search raises, raises RuntimeError
+    naming the cause — a fetch failure is never reported as an empty
+    result. A shortfall (fewer than ``count`` genuinely related links
+    exist) is an honest short list, never padded or invented; callers
+    report it in their outcome note.
+    """
+    count = max(0, int(count or 0))
+    if count == 0:
+        return []
+    topic = (topic or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — news links unchanged.")
+    from tools.news_fetcher import news_fetcher
+    excluded = {_normalize_news_url(u) for u in (exclude_urls or ())}
+    seen = set(excluded)
+    found: List[Dict[str, str]] = []
+    errors: List[str] = []
+    for variant in _news_query_variants(topic):
+        if len(found) >= count:
+            break
+        try:
+            articles = (news_fetcher.search_news(
+                variant, limit=max(count * 3, 12)) or [])
+        except Exception as e:  # noqa: BLE001 - collected, raised loudly below
+            errors.append(f"{variant!r}: {type(e).__name__}: {e}")
+            continue
+        for a in articles:
+            url = (getattr(a, "link", "") or "").strip()
+            if not url:
+                continue
+            key = _normalize_news_url(url)
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "title": getattr(a, "title", "") or "",
+                "url": url,
+                "source": getattr(a, "source", "") or "",
+            })
+            if len(found) >= count:
+                break
+    if not found and errors:
+        raise RuntimeError(
+            f"News search failed ({errors[0]}) — news links unchanged.")
+    return found
+
+
 def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
     """Re-fetch news links (sources) and ADD the new ones to the story.
 
-    Runs the same Google News search as save-time enrichment
-    (``news_fetcher.search_news``), then merges genuinely new links after
-    the existing ones — the stored list is never wiped, and verified
-    Stage-1 links keep their place (#62). Duplicates are detected by
-    normalized URL, so a source found again is not stored twice.
+    Runs the same Google News search as save-time enrichment, then
+    merges genuinely new links after the existing ones — the stored
+    list is never wiped, and verified Stage-1 links keep their place
+    (#62). Duplicates are detected by normalized URL, so a source found
+    again is not stored twice. Issue #82: tops the story up toward
+    ``NEWS_LINKS_TARGET`` (5) links, never beyond it — the fetch tries
+    progressively looser queries until the target is reached.
     Never touches hashtags, images, or story content.
 
     Fail-loud: a story with no topic, a missing story, or a search
     failure raises RuntimeError with the honest cause — a network
-    failure is never reported as "nothing new". Returns (changed, note).
+    failure is never reported as "nothing new". A shortfall (fewer
+    than 5 genuinely related links exist) is an honest "now at N of 5"
+    note, not an error. Returns (changed, note).
     """
     story = load_story(story_id)
     if not story:
@@ -2176,36 +2275,25 @@ def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
         raise RuntimeError("No topic to search — news links unchanged.")
-    try:
-        from tools.news_fetcher import news_fetcher
-        articles = news_fetcher.search_news(topic, limit=6) or []
-    except Exception as e:
-        raise RuntimeError(
-            f"News search failed ({type(e).__name__}: {e}) — "
-            "news links unchanged.")
     existing = [lk for lk in (story["meta"].get("news_links") or [])
                 if isinstance(lk, dict) and lk.get("url")]
-    seen = {_normalize_news_url(lk["url"]) for lk in existing}
-    added: List[Dict[str, str]] = []
-    for a in articles:
-        url = (getattr(a, "link", "") or "").strip()
-        if not url:
-            continue
-        key = _normalize_news_url(url)
-        if key in seen:
-            continue
-        seen.add(key)
-        added.append({
-            "title": getattr(a, "title", "") or "",
-            "url": url,
-            "source": getattr(a, "source", "") or "",
-        })
+    room = NEWS_LINKS_TARGET - len(existing)
+    if room <= 0:
+        return False, (f"Kept {len(existing)} existing news link(s) "
+                       f"(at the {NEWS_LINKS_TARGET}-link cap).")
+    added = _fetch_news_link_candidates(
+        topic, count=room,
+        exclude_urls=[lk["url"] for lk in existing])
     if added:
         update_story_fields(story_id, news_links=existing + added)
-        return True, (f"Added {len(added)} new news link(s); "
-                      f"kept {len(existing)} existing.")
+        total = len(existing) + len(added)
+        note = (f"Added {len(added)} new news link(s); "
+                f"now at {total} of {NEWS_LINKS_TARGET}.")
+        if total < NEWS_LINKS_TARGET:
+            note += f" Only {total} related article(s) found."
+        return True, note
     return False, (f"No new news links found; kept {len(existing)} "
-                    "existing.")
+                   "existing.")
 
 
 def _refresh_worker(story_id: str, kind: str, topic: str,
@@ -2509,13 +2597,17 @@ def _do_reset(story_id: str, topic: str,
         cap=_MAX_FETCHED_IMAGES)
 
     # 3. News links: re-run the link verifier fresh for the topic.
-    #    Best-effort by contract: [] on failure means an empty row.
-    articles = _fetch_news_articles(topic, limit=6)
-    new_links = [{
-        "title": getattr(a, "title", "") or "",
-        "url": getattr(a, "link", "") or "",
-        "source": getattr(a, "source", "") or "",
-    } for a in articles[:6]]
+    #    Best-effort by contract: [] on failure means an empty row, with
+    #    the honest cause in the note. Issue #82: targets
+    #    NEWS_LINKS_TARGET (5) distinct links via progressively looser
+    #    queries.
+    try:
+        new_links = _fetch_news_link_candidates(
+            topic, count=NEWS_LINKS_TARGET)
+        news_err = ""
+    except RuntimeError as e:
+        new_links = []
+        news_err = str(e)
     new_urls = [lk["url"] for lk in new_links]
 
     update_story_fields(
@@ -2540,7 +2632,8 @@ def _do_reset(story_id: str, topic: str,
                      f"({_img_stats['trimmed']} extra not kept; "
                      f"uploads are never capped).")
     if not new_links:
-        parts.append("No news links found — row cleared.")
+        parts.append(f"News search failed ({news_err}) — row cleared."
+                     if news_err else "No news links found — row cleared.")
     if not changed:
         parts.append("Everything already fresh — nothing changed.")
     if ai_note:
@@ -2551,17 +2644,21 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     """Post-save enrichment body: news links + images + hashtags.
 
     Deterministic only — save-time enrichment never calls the AI, so a
-    story always saves cleanly with AI processing off. Returns
-    (changed, note); raises loudly on failure.
+    story always saves cleanly with AI processing off. Issue #82: the
+    news fetch targets ``NEWS_LINKS_TARGET`` (5) distinct links,
+    trying progressively looser queries when the topic under-fetches.
+    Returns (changed, note); raises loudly on failure.
     """
-    articles = _fetch_news_articles(topic, limit=6)
-    news_links: List[Dict[str, str]] = []
-    for a in articles[:6]:
-        news_links.append({
-            "title": getattr(a, "title", ""),
-            "url": getattr(a, "link", ""),
-            "source": getattr(a, "source", ""),
-        })
+    try:
+        news_links = _fetch_news_link_candidates(
+            topic, count=NEWS_LINKS_TARGET)
+        news_err = ""
+    except RuntimeError as e:
+        # Save-time enrichment keeps the image-timeout precedent: a news
+        # fetch failure is an honest note, not a lost enrichment — the
+        # story is already saved and hashtags/images still land.
+        news_links = []
+        news_err = str(e)
     story = load_story(story_id)
     if not story:
         raise RuntimeError("Enrichment failed: story not found.")
@@ -2605,8 +2702,16 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     )
     changed = bool(tags_added or imgs_added or links_added)
     bits = []
-    bits.append(f"Found {links_added} news link(s)."
-                if links_added else "Kept verified news links.")
+    if news_err:
+        bits.append(f"News search failed ({news_err}); no links added.")
+    elif links_added:
+        bit = f"Found {links_added} news link(s)."
+        if links_added < NEWS_LINKS_TARGET:
+            bit += f" Only {links_added} related article(s) found."
+        bits.append(bit)
+    else:
+        bits.append("Kept verified news links." if verified_links
+                    else "No related news articles found.")
     bits.append(img_note or (f"Added {imgs_added} image(s)."
                              if imgs_added else "No new images found."))
     if _img_stats["trimmed"]:
