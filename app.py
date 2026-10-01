@@ -1775,82 +1775,87 @@ with col_settings:
                         active_hashtag_article = next((e for e in _trend_cache if e["tag"] == _ig_pick), None)
             st.session_state.active_hashtag = active_hashtag
 
-            if is_feed_mode and (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat or st.session_state.get("loaded_hashtag") != st.session_state.get("active_hashtag")):
-                with st.spinner("Loading headlines…"):
-                    _ht = (st.session_state.get("active_hashtag") or "").strip()
-                    if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
-                        # Hashtag mode: every hashtag carries its own headline —
-                        # use it directly, no extra search needed.
-                        # Normalize the hashtag dict entry to a NewsArticle-like object
-                        # (dicts have "headline", articles need "title").
-                        if active_hashtag_article:
-                            if isinstance(active_hashtag_article, dict):
-                                from types import SimpleNamespace
-                                articles = [SimpleNamespace(
-                                    title=active_hashtag_article.get("headline", ""),
-                                    link=active_hashtag_article.get("link", ""),
-                                    source=active_hashtag_article.get("source", ""),
-                                    time_label="",
-                                )]
-                            else:
-                                articles = [active_hashtag_article]
-                        else:
-                            # Custom typed hashtag: search news about the topic.
-                            _query = _ht.lstrip("#").replace("#", " ")
-                            try:
-                                articles = news_fetcher.search_news(_query, limit=16)
-                            except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
-                                st.error(str(_nfe))
-                                articles = []
-                    elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
-                            articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
-                    elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                            articles = news_fetcher.get_india_trending(limit=16)
-                    elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                            articles = news_fetcher.get_top_indian_politics_news(limit=16)
-                    elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                            articles = news_fetcher.get_top_indian_culture_news(limit=16)
-                    elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                            articles = news_fetcher.get_top_india_tech_news(limit=16)
-                    elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                            articles = news_fetcher.get_top_tech_news(limit=16)
-                    elif "World" in selected_news_cat:
-                            articles = news_fetcher.get_top_world_news(limit=16)
-                    elif "Business" in selected_news_cat:
-                            articles = news_fetcher.get_top_business_news(limit=16)
-                    else:
-                            articles = news_fetcher.get_top_india_news(limit=16)
-                    st.session_state.live_news_articles = articles
-                    st.session_state.loaded_news_cat = selected_news_cat
-                    st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
-                    # Persist headlines to disk so they survive app restarts.
-                    # Selection is restored from disk on next launch.
-                    try:
-                        _to_cache = []
-                        for _a in articles[:16]:
-                            if isinstance(_a, dict):
-                                _to_cache.append({
-                                    "title": _a.get("title", ""),
-                                    "link": _a.get("link", ""),
-                                    "source": _a.get("source", ""),
-                                    "time_label": _a.get("time_label", ""),
-                                })
-                            else:
-                                _to_cache.append({
-                                    "title": getattr(_a, "title", ""),
-                                    "link": getattr(_a, "link", ""),
-                                    "source": getattr(_a, "source", ""),
-                                    "time_label": getattr(_a, "time_label", ""),
-                                })
-                        save_config("cached_headlines", _to_cache)
-                        save_config("cached_headlines_cat", selected_news_cat)
-                        save_config("cached_headlines_hashtag", st.session_state.get("active_hashtag", ""))
-                        import time as _time_mod2
-                        save_config("cached_headlines_ts", _time_mod2.time())
-                    except Exception as _cache_e:
-                        print(f"[headline-cache] save failed (non-fatal): {_cache_e}")
-
             if is_feed_mode:
+                # Headline row owns its fetch (#73): the "Loading headlines…" spinner
+                # renders inside the value column so it anchors to the dropdown it
+                # populates, instead of floating in the card gutter.
+                hl_lbl, hl_dd = st.columns([2.5, 5.5])
+                with hl_dd:
+                    _need_headlines = (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat or st.session_state.get("loaded_hashtag") != st.session_state.get("active_hashtag"))
+                    if _need_headlines:
+                        with st.spinner("Loading headlines…"):
+                            _ht = (st.session_state.get("active_hashtag") or "").strip()
+                            if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
+                                # Hashtag mode: every hashtag carries its own headline —
+                                # use it directly, no extra search needed.
+                                # Normalize the hashtag dict entry to a NewsArticle-like object
+                                # (dicts have "headline", articles need "title").
+                                if active_hashtag_article:
+                                    if isinstance(active_hashtag_article, dict):
+                                        from types import SimpleNamespace
+                                        articles = [SimpleNamespace(
+                                            title=active_hashtag_article.get("headline", ""),
+                                            link=active_hashtag_article.get("link", ""),
+                                            source=active_hashtag_article.get("source", ""),
+                                            time_label="",
+                                        )]
+                                    else:
+                                        articles = [active_hashtag_article]
+                                else:
+                                    # Custom typed hashtag: search news about the topic.
+                                    _query = _ht.lstrip("#").replace("#", " ")
+                                    try:
+                                        articles = news_fetcher.search_news(_query, limit=16)
+                                    except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
+                                        st.error(str(_nfe))
+                                        articles = []
+                            elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                                    articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                            elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                                    articles = news_fetcher.get_india_trending(limit=16)
+                            elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
+                                    articles = news_fetcher.get_top_indian_politics_news(limit=16)
+                            elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
+                                    articles = news_fetcher.get_top_indian_culture_news(limit=16)
+                            elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
+                                    articles = news_fetcher.get_top_india_tech_news(limit=16)
+                            elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
+                                    articles = news_fetcher.get_top_tech_news(limit=16)
+                            elif "World" in selected_news_cat:
+                                    articles = news_fetcher.get_top_world_news(limit=16)
+                            elif "Business" in selected_news_cat:
+                                    articles = news_fetcher.get_top_business_news(limit=16)
+                            else:
+                                    articles = news_fetcher.get_top_india_news(limit=16)
+                            st.session_state.live_news_articles = articles
+                            st.session_state.loaded_news_cat = selected_news_cat
+                            st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
+                            # Persist headlines to disk so they survive app restarts.
+                            # Selection is restored from disk on next launch.
+                            try:
+                                _to_cache = []
+                                for _a in articles[:16]:
+                                    if isinstance(_a, dict):
+                                        _to_cache.append({
+                                            "title": _a.get("title", ""),
+                                            "link": _a.get("link", ""),
+                                            "source": _a.get("source", ""),
+                                            "time_label": _a.get("time_label", ""),
+                                        })
+                                    else:
+                                        _to_cache.append({
+                                            "title": getattr(_a, "title", ""),
+                                            "link": getattr(_a, "link", ""),
+                                            "source": getattr(_a, "source", ""),
+                                            "time_label": getattr(_a, "time_label", ""),
+                                        })
+                                save_config("cached_headlines", _to_cache)
+                                save_config("cached_headlines_cat", selected_news_cat)
+                                save_config("cached_headlines_hashtag", st.session_state.get("active_hashtag", ""))
+                                import time as _time_mod2
+                                save_config("cached_headlines_ts", _time_mod2.time())
+                            except Exception as _cache_e:
+                                print(f"[headline-cache] save failed (non-fatal): {_cache_e}")
                 # Headline dropdown from live feed — persists selection and avoids re-fetching unless refreshed
                 arts = st.session_state.live_news_articles[:16]
                 # Articles may be NewsArticle objects OR dicts (trending hashtag source
@@ -1875,7 +1880,6 @@ with col_settings:
                         if _art_title(a) == active_headline or _art_title(a) == saved_headline:
                             hl_idx = i
                             break
-                    hl_lbl, hl_dd = st.columns([2.5, 5.5])
                     with hl_lbl:
                         st.markdown('<div class="cfg-label">Headline</div>', unsafe_allow_html=True)
                     with hl_dd:
