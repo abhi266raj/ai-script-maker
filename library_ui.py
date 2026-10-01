@@ -16,6 +16,7 @@ from functools import lru_cache as _lru_cache
 import streamlit as st
 
 import story_library as lib
+import tools.fine_tune as fine_tune
 
 TAB_STUDIO = "Studio"
 TAB_LIBRARY = "Library"
@@ -63,6 +64,7 @@ _TB_ICON_COPY = ":material/content_copy:"    # Copy
 _TB_ICON_DELETE = ":material/delete:"        # Delete
 _TB_ICON_UPLOAD = ":material/upload:"        # Upload (#114)
 _TB_ICON_EDIT = ":material/edit:"            # Edit title/script (no emoji)
+_TB_ICON_TUNE = ":material/tune:"            # Fine tune script (#105)
 _TB_ICON_SPINNER = "spinner"                 # native animated spinner
 
 
@@ -2705,6 +2707,93 @@ def _render_upload_popover(story_id: str) -> None:
                 st.rerun()
 
 
+# ---------------------------------------------------------------------------
+# #105 — "Fine tune script": iterative LLM refinement of the story's script.
+# ---------------------------------------------------------------------------
+def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
+                              busy: bool) -> None:
+    """Render the "Fine tune script" section under the story's script.
+
+    The user types a natural-language instruction ("make it funnier"); the
+    LLM surgically refines the current script and the result replaces it.
+    Every turn is recorded in the story's fine-tune history so the
+    conversation carries across turns (and #104's versioning can adopt it).
+
+    HIG: the initiating control owns its loading state — the button paints
+    "Fine tuning…" with the native spinner and stays disabled until the
+    refinement lands on the rerun. LLM errors surface loudly; a failed turn
+    never pretends the script changed.
+    """
+    st.markdown('<div class="lib-section">Fine tune script</div>',
+                unsafe_allow_html=True)
+    _ft_running = bool(st.session_state.get(f"lib_ft_running_{story_id}"))
+    _ft_input_key = f"lib_ft_input_{story_id}"
+
+    try:
+        _history = lib.get_fine_tune_history(story_id)
+    except Exception as e:
+        # Loud, but must not brick the story view over a history read.
+        st.error(f"Could not load fine-tune history: {e}")
+        _history = []
+    if _history and not _ft_running:
+        with st.expander(f"Earlier refinements ({len(_history)})",
+                         expanded=False):
+            for _i, _turn in enumerate(_history, 1):
+                st.caption(f"Turn {_i}: {_turn['instruction']}")
+
+    st.text_input(
+        "What should change?",
+        placeholder="e.g. make it funnier, tighten the hook",
+        key=_ft_input_key,
+        label_visibility="collapsed",
+        disabled=_ft_running or busy,
+    )
+    if st.button(
+        "Fine tuning…" if _ft_running else "Fine tune script",
+        icon=_TB_ICON_SPINNER if _ft_running else _TB_ICON_TUNE,
+        key=f"lib_ft_apply_{story_id}",
+        type="primary",
+        disabled=_ft_running or busy,
+        help="Ask the AI to refine the script per your instruction",
+    ):
+        # HIG phase 1: paint the loading state now; the refinement runs
+        # on the rerun below (phase 2).
+        st.session_state[f"lib_ft_running_{story_id}"] = True
+        st.rerun()
+
+    if _ft_running:
+        # HIG phase 2: perform the refinement. Errors surface loudly and
+        # the input is kept — the turn is never pretended to have landed.
+        st.session_state.pop(f"lib_ft_running_{story_id}", None)
+        _instruction = (st.session_state.get(_ft_input_key) or "").strip()
+        if not _instruction:
+            st.error("Describe what to change first — e.g. “make it funnier”.")
+            return
+        _ctx_parts = []
+        _title = (meta.get("title") or "").strip()
+        if _title:
+            _ctx_parts.append(f"Title: {_title}")
+        _topic = (meta.get("source_headline")
+                  or meta.get("source_topic") or "").strip()
+        if _topic:
+            _ctx_parts.append(f"Topic: {_topic}")
+        try:
+            with st.spinner("Fine-tuning the script…"):
+                _refined = fine_tune.fine_tune_script(
+                    current_script=script_md,
+                    instruction=_instruction,
+                    story_context="\n".join(_ctx_parts),
+                    history=_history,
+                    tone=(meta.get("tone") or "").strip(),
+                )
+            lib.record_fine_tune_turn(story_id, _instruction, _refined)
+        except Exception as e:
+            st.error(f"Fine tune failed: {e}")
+        else:
+            st.session_state.pop(_ft_input_key, None)
+            st.rerun()
+
+
 def _render_story_detail(story_id: str) -> None:
     story = lib.load_story(story_id)
     if not story:
@@ -2961,6 +3050,14 @@ def _render_story_detail(story_id: str) -> None:
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
                     unsafe_allow_html=True)
+
+    # #105: iterative LLM fine-tuning of the script. Only when a script
+    # exists (and not while the manual editor is open) — there must be a
+    # baseline to refine. #104's versioning will later adopt the recorded
+    # turns as versions; until then the refined script replaces the current
+    # one and the history preserves every turn.
+    if script_md.strip() and not _script_editing and not _script_saving:
+        _render_fine_tune_section(story_id, meta, script_md, _busy)
 
     # Video playback — the attached video only. #94: the "Video" section
     # title is gone; the upload affordance is the one-line row below.
