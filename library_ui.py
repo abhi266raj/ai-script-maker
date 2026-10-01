@@ -1602,6 +1602,15 @@ def _render_upload_row(story_id: str) -> None:
             _render_upload_popover(story_id)
 
 
+# #181: the success toast must fire at most once per warm-up completion.
+# The persisted mailbox stays "done" forever, so an unguarded toast
+# re-fires on every Streamlit rerun. `started_at` is unique per run
+# (set when the run is kicked off), so storing the announced run's
+# marker in session state keeps the toast once-only while a fresh
+# warm-up run re-arms it automatically.
+_FM_WARMUP_TOAST_ANNOUNCED_KEY = "fm_warmup_toast_announced_for"
+
+
 def _fm_warmup_button_props(state: dict) -> tuple:
     """Pure helper: (label, disabled) for the warm-up button given the
     mailbox state. Kept pure so the HIG loading/disabled contract is
@@ -1659,9 +1668,15 @@ def _render_fm_warmup_result() -> None:
     if _stt == "done":
         _secs = _state.get("seconds") or 0.0
         _msg = (_state.get("message") or "").strip()
-        _notify(f"Apple FM warmed up in {_secs:.1f}s"
-                + (f" — {_msg}" if _msg else ""),
-                icon="✅")
+        # #181: toast fires at most once per warm-up completion. The marker
+        # is the run's own `started_at`, so a fresh warm-up re-arms the
+        # toast without any extra reset logic.
+        _marker = (_state.get("started_at"), _secs)
+        if st.session_state.get(_FM_WARMUP_TOAST_ANNOUNCED_KEY) != _marker:
+            _notify(f"Apple FM warmed up in {_secs:.1f}s"
+                    + (f" — {_msg}" if _msg else ""),
+                    icon="✅")
+            st.session_state[_FM_WARMUP_TOAST_ANNOUNCED_KEY] = _marker
     elif _stt == "failed":
         _msg = (_state.get("message") or "unknown error").strip()
         st.error(f"Warm-up failed: {_msg}")
