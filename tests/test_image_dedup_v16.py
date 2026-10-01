@@ -16,7 +16,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import story_library as lib  # noqa: E402
+from _fake_images import fetch_for, png_bytes_for  # noqa: E402
 from tools.story_link import (  # noqa: E402
     extract_story_images,
     extract_story_images_with_alt,
@@ -42,12 +44,6 @@ def _make_story(**kw):
     kw.setdefault("source_topic", "chubby dogs voting contest")
     kw.setdefault("source_headline", "Chubby dogs battle in voting contest")
     return lib.save_story(**kw)
-
-
-def _bytes_for(mapping):
-    def _fetch(url, **kw):
-        return mapping.get(url, b"bytes-for-" + url.encode())
-    return _fetch
 
 
 # ---------------------------------------------------------------------------
@@ -175,10 +171,11 @@ def test_refresh_images_identical_content_different_url_is_noop(libdir, monkeypa
         lambda story, topic, **k: [("https://img.example/one.jpg", None),
                                    ("https://cdn.example/mirror.jpg", None)])
     # mirror.jpg serves byte-identical content to one.jpg.
+    _same = png_bytes_for("same-image")
     monkeypatch.setattr(
         lib, "_fetch_image_bytes",
-        _bytes_for({"https://img.example/one.jpg": b"same-image-bytes",
-                    "https://cdn.example/mirror.jpg": b"same-image-bytes"}))
+        fetch_for({"https://img.example/one.jpg": _same,
+                   "https://cdn.example/mirror.jpg": _same}))
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
     assert changed is False
     meta = lib.load_story(sid)["meta"]
@@ -193,7 +190,7 @@ def test_refresh_images_excludes_unwanted_alt_text(libdir, monkeypatch):
         lambda story, topic, **k: [("https://img.example/logo.png", "site logo"),
                                    ("https://img.example/dogs.jpg",
                                     "dogs playing in the park")])
-    monkeypatch.setattr(lib, "_fetch_image_bytes", _bytes_for({}))
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
     assert changed is True
     meta = lib.load_story(sid)["meta"]
@@ -203,9 +200,10 @@ def test_refresh_images_excludes_unwanted_alt_text(libdir, monkeypatch):
 
 def test_refresh_images_fails_loudly_when_hash_fetch_fails(libdir, monkeypatch):
     sid = _make_story(image_urls=["https://img.example/old.jpg"])
-    # The existing image already has a hash: only the NEW candidate's
+    # The existing image already has both hashes: only the NEW candidate's
     # fetch fails, so the error must name the new URL.
-    lib.update_story_fields(sid, image_hashes=["0" * 64])
+    lib.update_story_fields(sid, image_hashes=["0" * 64],
+                            image_phashes=["f" * 16])
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: ["https://img.example/new.jpg"])
 
@@ -222,15 +220,15 @@ def test_refresh_images_fails_loudly_when_hash_fetch_fails(libdir, monkeypatch):
 def test_refresh_images_cleans_up_stored_content_dupes(libdir, monkeypatch):
     sid = _make_story(image_urls=[])
     # Seed two legacy entries with identical bytes under different URLs.
+    _same = png_bytes_for("same-image")
     lib.update_story_fields(
         sid, image_urls=["https://img.example/a.jpg", "https://cdn.example/b.jpg"])
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: ["https://img.example/c.jpg"])
     monkeypatch.setattr(
         lib, "_fetch_image_bytes",
-        _bytes_for({"https://img.example/a.jpg": b"same-bytes",
-                    "https://cdn.example/b.jpg": b"same-bytes",
-                    "https://img.example/c.jpg": b"fresh-bytes"}))
+        fetch_for({"https://img.example/a.jpg": _same,
+                   "https://cdn.example/b.jpg": _same}))
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
     assert changed is True
     meta = lib.load_story(sid)["meta"]
@@ -300,13 +298,13 @@ def test_update_fetched_image_url_invalidates_hash(libdir):
 # ---------------------------------------------------------------------------
 
 def test_merge_story_images_mixed_batch(monkeypatch):
+    _keep = png_bytes_for("keep-image")
     monkeypatch.setattr(
         lib, "_fetch_image_bytes",
-        _bytes_for({"https://img.example/keep.jpg": b"keep-bytes",
-                    "https://cdn.example/x.jpg": b"keep-bytes",
-                    "https://img.example/fresh.jpg": b"fresh-bytes"}))
-    merged, hashes, stats = lib._merge_story_images(
-        ["https://img.example/keep.jpg"], [""],
+        fetch_for({"https://img.example/keep.jpg": _keep,
+                   "https://cdn.example/x.jpg": _keep}))
+    merged, hashes, phashes, stats = lib._merge_story_images(
+        ["https://img.example/keep.jpg"], [""], [],
         [("https://img.example/keep.jpg/", None),          # dup URL
          ("https://img.example/logo.png", "company logo"),  # alt-rejected
          ("https://cdn.example/x.jpg", None),               # dup content
@@ -314,14 +312,16 @@ def test_merge_story_images_mixed_batch(monkeypatch):
     assert merged == ["https://img.example/keep.jpg",
                       "https://img.example/fresh.jpg"]
     assert len(hashes) == 2 and all(hashes)
+    assert len(phashes) == 2 and all(phashes)
     assert stats == {"added": 1, "dup_url": 1, "dup_content": 1,
-                     "rejected_alt": 1, "removed_existing_dupes": 0}
+                     "dup_visual": 0, "rejected_alt": 1,
+                     "removed_existing_dupes": 0}
 
 
 def test_merge_story_images_accepts_bare_url_strings(monkeypatch):
     # Backward compatibility: callers without alt text pass plain strings.
-    monkeypatch.setattr(lib, "_fetch_image_bytes", _bytes_for({}))
-    merged, hashes, stats = lib._merge_story_images(
-        [], [], ["https://img.example/a.jpg", "https://img.example/a.jpg"])
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
+    merged, hashes, phashes, stats = lib._merge_story_images(
+        [], [], [], ["https://img.example/a.jpg", "https://img.example/a.jpg"])
     assert merged == ["https://img.example/a.jpg"]
     assert stats["added"] == 1 and stats["dup_url"] == 1

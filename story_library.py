@@ -271,7 +271,7 @@ def save_story(
     storing — the same image is never stored twice (issue #21).
     """
     story_id = new_story_id()
-    image_urls, _ = _dedupe_stored_image_entries(image_urls, [])
+    image_urls, _, _ = _dedupe_stored_image_entries(image_urls, [], [])
     meta = {
         "id": story_id,
         "title": title or "Untitled Story",
@@ -281,6 +281,7 @@ def save_story(
         "news_links": [dict(l) for l in (news_links or [])],
         "image_urls": image_urls,
         "image_hashes": [],
+        "image_phashes": [],
         "uploaded_images": [],
         "video_file": "",
         "enrichment_status": "pending",
@@ -309,14 +310,20 @@ def load_story(story_id: str) -> Optional[Dict[str, Any]]:
     stored_urls = [u for u in (meta.get("image_urls") or []) if u]
     stored_hashes = meta.get("image_hashes")
     had_hashes = "image_hashes" in meta
-    urls, hashes = _dedupe_stored_image_entries(stored_urls, stored_hashes)
+    stored_phashes = meta.get("image_phashes")
+    had_phashes = "image_phashes" in meta
+    urls, hashes, phashes = _dedupe_stored_image_entries(
+        stored_urls, stored_hashes, stored_phashes)
     meta["image_urls"] = urls
     meta["image_hashes"] = hashes
-    if urls != stored_urls or not had_hashes or stored_hashes != hashes:
+    meta["image_phashes"] = phashes
+    if (urls != stored_urls or not had_hashes or stored_hashes != hashes
+            or not had_phashes or stored_phashes != phashes):
         # Best-effort write-back: the in-memory view above is already
         # clean, so a failed write is simply retried on the next load.
         try:
-            update_story_fields(story_id, image_urls=urls, image_hashes=hashes)
+            update_story_fields(story_id, image_urls=urls, image_hashes=hashes,
+                                image_phashes=phashes)
         except Exception:
             pass
     return {"meta": meta, "body": body, "dialogue": dialogue, "script": script}
@@ -490,10 +497,12 @@ def remove_fetched_image(story_id: str, url: str) -> bool:
         return False
     urls = list(story["meta"].get("image_urls") or [])
     hashes = _align_hashes(urls, story["meta"].get("image_hashes"))
-    kept = [(u, h) for u, h in zip(urls, hashes) if u != url]
+    phashes = _align_hashes(urls, story["meta"].get("image_phashes"))
+    kept = [(u, h, p) for u, h, p in zip(urls, hashes, phashes) if u != url]
     update_story_fields(story_id,
-                        image_urls=[u for u, _ in kept],
-                        image_hashes=[h for _, h in kept])
+                        image_urls=[u for u, _, _ in kept],
+                        image_hashes=[h for _, h, _ in kept],
+                        image_phashes=[p for _, _, p in kept])
     return True
 
 
@@ -505,7 +514,8 @@ def update_fetched_image_url(story_id: str, index: int, new_url: str) -> bool:
     new address is already attached to the story (normalized-URL dedupe,
     issue #21) — the caller surfaces the error instead of silently
     keeping a bad or duplicate value. The replaced entry's content hash
-    is invalidated so the next refresh re-hashes the new bytes.
+    and perceptual hash are invalidated so the next refresh re-hashes
+    the new bytes.
     """
     story = load_story(story_id)
     if not story:
@@ -523,7 +533,10 @@ def update_fetched_image_url(story_id: str, index: int, new_url: str) -> bool:
     urls[index] = u
     hashes = _align_hashes(urls, story["meta"].get("image_hashes"))
     hashes[index] = ""
-    update_story_fields(story_id, image_urls=urls, image_hashes=hashes)
+    phashes = _align_hashes(urls, story["meta"].get("image_phashes"))
+    phashes[index] = ""
+    update_story_fields(story_id, image_urls=urls, image_hashes=hashes,
+                        image_phashes=phashes)
     return True
 
 
@@ -1002,6 +1015,76 @@ def _image_content_hash(url: str) -> str:
     return hashlib.sha256(_fetch_image_bytes(url)).hexdigest()
 
 
+# Hamming-distance duplicate threshold for 64-bit dHashes (issue #44).
+# Calibrated on real photos (see tests/test_perceptual_hash_v16.py):
+# JPEG re-saves and resizes score 0, ~5% crops score <= 4, while
+# genuinely different photos score >= 24. A threshold of 10 catches
+# re-sized, re-compressed and slightly cropped variants with a wide
+# margin against false positives on different photos.
+_PHASH_DUP_THRESHOLD = 10
+
+
+def _image_dhash(data: bytes, url: str) -> int:
+    """64-bit difference-hash of raw image bytes — PIL only, no new deps.
+
+    Grayscale → 9x8 LANCZOS shrink → 64 horizontal-gradient bits. Images
+    that look the same (re-sized, re-compressed, slightly cropped) land
+    within a few bits of each other; different photos land far apart
+    (see ``_PHASH_DUP_THRESHOLD``).
+
+    Raises :class:`ImageDedupeError` naming ``url`` when the bytes cannot
+    be decoded as an image — never a placeholder hash.
+    """
+    from PIL import Image
+    import io
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            px = img.convert("L").resize((9, 8), Image.LANCZOS).tobytes()
+    except Exception as e:
+        raise ImageDedupeError(
+            f"Image dedupe failed: could not decode image bytes from {url} "
+            f"({type(e).__name__}: {e})") from e
+    bits = 0
+    for row in range(8):
+        off = row * 9
+        for col in range(8):
+            bits = (bits << 1) | (1 if px[off + col] > px[off + col + 1] else 0)
+    return bits
+
+
+def _hamming_distance(a: int, b: int) -> int:
+    """Bit differences between two dHash ints."""
+    return bin(a ^ b).count("1")
+
+
+def _dhash_to_hex(ph: int) -> str:
+    """64-bit dHash as a 16-char hex string for frontmatter storage."""
+    return f"{ph:016x}"
+
+
+def _parse_dhash(s: str) -> Optional[int]:
+    """Parse a stored dHash hex string; ``None`` when missing/corrupt.
+
+    A corrupt stored value is treated as missing (backfilled on the next
+    merge) rather than failing the whole dedupe — the corruption is in
+    our own bookkeeping, not the image.
+    """
+    try:
+        return int((s or "").strip(), 16)
+    except (ValueError, TypeError):
+        return None
+
+
+def _image_fingerprints(url: str) -> Tuple[str, int]:
+    """``(SHA-256 hex, 64-bit dHash)`` for the image at ``url`` — one fetch.
+
+    Raises :class:`ImageDedupeError` (naming the URL) on any fetch or
+    decode failure — the dedupe check is never silently skipped.
+    """
+    data = _fetch_image_bytes(url)
+    return hashlib.sha256(data).hexdigest(), _image_dhash(data, url)
+
+
 def _align_hashes(urls: List[str], hashes: Optional[List[str]]) -> List[str]:
     """Align a stored ``image_hashes`` list with ``image_urls``.
 
@@ -1016,33 +1099,38 @@ def _align_hashes(urls: List[str], hashes: Optional[List[str]]) -> List[str]:
 
 def _dedupe_stored_image_entries(
         urls: Optional[List[str]],
-        hashes: Optional[List[str]]) -> Tuple[List[str], List[str]]:
+        hashes: Optional[List[str]],
+        phashes: Optional[List[str]] = None) -> Tuple[List[str], List[str], List[str]]:
     """Order-preserving normalized-URL dedupe of stored image entries.
 
-    Returns ``(urls, hashes)`` with duplicates dropped (first occurrence
-    wins) and hashes realigned. Pure — no network; used by the
-    save/load migration paths.
+    Returns ``(urls, hashes, phashes)`` with duplicates dropped (first
+    occurrence wins); all three lists stay aligned. Pure — no network;
+    used by the save/load migration paths.
     """
     clean = [u for u in (urls or []) if u]
     hs = _align_hashes(clean, hashes)
+    ps = _align_hashes(clean, phashes)
     seen: set = set()
     out_urls: List[str] = []
     out_hashes: List[str] = []
-    for u, h in zip(clean, hs):
+    out_phashes: List[str] = []
+    for u, h, p in zip(clean, hs, ps):
         key = normalize_image_url(u)
         if key in seen:
             continue
         seen.add(key)
         out_urls.append(u)
         out_hashes.append(h)
-    return out_urls, out_hashes
+        out_phashes.append(p)
+    return out_urls, out_hashes, out_phashes
 
 
 def _merge_story_images(
     existing_urls: Optional[List[str]],
     existing_hashes: Optional[List[str]],
+    existing_phashes: Optional[List[str]],
     candidates,
-) -> Tuple[List[str], List[str], Dict[str, int]]:
+) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
     """Merge image candidates into a story's image list with full dedupe.
 
     ``candidates`` is an iterable of ``(url, alt_text)`` pairs; a bare
@@ -1061,17 +1149,25 @@ def _merge_story_images(
        existing images are backfilled first so candidates are compared
        against real content. ANY fetch failure raises
        :class:`ImageDedupeError` — the check is never silently skipped.
+    4. Perceptual-hash dedupe (issue #44): byte-different look-alikes
+       (re-sized, re-compressed, slightly cropped) that survived step 3
+       are caught by 64-bit dHash — a candidate within
+       ``_PHASH_DUP_THRESHOLD`` bits of any kept image is a visual
+       duplicate and is dropped. Existing entries collapse the same way
+       (first occurrence wins). Undecodable image bytes raise
+       :class:`ImageDedupeError` naming the URL — never silently skipped.
 
-    Returns ``(merged_urls, merged_hashes, stats)``; ``stats`` counts
-    ``added`` / ``dup_url`` / ``dup_content`` / ``rejected_alt`` /
-    ``removed_existing_dupes``. Existing order is preserved; genuinely
-    new images are appended.
+    Returns ``(merged_urls, merged_hashes, merged_phashes, stats)``;
+    ``stats`` counts ``added`` / ``dup_url`` / ``dup_content`` /
+    ``dup_visual`` / ``rejected_alt`` / ``removed_existing_dupes``.
+    Existing order is preserved; genuinely new images are appended.
     """
     from tools.story_link import image_alt_is_unwanted
 
     existing_urls = [u for u in (existing_urls or []) if u]
     hashes = _align_hashes(existing_urls, existing_hashes)
-    stats = {"added": 0, "dup_url": 0, "dup_content": 0,
+    phashes = _align_hashes(existing_urls, existing_phashes)
+    stats = {"added": 0, "dup_url": 0, "dup_content": 0, "dup_visual": 0,
              "rejected_alt": 0, "removed_existing_dupes": 0}
 
     # 1. Alt-text filter (primary signal).
@@ -1103,37 +1199,74 @@ def _merge_story_images(
 
     merged_urls = list(existing_urls)
     merged_hashes = list(hashes)
+    merged_phashes = list(phashes)
     if not fresh:
-        return merged_urls, merged_hashes, stats
+        return merged_urls, merged_hashes, merged_phashes, stats
 
-    # 3. Content-hash dedupe. Backfill missing existing hashes first so
-    #    candidates are compared against real content, never skipped.
+    # 3. Content-hash dedupe. Backfill missing existing hashes (SHA-256 and
+    #    dHash, one fetch per URL) first so candidates are compared
+    #    against real content, never skipped.
     for i, url in enumerate(merged_urls):
-        if not merged_hashes[i]:
-            merged_hashes[i] = _image_content_hash(url)
+        if not merged_hashes[i] or not merged_phashes[i]:
+            h, ph = _image_fingerprints(url)
+            if not merged_hashes[i]:
+                merged_hashes[i] = h
+            if not merged_phashes[i]:
+                merged_phashes[i] = _dhash_to_hex(ph)
     # Collapse existing entries that turn out to be identical bytes.
     deduped_urls: List[str] = []
     deduped_hashes: List[str] = []
+    deduped_phashes: List[str] = []
     seen_hashes: set = set()
-    for url, h in zip(merged_urls, merged_hashes):
+    for url, h, p in zip(merged_urls, merged_hashes, merged_phashes):
         if h in seen_hashes:
             stats["removed_existing_dupes"] += 1
             continue
         seen_hashes.add(h)
         deduped_urls.append(url)
         deduped_hashes.append(h)
-    merged_urls, merged_hashes = deduped_urls, deduped_hashes
+        deduped_phashes.append(p)
+    merged_urls, merged_hashes, merged_phashes = (
+        deduped_urls, deduped_hashes, deduped_phashes)
+
+    # 4. Perceptual-hash dedupe. Collapse existing entries that are visual
+    #    near-duplicates first (order preserved, first wins), then check
+    #    each surviving candidate against everything kept.
+    kept_dhashes: List[int] = []
+    vis_urls: List[str] = []
+    vis_hashes: List[str] = []
+    vis_phashes: List[str] = []
+    for url, h, p in zip(merged_urls, merged_hashes, merged_phashes):
+        ph = _parse_dhash(p)
+        if (ph is not None and any(
+                _hamming_distance(ph, k) <= _PHASH_DUP_THRESHOLD
+                for k in kept_dhashes)):
+            stats["removed_existing_dupes"] += 1
+            continue
+        vis_urls.append(url)
+        vis_hashes.append(h)
+        vis_phashes.append(p)
+        if ph is not None:
+            kept_dhashes.append(ph)
+    merged_urls, merged_hashes, merged_phashes = vis_urls, vis_hashes, vis_phashes
+    seen_hashes = set(merged_hashes)
 
     for url in fresh:
-        h = _image_content_hash(url)
+        h, ph = _image_fingerprints(url)
         if h in seen_hashes:
             stats["dup_content"] += 1
             continue
+        if any(_hamming_distance(ph, k) <= _PHASH_DUP_THRESHOLD
+               for k in kept_dhashes):
+            stats["dup_visual"] += 1
+            continue
         seen_hashes.add(h)
+        kept_dhashes.append(ph)
         merged_urls.append(url)
         merged_hashes.append(h)
+        merged_phashes.append(_dhash_to_hex(ph))
         stats["added"] += 1
-    return merged_urls, merged_hashes, stats
+    return merged_urls, merged_hashes, merged_phashes, stats
 
 
 def _search_web_images(topic: str, limit: int = 4) -> List[str]:
@@ -1675,6 +1808,7 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
         raise RuntimeError("No topic to search — images unchanged.")
     existing = list(story["meta"].get("image_urls") or [])
     existing_hashes = list(story["meta"].get("image_hashes") or [])
+    existing_phashes = list(story["meta"].get("image_phashes") or [])
     try:
         found = _fetch_images_for_story(story, topic)
     except TimeoutError as e:
@@ -1682,8 +1816,8 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
         return False, f"Image refresh timed out ({e}); kept {len(existing)} existing."
     if not found:
         return False, f"No new images found; kept {len(existing)} existing."
-    merged_urls, merged_hashes, stats = _merge_story_images(
-        existing, existing_hashes, found)
+    merged_urls, merged_hashes, merged_phashes, stats = _merge_story_images(
+        existing, existing_hashes, existing_phashes, found)
     added = stats["added"]
     cleaned = merged_urls != existing
     extras: List[str] = []
@@ -1696,10 +1830,11 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     extra = (" " + " ".join(extras)) if extras else ""
     if added or cleaned:
         update_story_fields(story_id, image_urls=merged_urls,
-                            image_hashes=merged_hashes)
+                            image_hashes=merged_hashes,
+                            image_phashes=merged_phashes)
     if not added:
         note = f"No new images found; kept {len(existing)} existing."
-        dupes = stats["dup_url"] + stats["dup_content"]
+        dupes = stats["dup_url"] + stats["dup_content"] + stats["dup_visual"]
         if dupes:
             note += f" ({dupes} already stored.)"
         return cleaned, (note + extra).strip()
@@ -1980,8 +2115,8 @@ def _do_reset(story_id: str, topic: str,
     #    nothing is written. Alt-text filtering and content dedupe apply
     #    to the fresh list (issue #21); a hash-fetch failure raises
     #    ImageDedupeError and likewise fails loudly.
-    new_images, new_hashes, _ = _merge_story_images(
-        [], [], _fetch_images_for_story(story, topic) or [])
+    new_images, new_hashes, new_phashes, _ = _merge_story_images(
+        [], [], [], _fetch_images_for_story(story, topic) or [])
 
     # 3. News links: re-run the link verifier fresh for the topic.
     #    Best-effort by contract: [] on failure means an empty row.
@@ -1998,6 +2133,7 @@ def _do_reset(story_id: str, topic: str,
         hashtags=new_tags,
         image_urls=new_images,
         image_hashes=new_hashes,
+        image_phashes=new_phashes,
         news_links=new_links,
     )
 
@@ -2056,8 +2192,9 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     # keep those and add what enrichment found, deduplicated by normalized
     # URL and content hash (issue #21). A hash-fetch failure raises
     # ImageDedupeError and fails the enrichment loudly.
-    merged_imgs, merged_hashes, _img_stats = _merge_story_images(
-        meta.get("image_urls"), meta.get("image_hashes"), image_urls)
+    merged_imgs, merged_hashes, merged_phashes, _img_stats = _merge_story_images(
+        meta.get("image_urls"), meta.get("image_hashes"),
+        meta.get("image_phashes"), image_urls)
     imgs_added = _img_stats["added"]
     links_added = 0 if verified_links else len(news_links)
     update_story_fields(
@@ -2065,6 +2202,7 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
         news_links=verified_links or news_links,
         image_urls=merged_imgs,
         image_hashes=merged_hashes,
+        image_phashes=merged_phashes,
         hashtags=merged_tags,
     )
     changed = bool(tags_added or imgs_added or links_added)
