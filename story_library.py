@@ -1550,17 +1550,26 @@ def _grab_og_images(urls: List[str], tries: int = 3) -> List[str]:
 
 
 def _grab_article_images(urls: List[str], tries: int = 3,
-                         per_page: int = 3) -> List[Tuple[str, Optional[str]]]:
+                         per_page: int = 3,
+                         report: Optional[Dict[str, Any]] = None
+                         ) -> List[Tuple[str, Optional[str]]]:
     """Parallel article-page image extraction from a list of page URLs.
 
     Each article's HTML is fetched (httpx, timeout, retries) and passed to
     ``tools.story_link.extract_story_images_with_alt``, which pulls
-    og:image → twitter:image → JSON-LD → in-article <img>/<figure> photos
-    as ``(url, alt_text)`` pairs. News pages carry their real photos in
-    body <img> tags, so this finds images that an og:image-only grab
-    misses. Relative and lazy-load URLs are absolutized; logos, sprites,
-    SVGs, tracking pixels and alt-text-flagged unwanted assets are
-    filtered. Batch results are deduplicated by normalized URL.
+    og:image → twitter:image → JSON-LD → in-article story-body photos
+    as ``(url, alt_text)`` pairs (issue #86: in-article extraction is
+    scoped to the story body — site chrome under header/nav/footer/aside
+    is excluded). News pages carry their real photos in body <img> tags,
+    so this finds images that an og:image-only grab misses. Relative and
+    lazy-load URLs are absolutized; logos, sprites, SVGs, tracking pixels
+    and alt-text-flagged unwanted assets are filtered. Batch results are
+    deduplicated by normalized URL.
+
+    When ``report`` (a dict) is supplied, ``report["unscoped_pages"]`` is
+    set to the number of pages where no article body could be identified
+    and the extractor fell back to a whole-page scan — the caller
+    surfaces this honestly in the refresh outcome note.
     """
     from tools.story_link import extract_story_images_with_alt
 
@@ -1568,8 +1577,10 @@ def _grab_article_images(urls: List[str], tries: int = 3,
     seen: set = set()
     found_lock = threading.Lock()
     threads: List[threading.Thread] = []
+    unscoped_pages = 0
 
     def _grab(url: str) -> None:
+        nonlocal unscoped_pages
         # Resolve Google News wrappers to the publisher page first — the
         # wrapper's own HTML is a JS shell with no article images.
         url = _resolve_article_url(url)
@@ -1596,11 +1607,15 @@ def _grab_article_images(urls: List[str], tries: int = 3,
             time.sleep(1.0 * (attempt + 1))
         if not html:
             return
+        scope_report: Dict[str, Any] = {}
         try:
-            imgs = extract_story_images_with_alt(html, url, limit=per_page)
+            imgs = extract_story_images_with_alt(html, url, limit=per_page,
+                                                 scope_report=scope_report)
         except Exception:
             return
         with found_lock:
+            if scope_report.get("scoped") is False:
+                unscoped_pages += 1
             for img_url, alt in imgs:
                 key = normalize_image_url(img_url)
                 if key not in seen:
@@ -1614,6 +1629,8 @@ def _grab_article_images(urls: List[str], tries: int = 3,
             threads.append(t)
     for t in threads:
         t.join(timeout=30.0)
+    if report is not None:
+        report["unscoped_pages"] = unscoped_pages
     return found
 
 
@@ -1636,7 +1653,9 @@ def _story_direct_link_urls(story: Optional[Dict[str, Any]]) -> List[str]:
 
 
 def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
-                            tries: int = 3) -> List[Tuple[str, Optional[str]]]:
+                            tries: int = 3,
+                            report: Optional[Dict[str, Any]] = None
+                            ) -> List[Tuple[str, Optional[str]]]:
     """Images for a story: verified story links first, then topic search.
 
     The story's own verified news links point at the exact story's publisher
@@ -1650,6 +1669,10 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
     filter in the merge step. Hero/web-search images carry no alt text
     (``None``).
 
+    When ``report`` (a dict) is supplied it is passed to the article-image
+    grab, which records ``report["unscoped_pages"]`` — pages where no
+    article body could be identified (issue #86 fallback).
+
     Every step runs under a hard wall-clock bound (via ``_run_bounded``):
     a stuck host raises ``TimeoutError`` naming the step instead of
     hanging the refresh. Pure fetch — no persistence here.
@@ -1657,7 +1680,8 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
     direct = _story_direct_link_urls(story)
     if direct:
         found = _run_bounded(
-            lambda: _grab_article_images(direct[:6], tries=tries),
+            lambda: _grab_article_images(direct[:6], tries=tries,
+                                         report=report),
             40.0, "article image fetch")
         if found:
             return found[:6]
@@ -2041,8 +2065,9 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     existing = list(story["meta"].get("image_urls") or [])
     existing_hashes = list(story["meta"].get("image_hashes") or [])
     existing_phashes = list(story["meta"].get("image_phashes") or [])
+    img_report: Dict[str, Any] = {}
     try:
-        found = _fetch_images_for_story(story, topic)
+        found = _fetch_images_for_story(story, topic, report=img_report)
     except TimeoutError as e:
         # The fetch names the step that timed out; existing media survives.
         # Hash backfill needs the network too, so it would fail as well —
@@ -2067,6 +2092,13 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     if stats["removed_existing_dupes"]:
         extras.append(f"Removed {stats['removed_existing_dupes']} duplicate "
                       f"image(s) already stored.")
+    if img_report.get("unscoped_pages"):
+        # Issue #86: say it honestly — these pages were scanned
+        # page-wide because no story body could be identified.
+        _n = img_report["unscoped_pages"]
+        extras.append(f"Note: {_n} article page(s) had no identifiable story "
+                      f"body — images were scanned page-wide and may "
+                      f"include site images.")
     extra = (" " + " ".join(extras)) if extras else ""
     if added or urls_changed or hashes_changed:
         update_story_fields(story_id, image_urls=merged_urls,
