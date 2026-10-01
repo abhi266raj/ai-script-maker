@@ -2300,6 +2300,48 @@ def _whatsapp_video_path(story_id: str, meta: dict) -> Optional[str]:
     return str(vpath.resolve())
 
 
+def _telegram_share_url(text: str) -> str:
+    """tg:// deep link carrying the story's share content into the installed
+    Telegram Mac app — no browser/web flow (#159).
+
+    Uses Telegram's documented share action tg://msg_url?url=<url>&text=<text>
+    (core.telegram.org/api/links, "Share links"): macOS routes the tg://
+    scheme to the installed Telegram Mac app, which opens a chat picker and
+    prefills the composer with the URL followed by the text. The story's
+    first news link rides in `url` (so Telegram renders a rich link
+    preview); the remaining links plus hashtags ride in `text`. With no news
+    links (hashtags only), everything rides in `text` and `url` is omitted.
+
+    Note: st.link_button passes the URL to the frontend unmodified (no scheme
+    validation on the Python side; it renders a plain anchor), so non-http(s)
+    schemes like tg:// work the same way mailto: links already do.
+
+    VIDEO LIMITATION (#159): the tg:// scheme has NO parameter for file
+    attachments — a deep-link URL is a text string and cannot carry binary
+    data, and no documented tg:// action accepts a local file path. A
+    story's uploaded video (meta["video_file"]) therefore cannot be attached
+    through this link; the user attaches it manually inside Telegram after
+    the app opens. This is a Telegram platform limitation, stated here
+    explicitly rather than hidden behind a fallback that pretends otherwise.
+    """
+    import urllib.parse as _up
+    if not text or not text.strip():
+        raise ValueError("telegram share needs non-empty share text")
+    head, _, tail = text.partition("\n\n")
+    first_line, _, head_rest = head.partition("\n")
+    first_line = first_line.strip()
+    params = []
+    if first_line.startswith(("http://", "https://")):
+        params.append("url=" + _up.quote(first_line, safe=""))
+        rest = "\n\n".join(part for part in (head_rest, tail) if part)
+    else:
+        # Hashtags only — no news link to promote into `url`.
+        rest = text
+    if rest:
+        params.append("text=" + _up.quote(rest, safe=""))
+    return "tg://msg_url?" + "&".join(params)
+
+
 def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
     """Share dropdown (native popover, macOS HIG): sub-actions for the
     story's news-links + hashtags share text.
@@ -2321,6 +2363,11 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
     appended to the WhatsApp share text (the URL scheme cannot carry media,
     so the user attaches it manually in WhatsApp). A missing video file
     fails loudly instead of sending without it.
+
+    "Share via Telegram" deep-links into the installed Telegram Mac app
+    (#159). NOTE (#159): Telegram's tg:// share scheme cannot carry a local
+    video file — the story's uploaded video is not attached by this link
+    (see _telegram_share_url).
     """
     with st.popover("", icon=_TB_ICON_SHARE, key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
@@ -2371,6 +2418,12 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                 # via the browser fallback when clicked.
                 st.caption("WhatsApp Mac app not installed — "
                            "sharing will open WhatsApp in your browser.")
+            st.link_button(
+                "Share via Telegram",
+                _telegram_share_url(share_text),
+                help="Open the installed Telegram Mac app with this text prefilled",
+                use_container_width=True,
+            )
         else:
             st.caption("No news links or hashtags to share yet.")
 

@@ -1400,6 +1400,48 @@ def test_whatsapp_share_url_carries_exact_text():
     assert up.unquote(url.split("?text=", 1)[1]) == text
 
 
+def test_telegram_share_url_splits_first_link_into_url_param():
+    lui, _fake = _ui_with_fake_st()
+    import urllib.parse as up
+    text = ("https://example.com/a\nhttps://example.com/b\n\n"
+            "#DogShowdown #Funny")
+    url = lui._telegram_share_url(text)
+    # #159: deep-link into the installed Telegram Mac app, not the browser.
+    assert url.startswith("tg://msg_url?")
+    assert "t.me" not in url
+    params = up.parse_qs(up.urlparse(url).query)
+    assert params["url"] == ["https://example.com/a"]
+    assert params["text"] == ["https://example.com/b\n\n#DogShowdown #Funny"]
+    # The Telegram composer reassembles url + text into the exact share text.
+    assert params["url"][0] + "\n" + params["text"][0] == text
+
+
+def test_telegram_share_url_tags_only_omits_url_param():
+    lui, _fake = _ui_with_fake_st()
+    import urllib.parse as up
+    url = lui._telegram_share_url("#Only #Tags")
+    params = up.parse_qs(up.urlparse(url).query)
+    assert "url" not in params
+    assert params["text"] == ["#Only #Tags"]
+
+
+def test_telegram_share_url_links_only_needs_no_text_param():
+    lui, _fake = _ui_with_fake_st()
+    import urllib.parse as up
+    url = lui._telegram_share_url("https://example.com/only")
+    params = up.parse_qs(up.urlparse(url).query)
+    assert params["url"] == ["https://example.com/only"]
+    assert "text" not in params
+
+
+def test_telegram_share_url_empty_text_raises_loudly():
+    lui, _fake = _ui_with_fake_st()
+    with pytest.raises(ValueError):
+        lui._telegram_share_url("")
+    with pytest.raises(ValueError):
+        lui._telegram_share_url("   ")
+
+
 def test_confirm_popover_fail_label_is_used():
     lui, fake = _ui_with_fake_st(clicks=("rp-yes",))
 
@@ -1419,7 +1461,7 @@ def test_confirm_popover_fail_label_is_used():
 # share / copy dropdowns (fake streamlit) — #27/#28/#29/#30
 # ---------------------------------------------------------------------------
 
-def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
+def test_share_popover_renders_copy_whatsapp_and_telegram(monkeypatch):
     lui, fake = _ui_with_fake_st()
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
@@ -1439,11 +1481,21 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     # whatsapp:// deep link to macOS via `open` on the server. No anchor in
     # the markup at all (the old plain-anchor approach depended on the
     # browser routing the custom scheme, which proved unreliable).
-    assert fake.link_buttons == []
     assert not any("whatsapp://" in m for m in fake.markup)
     assert not any("lib-wa-direct" in m for m in fake.markup)
     wa_buttons = [b for b in fake.buttons if b[0] == "Send via WhatsApp"]
     assert wa_buttons == [("Send via WhatsApp", "lib_wa_sid1")]
+    # …and "Share via Telegram" deep-links into the installed Telegram
+    # Mac app (#159): first news link in `url`, the rest in `text`.
+    import urllib.parse as up
+    assert fake.link_buttons == [("Share via Telegram",
+                                  lui._telegram_share_url(share_text))]
+    tg_url = fake.link_buttons[0][1]
+    assert tg_url.startswith("tg://msg_url?")
+    assert "t.me" not in tg_url
+    tg_params = up.parse_qs(up.urlparse(tg_url).query)
+    assert tg_params["url"] == ["https://example.com/a"]
+    assert tg_params["text"] == ["#DogShowdown #Funny"]
     # No share-text preview block anymore (#27).
     assert fake.codes == []
 
@@ -1572,7 +1624,10 @@ def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
     lui._render_share_popover("sid1", share_text, {})
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
-    assert fake.link_buttons == []
+    # #159: the Telegram deep link still renders — it doesn't depend on
+    # WhatsApp being installed.
+    assert fake.link_buttons == [("Share via Telegram",
+                                  lui._telegram_share_url(share_text))]
     assert not any("whatsapp://" in m for m in fake.markup)
     assert any("browser" in c for c in fake.captions)
 
