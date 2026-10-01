@@ -1342,6 +1342,80 @@ def _load_more_weight(label: str) -> int:
     return max(len(str(label)), 4) + 2
 
 
+def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
+    """#156: the News Links section as ONE reusable component.
+
+    Renders the full row — "News Links" title + link chips + "Load more
+    news" — and OWNS its alignment: the hscroll marker, the column
+    layout (title weight + per-chip weights + load-more weight), the
+    title cell, every chip cell (link button or loud error + × remove
+    overlay), and the load-more cell all live inside this function.
+    Alignment can no longer drift one call site at a time — any fix
+    lands here and applies everywhere.
+
+    Pure refactor of the inline block in ``_render_story_detail``
+    (#156): no behavior change. ``links`` are the story's ``news_links``
+    dicts (non-empty); callers render the "No news links yet." caption
+    themselves when ``links`` is empty.
+    """
+    st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
+                unsafe_allow_html=True)
+    # #107: "News Links" title and link chips share ONE row — same
+    # pattern as Hashtags.
+    _labels = [_news_chip_label((_lk.get("title") or "News link"),
+                                (_lk.get("source") or ""))
+               for _lk in links]
+    _lcols = st.columns([_section_title_weight("News Links")]
+                        + _chip_col_weights(_labels)
+                        + [_load_more_weight("Load more news")])
+    with _lcols[0]:
+        st.markdown('<div class="lib-section lib-section-inline">News Links</div>',
+                    unsafe_allow_html=True)
+    for _i, (_lc, _lk, _label) in enumerate(zip(_lcols[1:-1], links, _labels)):
+        _ltitle = _lk.get("title", "News link") or "News link"
+        _lurl = (_lk.get("url") or "").strip()
+        with _lc:
+            # #134: news links are NATIVE st.link_button, not raw-HTML
+            # <a> inside st.markdown — Streamlit's markdown pipeline
+            # neuters the anchor (clicks do nothing). st.link_button
+            # forces a new browser tab (the same guarantee the #95
+            # WhatsApp comment relies on) and is styled as the chip
+            # pill by the marker-scoped CSS. Malformed URLs fail
+            # loudly instead of rendering a dead chip; the × still
+            # removes the bad link.
+            if not _is_openable_article_url(_lurl):
+                st.error(
+                    f"News link \u201c{_ltitle}\u201d has an invalid URL "
+                    f"and was not rendered as a link.")
+            else:
+                st.link_button(
+                    _label,
+                    _lurl,
+                    help=_ltitle,
+                    key=f"lib_newslink_{story_id}_{_i}",
+                )
+            if _overlay_button("lib-x-r", f"lib_xlink_{story_id}_{_i}", "×",
+                               help="Remove this news link"):
+                try:
+                    lib.remove_news_link(story_id, _lurl)
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    st.rerun()
+    # #113: inline Load more — last column of the scroll row. The button
+    # owns its loading state (spinner + disabled while more_news runs,
+    # #91/#53).
+    with _lcols[-1]:
+        st.markdown('<div data-marker="lib-load-more" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        _render_load_more_button(
+            story_id=story_id, kind="more_news",
+            label="Load more news",
+            button_key=f"lib_morenews_{story_id}",
+            help_text="Fetch up to 5 more news links",
+            busy_kinds=busy_kinds)
+
+
 def _fm_warmup_button_props(state: dict) -> tuple:
     """Pure helper: (label, disabled) for the warm-up button given the
     mailbox state. Kept pure so the HIG loading/disabled contract is
@@ -2577,64 +2651,11 @@ def _render_story_detail(story_id: str) -> None:
     # (title + source, opens the article) with a × that removes it.
     # Update Hashtags/Images never touch these — individual removal is
     # manual only (×). Reset re-runs the link verifier fresh for the topic.
+    # #156: the whole row is the reusable _render_news_links_row component —
+    # it owns its own alignment, so layout fixes land there, not here.
     links = [lk for lk in (meta.get("news_links") or []) if isinstance(lk, dict)]
     if links:
-        st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
-                    unsafe_allow_html=True)
-        # #107: "News Links" title and link chips share ONE row — same
-        # pattern as Hashtags above.
-        _labels = [_news_chip_label((_lk.get("title") or "News link"),
-                                    (_lk.get("source") or ""))
-                   for _lk in links]
-        _lcols = st.columns([_section_title_weight("News Links")]
-                            + _chip_col_weights(_labels)
-                            + [_load_more_weight("Load more news")])
-        with _lcols[0]:
-            st.markdown('<div class="lib-section lib-section-inline">News Links</div>',
-                        unsafe_allow_html=True)
-        for _i, (_lc, _lk, _label) in enumerate(zip(_lcols[1:-1], links, _labels)):
-            _ltitle = _lk.get("title", "News link") or "News link"
-            _lurl = (_lk.get("url") or "").strip()
-            with _lc:
-                # #134: news links are NATIVE st.link_button, not raw-HTML
-                # <a> inside st.markdown — Streamlit's markdown pipeline
-                # neuters the anchor (clicks do nothing). st.link_button
-                # forces a new browser tab (the same guarantee the #95
-                # WhatsApp comment relies on) and is styled as the chip
-                # pill by the marker-scoped CSS. Malformed URLs fail
-                # loudly instead of rendering a dead chip; the × still
-                # removes the bad link.
-                if not _is_openable_article_url(_lurl):
-                    st.error(
-                        f"News link \u201c{_ltitle}\u201d has an invalid URL "
-                        f"and was not rendered as a link.")
-                else:
-                    st.link_button(
-                        _label,
-                        _lurl,
-                        help=_ltitle,
-                        key=f"lib_newslink_{story_id}_{_i}",
-                    )
-                if _overlay_button("lib-x-r", f"lib_xlink_{story_id}_{_i}", "×",
-                                   help="Remove this news link"):
-                    try:
-                        lib.remove_news_link(story_id, _lurl)
-                    except ValueError as e:
-                        st.error(str(e))
-                    else:
-                        st.rerun()
-        # #113: inline Load more — last column of the scroll row (see
-        # above). The button owns its loading state (spinner + disabled
-        # while more_news runs, #91/#53).
-        with _lcols[-1]:
-            st.markdown('<div data-marker="lib-load-more" style="display:none"></div>',
-                        unsafe_allow_html=True)
-            _render_load_more_button(
-                story_id=story_id, kind="more_news",
-                label="Load more news",
-                button_key=f"lib_morenews_{story_id}",
-                help_text="Fetch up to 5 more news links",
-                busy_kinds=_busy_kinds)
+        _render_news_links_row(story_id, links, _busy_kinds)
     elif not (_busy_kinds & {"news", "more_news", "reset", "enrich"}):
         # #54/#80: only kinds that re-fetch links suppress the hint.
         st.caption("No news links yet.")
