@@ -1448,17 +1448,21 @@ def test_overlay_button_marker_immediately_precedes_button(monkeypatch):
 
 def test_overlay_css_pins_button_over_card_not_beside_it(monkeypatch):
     """The × overlay CSS must pin the button's element container absolute
-    over the card with a z-index — and must use descendant (not child)
-    combinators past the column, because Streamlit nests element
-    containers inside the column's vertical block. The old child-selector
-    form never matched, leaving the × as a normal button beside the card."""
+    over the card with a z-index. The selector must follow Streamlit's real
+    DOM: stLayoutWrapper > stHorizontalBlock > stColumn (Streamlit names
+    the testid "stColumn", not "column"), and the button container is the
+    adjacent sibling of the marker's element container. The old
+    child-selector forms never matched, leaving the × as a normal button
+    beside the card — proven broken by real-browser screenshots."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_library_css(lui, monkeypatch)
     # Braces balanced — a truncated <style> block would silently drop rules.
     assert css.count("{") == css.count("}")
-    assert '> div[data-testid="column"]' in css  # positioning context still set
-    broken = ('> div[data-testid="column"]\n        > div[data-testid="stElementContainer"]')
-    assert broken not in css
+    assert 'div[data-testid="stColumn"]' in css  # positioning context set
+    assert 'div[data-testid="column"]' not in css  # Streamlit never uses this
+    present = ('div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])\n'
+               '        + div[data-testid="stElementContainer"]')
+    assert present in css  # adjacent-sibling overlay, per real DOM
     for needle in ("position: absolute", "z-index: 10", "top: 4px",
                    "backdrop-filter: blur(6px)"):
         assert needle in css, needle
@@ -1470,7 +1474,7 @@ def test_image_cards_share_one_baseline(monkeypatch):
     horizontal baseline instead of ragged aspect-ratio heights."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_library_css(lui, monkeypatch)
-    assert 'div[data-testid="column"]:has([data-testid="stImage"])' in css
+    assert 'div[data-testid="stColumn"]:has([data-testid="stImage"])' in css
     for needle in ("flex: 0 0 180px", "height: 120px",
                    "object-fit: cover", "border-radius: 10px"):
         assert needle in css, needle
@@ -1482,7 +1486,10 @@ def test_actions_row_buttons_share_38px_height(monkeypatch):
     iframe height must equal the 38px action system."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_library_css(lui, monkeypatch)
-    assert ('[data-marker="lib-actions"])\n        + div[data-testid="stElementContainer"]'
-            ' [data-testid="stLinkButton"]') in css
+    # Per Streamlit's real DOM, the sibling after the marker's element
+    # container is stLayoutWrapper (not stElementContainer), and the
+    # WhatsApp link renders its <a> inside the link-button container.
+    assert ('[data-marker="lib-actions"])\n'
+            '        + div[data-testid="stLayoutWrapper"] [data-testid="stLinkButton"] a') in css
     assert "min-height: var(--lib-act-h)" in css
     assert lui._LIB_ACTION_BTN_H_PX == 38
