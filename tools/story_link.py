@@ -6,7 +6,7 @@ surfaces them instead of silently showing an empty gallery.
 """
 
 import re
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -29,6 +29,37 @@ _JUNK_RE = re.compile(
     r"tracking|beacon|1x1|transparent)",
     re.IGNORECASE,
 )
+
+
+# Alt text that marks an image as an unwanted asset (logos, icons, author
+# avatars, ads, social/share buttons, decorative spacers). This is the
+# PRIMARY relevance signal for extracted images: present alt text drives
+# the keep/remove decision. Missing/empty alt text is NOT a pass by
+# itself — the URL junk rules and content-type preflights still apply.
+_UNWANTED_ALT_RE = re.compile(
+    r"(\blogos?\b|\bfavicon\b|\bavatars?\b|\bicons?\b|"
+    r"\bad\b|advertis\w*|sponsor\w*|"
+    r"\bplaceholder\b|\bspacer\b|\bpixels?\b|"
+    r"profile\s+(photo|picture|image)s?|"
+    r"author\s+(photo|picture|image|avatar)s?|"
+    r"\bbyline\b|share\s+(on|this|button)|follow\s+(us|on)|"
+    r"social\s+(media\s+)?(icons?|buttons?|share)|"
+    r"decorat\w*|banner\s+ad\b)",
+    re.IGNORECASE,
+)
+
+
+def image_alt_is_unwanted(alt: Optional[str]) -> bool:
+    """True when alt text shows the image is an unwanted asset.
+
+    Logos, icons, avatars, ads, social/share buttons and decorative
+    spacers are excluded. Empty or missing alt text returns False —
+    absence of alt text is never treated as a removal signal on its
+    own; the URL junk rules and content-type checks still apply.
+    """
+    if not alt or not alt.strip():
+        return False
+    return bool(_UNWANTED_ALT_RE.search(alt))
 
 
 def _norm(url: str) -> str:
@@ -83,19 +114,22 @@ def fetch_story_page(url: str, timeout: int = _TIMEOUT) -> Dict:
             "html": html}
 
 
-def extract_story_images(html: str, base_url: str,
-                         limit: int = 4) -> List[str]:
-    """Extract up to ``limit`` story images from an article page.
+def extract_story_images_with_alt(html: str, base_url: str,
+                                   limit: int = 4) -> List[Tuple[str, Optional[str]]]:
+    """Extract up to ``limit`` story images as ``(url, alt_text)`` pairs.
 
     Priority: og:image → twitter:image → JSON-LD image → in-article
     <img>/<figure> photos. Logos, sprites, SVGs and tracking pixels are
-    skipped; URLs are absolutized and deduplicated.
+    skipped, and so is any image whose alt text marks it as an unwanted
+    asset (see :func:`image_alt_is_unwanted`) — present alt text is the
+    primary keep/remove signal. Meta/JSON-LD images carry no alt text
+    (``None``). URLs are absolutized and deduplicated.
     """
     soup = BeautifulSoup(html, "html.parser")
-    found: List[str] = []
+    found: List[Tuple[str, Optional[str]]] = []
     seen = set()
 
-    def _add(raw: str) -> None:
+    def _add(raw: str, alt: Optional[str] = None) -> None:
         u = _norm(urljoin(base_url, raw or ""))
         if not u.lower().startswith(("http://", "https://")):
             return
@@ -103,13 +137,15 @@ def extract_story_images(html: str, base_url: str,
             return
         if _JUNK_RE.search(u):
             return
+        if image_alt_is_unwanted(alt):
+            return
         key = u.lower()
         if key in seen:
             return
         seen.add(key)
-        found.append(u)
+        found.append((u, (alt or "").strip() or None))
 
-    # 1. Open Graph / Twitter cards
+    # 1. Open Graph / Twitter cards (no alt text available)
     for prop in ("og:image", "og:image:secure_url",
                  "twitter:image", "twitter:image:src"):
         tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
@@ -151,21 +187,32 @@ def extract_story_images(html: str, base_url: str,
         containers = [soup]
     for container in containers:
         for img in container.find_all("img"):
+            alt = img.get("alt")
             src = (img.get("src") or img.get("data-src")
                    or img.get("data-lazy-src") or "")
             if src:
-                _add(src)
+                _add(src, alt)
             srcset = img.get("srcset") or img.get("data-srcset") or ""
             if srcset:
                 # Take the largest candidate (last in srcset order).
                 parts = [p.strip().split(" ")[0] for p in srcset.split(",")]
                 if parts:
-                    _add(parts[-1])
+                    _add(parts[-1], alt)
             if len(found) >= limit:
                 break
         if len(found) >= limit:
             break
     return found[:limit]
+
+
+def extract_story_images(html: str, base_url: str,
+                         limit: int = 4) -> List[str]:
+    """Extract up to ``limit`` story images from an article page.
+
+    URL-only view of :func:`extract_story_images_with_alt` — the same
+    priority order and the same logo/junk/alt-text filtering apply.
+    """
+    return [u for u, _ in extract_story_images_with_alt(html, base_url, limit)]
 
 
 def _tokens(text: str) -> set:

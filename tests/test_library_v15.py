@@ -390,12 +390,18 @@ def test_grab_article_images_extracts_body_img_tags(libdir, monkeypatch):
     monkeypatch.setattr("httpx.get", _fake_httpx_get(_ARTICLE_HTML))
     found = lib._grab_article_images(["https://publisher.example/story"],
                                      tries=1)
-    # og:image first, then in-article photos; relative + lazy-load absolutized.
-    assert found[0] == "https://publisher.example/hero.jpg"
-    assert "https://publisher.example/photos/dog1.jpg" in found
-    assert "https://cdn.example/lazy/dog2.jpg" in found
+    # (url, alt) pairs: og:image first, then in-article photos;
+    # relative + lazy-load absolutized.
+    urls = [u for u, _ in found]
+    alts = {u: a for u, a in found}
+    assert urls[0] == "https://publisher.example/hero.jpg"
+    assert "https://publisher.example/photos/dog1.jpg" in urls
+    assert "https://cdn.example/lazy/dog2.jpg" in urls
+    # Alt text is captured for in-article photos; hero images have none.
+    assert alts["https://publisher.example/photos/dog1.jpg"] == "dogs"
+    assert alts["https://publisher.example/hero.jpg"] is None
     # Logos and tracking pixels are filtered out.
-    assert not any("logo" in u or "pixel" in u for u in found)
+    assert not any("logo" in u or "pixel" in u for u in urls)
 
 
 def test_grab_article_images_skips_non_html(libdir, monkeypatch):
@@ -423,12 +429,19 @@ def test_refresh_images_merges_not_replaces(libdir, monkeypatch):
         lib, "_fetch_images_for_story",
         lambda story, topic, **k: ["https://img.example/old.jpg",
                                   "https://img.example/new.jpg"])
+    # Content-hash dedupe fetches image bytes: distinct bytes per URL.
+    monkeypatch.setattr(
+        lib, "_fetch_image_bytes",
+        lambda url, **k: b"bytes-for-" + url.encode())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
     assert changed is True
     meta = lib.load_story(sid)["meta"]
     # Existing URLs keep their order; new ones are appended, deduplicated.
     assert meta["image_urls"] == ["https://img.example/old.jpg",
                                  "https://img.example/new.jpg"]
+    # Content hashes are persisted alongside, aligned by position.
+    assert len(meta["image_hashes"]) == 2
+    assert meta["image_hashes"][0] != meta["image_hashes"][1]
     assert "Added 1 new image(s)" in note and "kept 1 existing" in note
 
 
@@ -1191,6 +1204,9 @@ def _reset_mocks(monkeypatch, tags, images, articles):
                         lambda story, topic, **k: images)
     monkeypatch.setattr(lib, "_fetch_news_articles",
                         lambda topic, limit=6: articles)
+    # Reset now content-hashes fresh images: distinct bytes per URL.
+    monkeypatch.setattr(lib, "_fetch_image_bytes",
+                        lambda url, **k: b"bytes-for-" + str(url).encode())
 
 
 def test_do_reset_clears_and_refetches_all_rows(libdir, monkeypatch):

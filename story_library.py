@@ -18,6 +18,7 @@ threads AFTER the story is saved, so saving never waits on the network.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import re
 import threading
@@ -264,8 +265,13 @@ def save_story(
     news_links: Optional[List[Dict[str, str]]] = None,
     image_urls: Optional[List[str]] = None,
 ) -> str:
-    """Save a story immediately (no network). Returns the story id."""
+    """Save a story immediately (no network). Returns the story id.
+
+    Fetched image URLs are deduplicated by normalized URL before
+    storing — the same image is never stored twice (issue #21).
+    """
     story_id = new_story_id()
+    image_urls, _ = _dedupe_stored_image_entries(image_urls, [])
     meta = {
         "id": story_id,
         "title": title or "Untitled Story",
@@ -273,7 +279,8 @@ def save_story(
         "tone": tone or "",
         "hashtags": [h for h in (hashtags or []) if h],
         "news_links": [dict(l) for l in (news_links or [])],
-        "image_urls": [u for u in (image_urls or []) if u],
+        "image_urls": image_urls,
+        "image_hashes": [],
         "uploaded_images": [],
         "video_file": "",
         "enrichment_status": "pending",
@@ -286,12 +293,32 @@ def save_story(
 
 
 def load_story(story_id: str) -> Optional[Dict[str, Any]]:
-    """Load a story: {'meta': {...}, 'body': '...', 'dialogue': '...', 'script': '...' }."""
+    """Load a story: {'meta': {...}, 'body': '...', 'dialogue': '...', 'script': '...' }.
+
+    Migration (issue #21): stories saved before dedupe may carry the
+    same image twice (or trivial URL variants). The stored list is
+    collapsed by normalized URL on load so the detail view shows each
+    image once, and the cleanup is persisted back so it sticks. The
+    returned view is always deduped, even if the write-back fails.
+    """
     path = story_path(story_id)
     if not path.exists():
         return None
     meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
     dialogue, script = _split_sections(body)
+    stored_urls = [u for u in (meta.get("image_urls") or []) if u]
+    stored_hashes = meta.get("image_hashes")
+    had_hashes = "image_hashes" in meta
+    urls, hashes = _dedupe_stored_image_entries(stored_urls, stored_hashes)
+    meta["image_urls"] = urls
+    meta["image_hashes"] = hashes
+    if urls != stored_urls or not had_hashes or stored_hashes != hashes:
+        # Best-effort write-back: the in-memory view above is already
+        # clean, so a failed write is simply retried on the next load.
+        try:
+            update_story_fields(story_id, image_urls=urls, image_hashes=hashes)
+        except Exception:
+            pass
     return {"meta": meta, "body": body, "dialogue": dialogue, "script": script}
 
 
@@ -433,12 +460,19 @@ def media_path(story_id: str, filename: str) -> Optional[Path]:
 
 
 def remove_fetched_image(story_id: str, url: str) -> bool:
-    """Remove one auto-fetched image URL (the overwrite control)."""
+    """Remove one auto-fetched image URL (the overwrite control).
+
+    Content hashes stay aligned with the surviving URLs.
+    """
     story = load_story(story_id)
     if not story:
         return False
-    urls = [u for u in (story["meta"].get("image_urls") or []) if u != url]
-    update_story_fields(story_id, image_urls=urls)
+    urls = list(story["meta"].get("image_urls") or [])
+    hashes = _align_hashes(urls, story["meta"].get("image_hashes"))
+    kept = [(u, h) for u, h in zip(urls, hashes) if u != url]
+    update_story_fields(story_id,
+                        image_urls=[u for u, _ in kept],
+                        image_hashes=[h for _, h in kept])
     return True
 
 
@@ -446,8 +480,11 @@ def update_fetched_image_url(story_id: str, index: int, new_url: str) -> bool:
     """Replace one auto-fetched image URL by list position (the edit control).
 
     Fails loudly with ValueError when the story is unknown, the index is
-    out of range, or the new value is not a non-empty http(s) URL — the
-    caller surfaces the error instead of silently keeping a bad value.
+    out of range, the new value is not a non-empty http(s) URL, or the
+    new address is already attached to the story (normalized-URL dedupe,
+    issue #21) — the caller surfaces the error instead of silently
+    keeping a bad or duplicate value. The replaced entry's content hash
+    is invalidated so the next refresh re-hashes the new bytes.
     """
     story = load_story(story_id)
     if not story:
@@ -458,8 +495,14 @@ def update_fetched_image_url(story_id: str, index: int, new_url: str) -> bool:
     u = (new_url or "").strip()
     if not u.lower().startswith(("http://", "https://")):
         raise ValueError("The new image address must be a non-empty http(s) URL.")
+    new_key = normalize_image_url(u)
+    for i, old in enumerate(urls):
+        if i != index and normalize_image_url(old) == new_key:
+            raise ValueError("That image is already attached to this story.")
     urls[index] = u
-    update_story_fields(story_id, image_urls=urls)
+    hashes = _align_hashes(urls, story["meta"].get("image_hashes"))
+    hashes[index] = ""
+    update_story_fields(story_id, image_urls=urls, image_hashes=hashes)
     return True
 
 
@@ -856,6 +899,222 @@ def _url_is_image(url: str) -> bool:
         return False
 
 
+class ImageDedupeError(RuntimeError):
+    """An image dedupe check could not be completed honestly.
+
+    Fetching image bytes for content-hash dedupe must never be skipped
+    silently: any failure surfaces here so the refresh fails loudly
+    instead of storing a possibly-duplicate image unchecked.
+    """
+
+
+def normalize_image_url(url: str) -> str:
+    """Canonical dedupe key for an image URL.
+
+    Collapses trivial variants — host case, default ports, trailing
+    slashes, duplicate slashes, query-parameter order, fragments and
+    empty queries — so the same address stored twice is recognised as
+    one image. Deliberately conservative: the scheme (http vs https) and
+    the host (www vs bare) are preserved — true duplicates across those
+    are caught by content hashing instead of key collapsing.
+    """
+    u = (url or "").strip()
+    try:
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+        parts = urlsplit(u)
+        scheme = parts.scheme.lower()
+        host = (parts.hostname or "").lower()
+        if not host:
+            return u
+        try:
+            port = parts.port
+        except ValueError:
+            return u
+        if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+            port = None
+        netloc = host if port is None else f"{host}:{port}"
+        path = parts.path or "/"
+        while "//" in path:
+            path = path.replace("//", "/")
+        if len(path) > 1:
+            path = path.rstrip("/") or "/"
+        query = ""
+        if parts.query.strip("?/"):
+            q = parse_qsl(parts.query, keep_blank_values=True)
+            query = urlencode(sorted(q))
+        return urlunsplit((scheme, netloc, path, query, ""))
+    except Exception:
+        return u
+
+
+def _fetch_image_bytes(url: str, timeout: float = 10.0) -> bytes:
+    """Download raw image bytes for content-hash dedupe.
+
+    Never returns a guess: any network failure, non-200 status or empty
+    body raises :class:`ImageDedupeError` naming the URL — the caller
+    fails loudly instead of silently skipping the dedupe check.
+    """
+    try:
+        import httpx
+        resp = httpx.get(url, timeout=timeout, follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0"})
+    except Exception as e:
+        raise ImageDedupeError(
+            f"Image dedupe failed: could not fetch {url} "
+            f"({type(e).__name__}: {e})") from e
+    if resp.status_code != 200:
+        raise ImageDedupeError(
+            f"Image dedupe failed: {url} returned HTTP {resp.status_code}")
+    data = resp.content
+    if not data:
+        raise ImageDedupeError(
+            f"Image dedupe failed: {url} returned an empty body")
+    return data
+
+
+def _image_content_hash(url: str) -> str:
+    """SHA-256 hex of the image bytes at ``url``.
+
+    Raises :class:`ImageDedupeError` when the bytes cannot be fetched —
+    never a placeholder hash.
+    """
+    return hashlib.sha256(_fetch_image_bytes(url)).hexdigest()
+
+
+def _align_hashes(urls: List[str], hashes: Optional[List[str]]) -> List[str]:
+    """Align a stored ``image_hashes`` list with ``image_urls``.
+
+    Unknown hashes become ``""``; the result always matches ``urls`` in
+    length and order. Pure — no network.
+    """
+    hs = [(h or "") for h in (hashes or [])]
+    if len(hs) < len(urls):
+        hs += [""] * (len(urls) - len(hs))
+    return hs[:len(urls)]
+
+
+def _dedupe_stored_image_entries(
+        urls: Optional[List[str]],
+        hashes: Optional[List[str]]) -> Tuple[List[str], List[str]]:
+    """Order-preserving normalized-URL dedupe of stored image entries.
+
+    Returns ``(urls, hashes)`` with duplicates dropped (first occurrence
+    wins) and hashes realigned. Pure — no network; used by the
+    save/load migration paths.
+    """
+    clean = [u for u in (urls or []) if u]
+    hs = _align_hashes(clean, hashes)
+    seen: set = set()
+    out_urls: List[str] = []
+    out_hashes: List[str] = []
+    for u, h in zip(clean, hs):
+        key = normalize_image_url(u)
+        if key in seen:
+            continue
+        seen.add(key)
+        out_urls.append(u)
+        out_hashes.append(h)
+    return out_urls, out_hashes
+
+
+def _merge_story_images(
+    existing_urls: Optional[List[str]],
+    existing_hashes: Optional[List[str]],
+    candidates,
+) -> Tuple[List[str], List[str], Dict[str, int]]:
+    """Merge image candidates into a story's image list with full dedupe.
+
+    ``candidates`` is an iterable of ``(url, alt_text)`` pairs; a bare
+    URL string is also accepted and treated as alt-less (backward
+    compatibility for callers that do not carry alt text).
+
+    Steps, in order:
+    1. Alt-text relevance filter — the primary signal. Images whose alt
+       text marks them as logos/icons/avatars/ads/share-buttons/decorative
+       are excluded. Missing alt text is NOT a pass: the URL junk rules
+       and content-type preflights applied at extraction still stand.
+    2. Normalized-URL dedupe against existing images and within the batch.
+    3. Content-hash dedupe: every surviving candidate's bytes are fetched
+       and SHA-256 hashed; a candidate whose bytes match an existing
+       image (or an earlier candidate) is dropped. Missing hashes for
+       existing images are backfilled first so candidates are compared
+       against real content. ANY fetch failure raises
+       :class:`ImageDedupeError` — the check is never silently skipped.
+
+    Returns ``(merged_urls, merged_hashes, stats)``; ``stats`` counts
+    ``added`` / ``dup_url`` / ``dup_content`` / ``rejected_alt`` /
+    ``removed_existing_dupes``. Existing order is preserved; genuinely
+    new images are appended.
+    """
+    from tools.story_link import image_alt_is_unwanted
+
+    existing_urls = [u for u in (existing_urls or []) if u]
+    hashes = _align_hashes(existing_urls, existing_hashes)
+    stats = {"added": 0, "dup_url": 0, "dup_content": 0,
+             "rejected_alt": 0, "removed_existing_dupes": 0}
+
+    # 1. Alt-text filter (primary signal).
+    screened: List[str] = []
+    for item in candidates or []:
+        if isinstance(item, (tuple, list)):
+            url = item[0] if len(item) > 0 else ""
+            alt = item[1] if len(item) > 1 else None
+        else:
+            url, alt = item, None
+        url = (url or "").strip()
+        if not url:
+            continue
+        if image_alt_is_unwanted(alt):
+            stats["rejected_alt"] += 1
+            continue
+        screened.append(url)
+
+    # 2. Normalized-URL dedupe against existing images and within the batch.
+    seen_urls = {normalize_image_url(u) for u in existing_urls}
+    fresh: List[str] = []
+    for url in screened:
+        key = normalize_image_url(url)
+        if key in seen_urls:
+            stats["dup_url"] += 1
+            continue
+        seen_urls.add(key)
+        fresh.append(url)
+
+    merged_urls = list(existing_urls)
+    merged_hashes = list(hashes)
+    if not fresh:
+        return merged_urls, merged_hashes, stats
+
+    # 3. Content-hash dedupe. Backfill missing existing hashes first so
+    #    candidates are compared against real content, never skipped.
+    for i, url in enumerate(merged_urls):
+        if not merged_hashes[i]:
+            merged_hashes[i] = _image_content_hash(url)
+    # Collapse existing entries that turn out to be identical bytes.
+    deduped_urls: List[str] = []
+    deduped_hashes: List[str] = []
+    seen_hashes: set = set()
+    for url, h in zip(merged_urls, merged_hashes):
+        if h in seen_hashes:
+            stats["removed_existing_dupes"] += 1
+            continue
+        seen_hashes.add(h)
+        deduped_urls.append(url)
+        deduped_hashes.append(h)
+    merged_urls, merged_hashes = deduped_urls, deduped_hashes
+
+    for url in fresh:
+        h = _image_content_hash(url)
+        if h in seen_hashes:
+            stats["dup_content"] += 1
+            continue
+        seen_hashes.add(h)
+        merged_urls.append(url)
+        merged_hashes.append(h)
+        stats["added"] += 1
+    return merged_urls, merged_hashes, stats
+
+
 def _search_web_images(topic: str, limit: int = 4) -> List[str]:
     """Fallback: web image search via the bundled image-search CLI.
 
@@ -907,19 +1166,22 @@ def _grab_og_images(urls: List[str], tries: int = 3) -> List[str]:
 
 
 def _grab_article_images(urls: List[str], tries: int = 3,
-                         per_page: int = 3) -> List[str]:
+                         per_page: int = 3) -> List[Tuple[str, Optional[str]]]:
     """Parallel article-page image extraction from a list of page URLs.
 
     Each article's HTML is fetched (httpx, timeout, retries) and passed to
-    ``tools.story_link.extract_story_images``, which pulls og:image →
-    twitter:image → JSON-LD → in-article <img>/<figure> photos. News pages
-    carry their real photos in body <img> tags, so this finds images that
-    an og:image-only grab misses. Relative and lazy-load URLs are
-    absolutized; logos, sprites, SVGs and tracking pixels are filtered.
+    ``tools.story_link.extract_story_images_with_alt``, which pulls
+    og:image → twitter:image → JSON-LD → in-article <img>/<figure> photos
+    as ``(url, alt_text)`` pairs. News pages carry their real photos in
+    body <img> tags, so this finds images that an og:image-only grab
+    misses. Relative and lazy-load URLs are absolutized; logos, sprites,
+    SVGs, tracking pixels and alt-text-flagged unwanted assets are
+    filtered. Batch results are deduplicated by normalized URL.
     """
-    from tools.story_link import extract_story_images
+    from tools.story_link import extract_story_images_with_alt
 
-    found: List[str] = []
+    found: List[Tuple[str, Optional[str]]] = []
+    seen: set = set()
     found_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
@@ -951,13 +1213,15 @@ def _grab_article_images(urls: List[str], tries: int = 3,
         if not html:
             return
         try:
-            imgs = extract_story_images(html, url, limit=per_page)
+            imgs = extract_story_images_with_alt(html, url, limit=per_page)
         except Exception:
             return
         with found_lock:
-            for img in imgs:
-                if img not in found:
-                    found.append(img)
+            for img_url, alt in imgs:
+                key = normalize_image_url(img_url)
+                if key not in seen:
+                    seen.add(key)
+                    found.append((img_url, alt))
 
     for link in urls:
         if link:
@@ -988,7 +1252,7 @@ def _story_direct_link_urls(story: Optional[Dict[str, Any]]) -> List[str]:
 
 
 def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
-                            tries: int = 3) -> List[str]:
+                            tries: int = 3) -> List[Tuple[str, Optional[str]]]:
     """Images for a story: verified story links first, then topic search.
 
     The story's own verified news links point at the exact story's publisher
@@ -997,6 +1261,10 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
     <img> photos are extracted (news sites carry real photos in body <img>
     tags). Only when those yield nothing do we fall back to topic-search
     articles and web image search.
+
+    Returns ``(url, alt_text)`` pairs — alt text drives the relevance
+    filter in the merge step. Hero/web-search images carry no alt text
+    (``None``).
 
     Every step runs under a hard wall-clock bound (via ``_run_bounded``):
     a stuck host raises ``TimeoutError`` naming the step instead of
@@ -1015,14 +1283,15 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
         90.0, "topic image fetch")
 
 
-def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str]:
+def _fetch_article_images(articles, topic: str = "", tries: int = 3
+                          ) -> List[Tuple[str, Optional[str]]]:
     """Hero images for a topic.
 
     Tries hero-image extraction from the article pages (parallel, with
     retries). If that finds nothing at all, falls back to a web image search
     for the topic so the story still gets images. Candidate preflights run
     in parallel under a bounded join — sequential HEAD+GET checks used to
-    cost up to 16s per URL.
+    cost up to 16s per URL. Hero and web-search images have no alt text.
     """
     urls = [getattr(a, "link", "") for a in articles[:6]]
     found = _grab_og_images(urls, tries=tries)
@@ -1047,7 +1316,7 @@ def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str
         for u in good:
             if u not in found:
                 found.append(u)
-    return found[:6]
+    return [(u, None) for u in found[:6]]
 
 
 def _tag_words(tag: str) -> set:
@@ -1364,10 +1633,18 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
 
     Tries the story's verified news links first (exact-story publisher
     pages, images pulled from the article's own <img> tags), then topic
-    search. New images are merged after the existing URLs, deduplicated —
-    the user's curated list is never wiped. When the fetch finds nothing,
-    the existing list is left untouched. Returns (changed, note).
-    Never touches hashtags, links, or story content.
+    search. New images are merged after the existing URLs — the user's
+    curated list is never wiped. Adding an image that is already attached
+    is a no-op: duplicates are detected by normalized URL AND by
+    identical content (SHA-256 of the fetched bytes), so the same image
+    served from a different address is still recognised (issue #21).
+    Images whose alt text marks them as unwanted (logos, avatars, ads)
+    are excluded; missing alt text is not a pass by itself.
+
+    A fetch/hash failure raises ImageDedupeError — the dedupe check is
+    never silently skipped. When the fetch finds nothing, the existing
+    list is left untouched. Returns (changed, note). Never touches
+    hashtags, links, or story content.
     """
     story = load_story(story_id)
     if not story:
@@ -1376,6 +1653,7 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     if not topic:
         raise RuntimeError("No topic to search — images unchanged.")
     existing = list(story["meta"].get("image_urls") or [])
+    existing_hashes = list(story["meta"].get("image_hashes") or [])
     try:
         found = _fetch_images_for_story(story, topic)
     except TimeoutError as e:
@@ -1383,16 +1661,28 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
         return False, f"Image refresh timed out ({e}); kept {len(existing)} existing."
     if not found:
         return False, f"No new images found; kept {len(existing)} existing."
-    merged = list(existing)
-    added = 0
-    for u in found:
-        if u not in merged:
-            merged.append(u)
-            added += 1
+    merged_urls, merged_hashes, stats = _merge_story_images(
+        existing, existing_hashes, found)
+    added = stats["added"]
+    cleaned = merged_urls != existing
+    extras: List[str] = []
+    if stats["rejected_alt"]:
+        extras.append(f"Excluded {stats['rejected_alt']} unwanted image(s) "
+                      f"(logo/avatar/ad per alt text).")
+    if stats["removed_existing_dupes"]:
+        extras.append(f"Removed {stats['removed_existing_dupes']} duplicate "
+                      f"image(s) already stored.")
+    extra = (" " + " ".join(extras)) if extras else ""
+    if added or cleaned:
+        update_story_fields(story_id, image_urls=merged_urls,
+                            image_hashes=merged_hashes)
     if not added:
-        return False, f"No new images found; kept {len(existing)} existing."
-    update_story_fields(story_id, image_urls=merged)
-    return True, f"Added {added} new image(s); kept {len(existing)} existing."
+        note = f"No new images found; kept {len(existing)} existing."
+        dupes = stats["dup_url"] + stats["dup_content"]
+        if dupes:
+            note += f" ({dupes} already stored.)"
+        return cleaned, (note + extra).strip()
+    return True, f"Added {added} new image(s); kept {len(existing)} existing.{extra}"
 
 
 def _refresh_worker(story_id: str, kind: str, topic: str,
@@ -1528,8 +1818,11 @@ def _do_reset(story_id: str, topic: str,
 
     # 2. Fetched images: discard, fresh article-image extraction.
     #    A TimeoutError propagates: the whole reset fails loudly and
-    #    nothing is written.
-    new_images = list(_fetch_images_for_story(story, topic) or [])
+    #    nothing is written. Alt-text filtering and content dedupe apply
+    #    to the fresh list (issue #21); a hash-fetch failure raises
+    #    ImageDedupeError and likewise fails loudly.
+    new_images, new_hashes, _ = _merge_story_images(
+        [], [], _fetch_images_for_story(story, topic) or [])
 
     # 3. News links: re-run the link verifier fresh for the topic.
     #    Best-effort by contract: [] on failure means an empty row.
@@ -1545,6 +1838,7 @@ def _do_reset(story_id: str, topic: str,
         story_id,
         hashtags=new_tags,
         image_urls=new_images,
+        image_hashes=new_hashes,
         news_links=new_links,
     )
 
@@ -1600,19 +1894,18 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     # Verified Stage-1 links are sacred: they point at the exact story the
     # reel was built from. Never replace them with topic-search results.
     # Images merge: the story may already carry the Stage-1 curated gallery —
-    # keep those and add what enrichment found.
-    verified_links = meta.get("news_links") or []
-    merged_imgs = list(meta.get("image_urls") or [])
-    imgs_added = 0
-    for u in image_urls:
-        if u and u not in merged_imgs:
-            merged_imgs.append(u)
-            imgs_added += 1
+    # keep those and add what enrichment found, deduplicated by normalized
+    # URL and content hash (issue #21). A hash-fetch failure raises
+    # ImageDedupeError and fails the enrichment loudly.
+    merged_imgs, merged_hashes, _img_stats = _merge_story_images(
+        meta.get("image_urls"), meta.get("image_hashes"), image_urls)
+    imgs_added = _img_stats["added"]
     links_added = 0 if verified_links else len(news_links)
     update_story_fields(
         story_id,
         news_links=verified_links or news_links,
         image_urls=merged_imgs,
+        image_hashes=merged_hashes,
         hashtags=merged_tags,
     )
     changed = bool(tags_added or imgs_added or links_added)
