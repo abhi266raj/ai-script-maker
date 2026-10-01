@@ -7,10 +7,11 @@ the script (st.stop()) before any Studio code runs.
 
 from __future__ import annotations
 
+import html as _html
+import re as _re
 import streamlit as st
 
 import story_library as lib
-from core.screenplay_formatter import format_industry_screenplay
 
 TAB_STUDIO = "🎬 Studio"
 TAB_LIBRARY = "📚 Library"
@@ -133,6 +134,27 @@ def inject_library_css() -> None:
         font-size: 13px;
         font-weight: 600;
     }
+    /* macOS HIG: deference — toolbar rows use a hairline, not a heavy box */
+    .lib-hairline {
+        border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+        margin: 4px 0 12px 0;
+    }
+    /* macOS HIG: document title centered, empty states centered */
+    .lib-doc-title {
+        text-align: center;
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1.25;
+        margin: 6px 0 2px 0;
+        overflow-wrap: anywhere;
+    }
+    .lib-empty {
+        text-align: center;
+        padding: 48px 16px;
+        color: var(--lib-chip-text);
+        font-size: 15px;
+    }
+    .lib-empty .lib-empty-icon { font-size: 40px; display: block; margin-bottom: 10px; }
     .lib-story-card {
         border: 1px solid var(--lib-chip-bg);
         border-radius: 10px;
@@ -222,10 +244,13 @@ def _script_markdown(script) -> str:
     return "\n".join(lines).strip()
 
 
-def maybe_autosave_story(batch_result, script) -> None:
+def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None:
     """Auto-save the finished story once (guarded against Streamlit reruns).
 
-    On failure: surfaces the error with a manual "Save to library" fallback.
+    ``pro_screenplay`` is the exact final-stage screenplay text already shown
+    in the Studio (overlay/SFX toggles applied). It is stored verbatim —
+    never regenerated, never a CTA added. On failure: surfaces the error
+    with a manual "Save to library" fallback.
     """
     res_id = id(batch_result)
     script_id = getattr(script, "id", "?")
@@ -234,29 +259,41 @@ def maybe_autosave_story(batch_result, script) -> None:
     if st.session_state.get("lib_autosaved_for") == guard:
         return
     if st.session_state.get("lib_save_failed_for") == guard:
-        _render_manual_save_fallback(batch_result, script, guard)
+        _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
+        return
+    if not (pro_screenplay or "").strip():
+        # Fail loudly: saving anything but the exact final-stage text would
+        # silently misrepresent the story.
+        st.session_state["lib_save_failed_for"] = guard
+        st.error("Auto-save to library failed: the final-stage screenplay text was not provided.")
+        _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
     try:
-        story_id = _save_current_story(batch_result, script)
+        story_id = _save_current_story(batch_result, script, pro_screenplay)
     except Exception as e:  # fail loudly, offer manual fallback
         st.session_state["lib_save_failed_for"] = guard
         st.error(f"Auto-save to library failed: {e}")
-        _render_manual_save_fallback(batch_result, script, guard)
+        _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
     st.session_state["lib_autosaved_for"] = guard
     st.session_state.pop("lib_save_failed_for", None)
     topic = st.session_state.get("run_topic", "") or ""
     lib.start_enrichment(story_id, topic)
-    st.toast("💾 Saved to Library — fetching images & news links…", icon="📚")
 
 
 def _verified_news_links(batch_result) -> list:
     """Stage-1 verified sources — the exact articles the story was built from.
 
-    Saved as the story's news links so they always point at the same story;
-    the background enrichment keeps them and never overwrites them.
+    If the user verified one specific story link in Stage 1.4, it goes
+    first. Saved as the story's news links so they always point at the same
+    story; the background enrichment keeps them and never overwrites them.
     """
     links: list = []
+    chosen = st.session_state.get("s1_verified_story_link") or {}
+    if chosen.get("url"):
+        links.append({"title": chosen.get("title", "") or "",
+                      "url": chosen["url"],
+                      "source": chosen.get("source", "") or ""})
     verif = getattr(batch_result, "verification", None)
     for s in (getattr(verif, "sources", None) or []):
         if isinstance(s, dict):
@@ -272,26 +309,33 @@ def _verified_news_links(batch_result) -> list:
     return links
 
 
-def _full_script_markdown(script) -> str:
-    """The complete final-stage screenplay, via the app's own formatter.
+def _derive_local_hashtags(title: str, topic: str, headline: str) -> list:
+    """Instant, network-free hashtag candidates from the story's own words.
 
-    This is the same clean plain screenplay the Studio offers for
-    copy-pasting — [Format Requirement] header, SCENE DETAIL, CHARACTERS &
-    CLOTHING, all beats. Nothing is added or dropped by the library.
-    Falls back to the field-by-field reconstruction only if the industry
-    formatter refuses (its fail-loud contract); the save itself must not
-    break.
+    Guarantees at least one story-specific tag so a story is never saved
+    hashtag-less — even trending-news stories get possible hashtags.
     """
-    try:
-        # Mirrors app.format_plain_script: the clean plain screenplay ready
-        # for copy-pasting (imported from core to avoid an app↔library cycle).
-        return format_industry_screenplay(
-            script, include_overlays=True, include_sfx=True).strip()
-    except Exception:
-        return _script_markdown(script)
+    tags: list = []
+    for text in (headline, title, topic):
+        t = lib._camel_tag(lib._keyword_list(text or ""))
+        if t and t not in tags:
+            tags.append(t)
+        if len(tags) >= 3:
+            break
+    if not tags:
+        words = _re.findall(r"[A-Za-z]{3,}", f"{title} {topic}")
+        if words:
+            tags.append("#" + "".join(w.capitalize() for w in words[:3]))
+        else:
+            tags.append("#HindiReelStudio")
+    return tags
 
 
-def _save_current_story(batch_result, script) -> str:
+def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
+    """Persist the story. ``pro_screenplay`` is stored verbatim — it is the
+    exact final-stage text the Studio displayed (toggles already applied)."""
+    if not (pro_screenplay or "").strip():
+        raise ValueError("Cannot save: the final-stage screenplay text is empty.")
     hashtag = st.session_state.get("active_hashtag", "") or ""
     hashtags = [hashtag] if hashtag else []
     tone = st.session_state.get("chosen_tone", "") or ""
@@ -299,22 +343,28 @@ def _save_current_story(batch_result, script) -> str:
     headline = st.session_state.get("selected_headline_title", "") or ""
     # The story title is the news headline it was built from.
     title = headline or topic or getattr(script, "title", "") or "Untitled Story"
+    if not hashtags:
+        # Never save hashtag-less: derive story-specific tags locally
+        # (instant, no network) — the background enrichment adds trending
+        # ones on top. Trending-news stories always get possible hashtags.
+        hashtags = _derive_local_hashtags(title, topic, headline)
     return lib.save_story(
         title=title,
         tone=tone,
         hashtags=hashtags,
         dialogue_md="",
-        script_md=_full_script_markdown(script),
+        script_md=pro_screenplay.strip(),
         source_topic=topic,
         source_headline=headline,
         news_links=_verified_news_links(batch_result),
+        image_urls=st.session_state.get("s1_kept_images") or [],
     )
 
 
-def _render_manual_save_fallback(batch_result, script, guard: str) -> None:
+def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenplay: str = "") -> None:
     if st.button("💾 Save to library", key="lib_manual_save_btn", type="primary"):
         try:
-            story_id = _save_current_story(batch_result, script)
+            story_id = _save_current_story(batch_result, script, pro_screenplay)
         except Exception as e:
             st.error(f"Save to library failed: {e}")
             return
@@ -335,29 +385,11 @@ def render_library_page() -> None:
     stories = lib.list_stories()
     selected = st.session_state.get("lib_selected_story")
 
-    # Delete-all (two-step confirm), only when there are stories.
-    if stories:
-        c1, c2 = st.columns([5, 1])
-        with c1:
-            st.caption(f"{len(stories)} saved stor{'y' if len(stories) == 1 else 'ies'} · stored in ~/Documents/HindiReelStudio")
-        with c2:
-            if not st.session_state.get("lib_confirm_delete_all"):
-                if st.button("🗑️ Delete all", key="lib_delete_all_btn"):
-                    st.session_state["lib_confirm_delete_all"] = True
-                    st.rerun()
-            else:
-                if st.button("⚠️ Confirm delete ALL?", key="lib_delete_all_confirm", type="primary"):
-                    n = lib.delete_all_stories()
-                    st.session_state.pop("lib_confirm_delete_all", None)
-                    st.session_state.pop("lib_selected_story", None)
-                    st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
-                    st.rerun()
-                if st.button("Cancel", key="lib_delete_all_cancel"):
-                    st.session_state.pop("lib_confirm_delete_all", None)
-                    st.rerun()
-
     if not stories:
-        st.info("No saved stories yet. Generate a reel in the Studio tab — it auto-saves here on completion.")
+        st.markdown('<div class="lib-empty"><span class="lib-empty-icon">📚</span>'
+                    'No saved stories yet.<br>Generate a reel in the Studio tab — '
+                    'it auto-saves here on completion.</div>',
+                    unsafe_allow_html=True)
         return
 
     master, detail = st.columns([1, 3])
@@ -366,15 +398,33 @@ def render_library_page() -> None:
         for s in stories:
             sid = s.get("id", "")
             title = (s.get("title", "Untitled") or "Untitled")[:42]
-            created = (s.get("created_at", "") or "")[:10]
-            badge = " ⏳" if s.get("enrichment_status") == "pending" else ""
-            label = f"📄 {title}{badge}\n\n{created}"
+            label = f"📄 {title}"
             if st.button(label, key=f"lib_story_{sid}", use_container_width=True):
                 st.session_state["lib_selected_story"] = sid
                 st.rerun()
+        # Delete-all lives in the master section (two-step confirm).
+        st.markdown("")
+        if not st.session_state.get("lib_confirm_delete_all"):
+            if st.button("🗑️ Delete all", key="lib_delete_all_btn", use_container_width=True,
+                         help="Delete every saved story"):
+                st.session_state["lib_confirm_delete_all"] = True
+                st.rerun()
+        else:
+            if st.button("⚠️ Delete ALL?", key="lib_delete_all_confirm", type="primary",
+                         use_container_width=True, help="Confirm: delete every saved story"):
+                n = lib.delete_all_stories()
+                st.session_state.pop("lib_confirm_delete_all", None)
+                st.session_state.pop("lib_selected_story", None)
+                st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
+                st.rerun()
+            if st.button("Cancel", key="lib_delete_all_cancel", use_container_width=True):
+                st.session_state.pop("lib_confirm_delete_all", None)
+                st.rerun()
     with detail:
         if not selected or not any(s.get("id") == selected for s in stories):
-            st.info("👈 Select a story to view it.")
+            st.markdown('<div class="lib-empty"><span class="lib-empty-icon">👈</span>'
+                        'Select a story to view it.</div>',
+                        unsafe_allow_html=True)
             return
         _render_story_detail(selected)
 
@@ -519,19 +569,57 @@ def _render_story_detail(story_id: str) -> None:
         return
     meta = story["meta"]
 
-    # Title at top — editable; saves on change
-    new_title = st.text_input("Title", value=meta.get("title", "Untitled Story"),
-                              key=f"lib_title_{story_id}")
-    if new_title.strip() and new_title.strip() != meta.get("title", ""):
-        lib.update_story_fields(story_id, title=new_title.strip())
-        st.rerun()
-    created = (meta.get("created_at", "") or "").replace("T", " ")
-    st.caption(f"Created {created}" + (f" · Tone: {meta.get('tone')}" if meta.get("tone") else ""))
+    # Detail navigation bar (macOS HIG toolbar pattern): Back leading,
+    # Delete trailing, hairline separator — deference over heavy chrome.
+    nb1, _, nb3 = st.columns([1.2, 7.6, 1.2])
+    with nb1:
+        if st.button("← Back", key=f"lib_back_{story_id}", help="Back to the story list"):
+            st.session_state.pop("lib_selected_story", None)
+            st.rerun()
+    with nb3:
+        if not st.session_state.get(f"lib_confirm_del_{story_id}"):
+            if st.button("🗑️ Delete", key=f"lib_del_{story_id}", help="Delete this story"):
+                st.session_state[f"lib_confirm_del_{story_id}"] = True
+                st.rerun()
+        else:
+            if st.button("⚠️ Confirm?", key=f"lib_del_confirm_{story_id}", type="primary",
+                         help="Confirm: delete this story"):
+                lib.delete_story(story_id)
+                st.session_state.pop(f"lib_confirm_del_{story_id}", None)
+                st.session_state.pop("lib_selected_story", None)
+                st.success("Story deleted.")
+                st.rerun()
+    st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
 
-    # Hashtags
-    tags = meta.get("hashtags") or []
-    if tags:
-        st.markdown("".join(f'<span class="lib-chip">{t}</span>' for t in tags), unsafe_allow_html=True)
+    # Title at top: big, multiline. ✏️ swaps in a borderless editor (no label text).
+    title = meta.get("title", "Untitled Story") or "Untitled Story"
+    if st.session_state.get(f"lib_edit_title_{story_id}"):
+        new_title = st.text_area("", value=title, key=f"lib_title_{story_id}",
+                                 height=80, label_visibility="collapsed")
+        b1, b2, _ = st.columns([1, 1, 6])
+        with b1:
+            if st.button("Save", key=f"lib_title_save_{story_id}", type="primary"):
+                if new_title.strip():
+                    lib.update_story_fields(story_id, title=new_title.strip())
+                st.session_state.pop(f"lib_edit_title_{story_id}", None)
+                st.rerun()
+        with b2:
+            if st.button("Cancel", key=f"lib_title_cancel_{story_id}"):
+                st.session_state.pop(f"lib_edit_title_{story_id}", None)
+                st.rerun()
+    else:
+        t1, t2 = st.columns([11, 1])
+        with t1:
+            st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
+                        unsafe_allow_html=True)
+        with t2:
+            if st.button("✏️", key=f"lib_title_edit_{story_id}", help="Edit title"):
+                st.session_state[f"lib_edit_title_{story_id}"] = True
+                st.rerun()
+    created = (meta.get("created_at", "") or "").replace("T", " ")
+    _sub = f"Created {created}" + (f" · Tone: {meta.get('tone')}" if meta.get("tone") else "")
+    st.markdown(f"<div style='text-align:center' class='stCaption'>{_html.escape(_sub)}</div>",
+                unsafe_allow_html=True)
 
     # Enrichment / refresh state
     _status = meta.get("enrichment_status")
@@ -553,6 +641,14 @@ def _render_story_detail(story_id: str) -> None:
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
                     unsafe_allow_html=True)
+
+    # Hashtags sit below the story (macOS HIG: centered, quiet chips).
+    tags = meta.get("hashtags") or []
+    if tags:
+        st.markdown("### #️⃣ Hashtags")
+        st.markdown('<div style="text-align:center">' +
+                    "".join(f'<span class="lib-chip">{t}</span>' for t in tags) +
+                    '</div>', unsafe_allow_html=True)
 
     # Copy options: the full final-stage script, pure — nothing added.
     if script_md:
@@ -635,51 +731,45 @@ def _render_story_detail(story_id: str) -> None:
         st.success(f"Attached {len(up_imgs)} image(s).")
         st.rerun()
 
-    # Refresh / retry controls (all background — safe to switch tabs mid-fetch)
+    # Refresh / retry controls — professional in-button loading state while the
+    # background job runs (macOS HIG: progress lives in the control itself,
+    # never in a popover/toast). The running button shows ⏳ and all three
+    # stay disabled until the job finishes, so two refreshes can't interleave.
+    _refresh_kind = meta.get("refresh_kind", "") if _status in ("pending", "refreshing") else ""
+    _busy = bool(_refresh_kind)
     r1, r2, r3 = st.columns(3)
     with r1:
-        if st.button("#️⃣ Update hashtags", key=f"lib_tags_{story_id}",
-                     help="Find trending hashtags for this story's topic and add them"):
+        _loading = _refresh_kind == "hashtags"
+        if st.button("⏳ Updating hashtags…" if _loading else "#️⃣ Update hashtags",
+                     key=f"lib_tags_{story_id}",
+                     help="Find trending hashtags for this story's topic and add them",
+                     disabled=_busy):
             if lib.start_refresh(story_id, "hashtags"):
-                st.toast("Looking for trending hashtags in the background…")
                 st.rerun()
             else:
                 st.error("Could not start the hashtag refresh.")
     with r2:
-        if st.button("🖼️ Update images", key=f"lib_imgs_{story_id}",
-                     help="Re-fetch news images for this story's topic"):
+        _loading = _refresh_kind == "images"
+        if st.button("⏳ Updating images…" if _loading else "🖼️ Update images",
+                     key=f"lib_imgs_{story_id}",
+                     help="Re-fetch news images for this story's topic",
+                     disabled=_busy):
             if lib.start_refresh(story_id, "images"):
-                st.toast("Fetching images in the background…")
                 st.rerun()
             else:
                 st.error("Could not start the image refresh.")
     with r3:
-        if st.button("↻ Retry media fetch", key=f"lib_retry_{story_id}",
-                     help="Re-run the hashtag + image fetch for this story"):
+        _loading = _refresh_kind == "all"
+        if st.button("⏳ Retrying…" if _loading else "↻ Retry media fetch",
+                     key=f"lib_retry_{story_id}",
+                     help="Re-run the hashtag + image fetch for this story",
+                     disabled=_busy):
             if lib.retry_enrichment(story_id):
-                st.toast("Retrying media fetch…")
                 st.rerun()
             else:
                 st.error("Could not start the retry.")
 
-    # Delete + back
-    d1, d2 = st.columns(2)
-    with d1:
-        if not st.session_state.get(f"lib_confirm_del_{story_id}"):
-            if st.button("🗑️ Delete story", key=f"lib_del_{story_id}"):
-                st.session_state[f"lib_confirm_del_{story_id}"] = True
-                st.rerun()
-        else:
-            if st.button("⚠️ Confirm delete?", key=f"lib_del_confirm_{story_id}", type="primary"):
-                lib.delete_story(story_id)
-                st.session_state.pop(f"lib_confirm_del_{story_id}", None)
-                st.session_state.pop("lib_selected_story", None)
-                st.success("Story deleted.")
-                st.rerun()
-    with d2:
-        if st.button("← Back to list", key=f"lib_back_{story_id}"):
-            st.session_state.pop("lib_selected_story", None)
-            st.rerun()
+    # (Back / Delete live in the detail navigation bar at the top.)
 
 
 def _md_to_html(md: str) -> str:

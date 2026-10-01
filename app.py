@@ -478,6 +478,9 @@ st.markdown(
         padding-top: 1.25rem !important;
         padding-bottom: 2rem !important;
         max-width: 1400px !important;
+        /* macOS HIG: center the content column on wide screens */
+        margin-left: auto !important;
+        margin-right: auto !important;
     }
 
     [data-testid="stMarkdownContainer"],
@@ -2364,6 +2367,122 @@ def _render_verification_report(verif, *, key_prefix="", as_expander=True):
     _render_raw_json(verif, label="Raw JSON — verification", key_prefix=key_prefix, as_expander=as_expander)
 
 
+def _render_story_link_verifier(verif, *, key_prefix=""):
+    """Stage 1.4 — fetch the exact story link, verify it is the same story
+    (deterministic check, or LLM with the app's engine selection), and show
+    3–4 article images in a professional gallery where each image is
+    removable.
+
+    A verified link + the kept images flow into the Library save via
+    ``st.session_state["s1_verified_story_link"]`` and ``["s1_kept_images"]``.
+    All failures surface loudly — never an empty silent gallery.
+    """
+    from tools.story_link import (
+        fetch_story_page, extract_story_images,
+        verify_same_story_code, verify_same_story_llm,
+    )
+    _srcs = _model_field(verif, "sources", None) or []
+    _opts = []
+    for _s in _srcs:
+        _snm = _model_field(_s, "source", "") or ""
+        _stl = _model_field(_s, "title", "") or ""
+        _url = _model_field(_s, "link", "") or _model_field(_s, "url", "") or ""
+        if _url:
+            _lbl = (f"{_snm}: {_stl}".strip(": ") or _url)
+            _opts.append((_url, _snm, _stl, _lbl[:90]))
+    if not _opts:
+        st.caption("No verified source links to fetch.")
+        return
+    _labels = [o[3] for o in _opts]
+    _sel_label = st.selectbox("Story link", options=_labels, key=f"{key_prefix}sl_pick")
+    _sel = next(o for o in _opts if o[3] == _sel_label)
+    _sel_url, _sel_source, _sel_title = _sel[0], _sel[1], _sel[2]
+
+    _store = st.session_state.setdefault("s1_story_links", {})
+    _entry = _store.get(_sel_url) or {}
+
+    if st.button("📥 Fetch story link", key=f"{key_prefix}sl_fetch",
+                 help="Fetch the article page and pull its images"):
+        try:
+            with st.spinner("Fetching the article page…"):
+                _art = fetch_story_page(_sel_url)
+                _images = extract_story_images(_art["html"], _art["url"], limit=4)
+            _entry = {"title": _art["title"], "url": _art["url"],
+                      "article": {"title": _art["title"], "url": _art["url"],
+                                  "text": _art["text"]},
+                      "images": _images, "verified": None, "reason": ""}
+            _store[_sel_url] = _entry
+            if not _images:
+                st.warning("Article fetched, but no usable images were found on the page.")
+            st.rerun()
+        except Exception as e:
+            st.error(f"Fetch failed: {e}")
+
+    if not _entry.get("article"):
+        st.caption("Fetch the link to verify the story and see its images.")
+        return
+
+    st.markdown(f"**Fetched:** {_entry.get('title') or '(no title found)'}")
+    st.caption(_entry.get("url", ""))
+
+    _use_llm = st.toggle(
+        "Use LLM for verification", value=_entry.get("use_llm", True),
+        key=f"{key_prefix}sl_llm",
+        help="On = the selected LLM judges same-story. Off = fast deterministic keyword check.")
+    _engine_mode = None
+    if _use_llm:
+        _def_mode = st.session_state.get("chosen_engine_mode", "first_local_then_agy")
+        _names = list(ENGINE_OPTIONS.keys())
+        _def_name = ENGINE_NAMES_REV.get(_def_mode, _names[0])
+        _engine_name = st.selectbox("LLM engine", _names,
+                                    index=_names.index(_def_name) if _def_name in _names else 0,
+                                    key=f"{key_prefix}sl_engine")
+        _engine_mode = ENGINE_OPTIONS[_engine_name]
+
+    if st.button("✅ Verify same story", key=f"{key_prefix}sl_verify"):
+        _headline = _model_field(verif, "headline", "") or ""
+        _facts = _model_field(verif, "verified_facts", None) or []
+        try:
+            with st.spinner("Verifying the story…"):
+                if _use_llm:
+                    _ok, _reason = verify_same_story_llm(
+                        _entry["article"], _headline, _facts, _engine_mode)
+                else:
+                    _ok, _reason = verify_same_story_code(
+                        _entry["article"], _headline, _facts)
+            _entry["verified"] = _ok
+            _entry["reason"] = _reason
+            _entry["use_llm"] = _use_llm
+            _store[_sel_url] = _entry
+            if _ok:
+                st.session_state["s1_verified_story_link"] = {
+                    "title": _sel_title, "url": _sel_url, "source": _sel_source}
+                st.session_state["s1_kept_images"] = list(_entry.get("images", []))
+            st.rerun()
+        except Exception as e:
+            st.error(f"Verification failed: {e}")
+
+    if _entry.get("verified") is True:
+        st.success(f"✅ Same story confirmed — {_entry.get('reason', '')}")
+    elif _entry.get("verified") is False:
+        st.warning(f"⚠️ {_entry.get('reason', '')}")
+
+    _imgs = _entry.get("images", []) or []
+    if _imgs:
+        st.markdown(f"**🖼️ Article images ({len(_imgs)})** — ✕ removes one from the set")
+        _ncols = min(4, len(_imgs))
+        _cols = st.columns(_ncols)
+        for _i, _img in enumerate(list(_imgs)):
+            with _cols[_i % _ncols]:
+                st.image(_img, use_container_width=True)
+                if st.button("✕ Remove", key=f"{key_prefix}sl_rm_{_i}"):
+                    _imgs.pop(_i)
+                    _entry["images"] = _imgs
+                    _store[_sel_url] = _entry
+                    st.session_state["s1_kept_images"] = list(_imgs)
+                    st.rerun()
+
+
 def _render_character_cards(chars, *, key_prefix="", as_expander=True):
     """Pretty character cards (name, role, attire, emotional stance) + collapsed raw JSON."""
     if not chars:
@@ -2627,6 +2746,10 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                     st.caption("AI validator re-run with refined query + official wire terms")
                     st.markdown("**📤 Output:**")
                     st.caption(f"Re-verified facts — final confidence {_conf}%.")
+
+            # 1.4 Story link verification & article images
+            with st.expander("1.4 🔗 Story Link Verification & Images", expanded=False):
+                _render_story_link_verifier(_ver, key_prefix=f"{key_prefix}s1_")
 
     elif step_num == 2:
         _chars = step_state.get("finalized_characters") or []
@@ -3946,8 +4069,8 @@ with col_output:
         pacing_ok = w_cnt <= max_w
 
 
-        # v1.5: auto-save the finished story to the Library (once per result).
-        maybe_autosave_story(res, curr_script)
+        # (Library auto-save moved below: it needs the exact final-stage text.)
+
 
         st.markdown("### 🎬 Final Screenplay")
         st.caption("Your chosen format — 9:16 vertical reel · SCENE DETAIL · CHARACTERS & CLOTHING · sequential beats.")
@@ -3961,6 +4084,10 @@ with col_output:
         plain_script = format_plain_script(curr_script, include_overlays=include_overlays, include_sfx=include_sfx)
         teleprompter_text = format_teleprompter_text(curr_script)
         visual_prompts_text = format_director_prompts(curr_script)
+
+        # v1.5: auto-save the finished story to the Library (once per result),
+        # storing the exact final-stage screenplay shown above — verbatim.
+        maybe_autosave_story(res, curr_script, pro_screenplay)
 
         with st.container(border=True):
             st.markdown(pro_screenplay)

@@ -192,6 +192,7 @@ def save_story(
     source_topic: str = "",
     source_headline: str = "",
     news_links: Optional[List[Dict[str, str]]] = None,
+    image_urls: Optional[List[str]] = None,
 ) -> str:
     """Save a story immediately (no network). Returns the story id."""
     story_id = new_story_id()
@@ -202,7 +203,7 @@ def save_story(
         "tone": tone or "",
         "hashtags": [h for h in (hashtags or []) if h],
         "news_links": [dict(l) for l in (news_links or [])],
-        "image_urls": [],
+        "image_urls": [u for u in (image_urls or []) if u],
         "uploaded_images": [],
         "video_file": "",
         "enrichment_status": "pending",
@@ -481,7 +482,7 @@ def _enrich_worker(story_id: str, topic: str, do_work) -> None:
         do_work(story_id, topic)
     finally:
         try:
-            update_story_fields(story_id, enrichment_status="done")
+            update_story_fields(story_id, enrichment_status="done", refresh_kind="")
         except Exception:
             pass
         lock.release()
@@ -729,7 +730,8 @@ def _refresh_worker(story_id: str, kind: str, topic: str) -> None:
     finally:
         lock.release()
     try:
-        update_story_fields(story_id, enrichment_status="done", refresh_note=note)
+        update_story_fields(story_id, enrichment_status="done", refresh_note=note,
+                            refresh_kind="")
     except Exception:
         pass
 
@@ -750,7 +752,8 @@ def start_refresh(story_id: str, kind: str) -> bool:
         if not topic:
             return False
         _check_id(story_id)
-        update_story_fields(story_id, enrichment_status="refreshing", refresh_note="")
+        update_story_fields(story_id, enrichment_status="refreshing", refresh_note="",
+                            refresh_kind=kind)
         t = threading.Thread(
             target=_refresh_worker, args=(story_id, kind, topic),
             daemon=True, name=f"refresh-{kind}-{story_id}")
@@ -802,10 +805,19 @@ def _do_enrich(story_id: str, topic: str) -> None:
     for t in new_tags:
         if t not in merged_tags:
             merged_tags.append(t)
+    # Verified Stage-1 links are sacred: they point at the exact story the
+    # reel was built from. Never replace them with topic-search results.
+    # Images merge: the story may already carry the Stage-1 curated gallery —
+    # keep those and add what enrichment found.
+    verified_links = meta.get("news_links") or []
+    merged_imgs = list(meta.get("image_urls") or [])
+    for u in image_urls:
+        if u and u not in merged_imgs:
+            merged_imgs.append(u)
     update_story_fields(
         story_id,
-        news_links=news_links or meta.get("news_links") or [],
-        image_urls=image_urls or meta.get("image_urls") or [],
+        news_links=verified_links or news_links,
+        image_urls=merged_imgs,
         hashtags=merged_tags,
     )
 
@@ -840,7 +852,7 @@ def retry_enrichment(story_id: str) -> bool:
         return False
     try:
         _check_id(story_id)
-        update_story_fields(story_id, enrichment_status="pending")
+        update_story_fields(story_id, enrichment_status="pending", refresh_kind="all")
         t = threading.Thread(
             target=_enrich_worker, args=(story_id, topic, _do_media_refresh),
             daemon=True, name=f"retry-{story_id}")
