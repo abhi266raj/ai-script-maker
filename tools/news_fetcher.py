@@ -1,11 +1,11 @@
-"""Live India news: Google News/Trends, Reddit, Mastodon (free public APIs)."""
+"""Live India news: Google News/Trends, Reddit, Mastodon, Bing News, DuckDuckGo (free public APIs)."""
 
 import html
 import re
 import urllib.parse
 import datetime
 from email.utils import parsedate_to_datetime
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 import feedparser
 import httpx
 from bs4 import BeautifulSoup
@@ -15,6 +15,36 @@ _HTTP_HEADERS = {
     "User-Agent": "HindiReelStudio/1.0 (news desk; +https://local)",
     "Accept": "application/json, application/rss+xml, text/xml, */*",
 }
+
+
+class NewsFetchError(Exception):
+    """Raised when every news source failed or returned nothing.
+
+    Carries ``report`` — a list of per-source attempt dicts
+    (``source``, ``outcome`` in {"ok", "empty", "error"}, ``count``,
+    ``detail``) — so the UI can show exactly what was tried instead
+    of silently returning an empty result.
+    """
+
+    def __init__(self, report: List[Dict[str, object]]):
+        self.report = list(report or [])
+        super().__init__(self._message())
+
+    def _message(self) -> str:
+        if not self.report:
+            return "News search found nothing and no source was attempted."
+        parts = []
+        for attempt in self.report:
+            src = attempt.get("source", "?")
+            outcome = attempt.get("outcome", "?")
+            detail = attempt.get("detail") or ""
+            if outcome == "ok":
+                parts.append(f"{src}: {attempt.get('count', 0)} article(s)")
+            elif outcome == "empty":
+                parts.append(f"{src}: no results{(' — ' + detail) if detail else ''}")
+            else:
+                parts.append(f"{src}: failed{(' — ' + detail) if detail else ''}")
+        return "News search found nothing. Tried: " + "; ".join(parts) + "."
 
 
 def _parse_pub_datetime(raw: str, entry=None) -> Optional[datetime.datetime]:
@@ -122,6 +152,30 @@ def _norm_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()[:80]
 
 
+_TOPIC_STOPWORDS = frozenset(
+    "the a an and or of to in on for with by from at as is are was were be "
+    "been has have had do does did will would can could should this that "
+    "these those it its new latest breaking news today".split()
+)
+
+
+def _topic_score(title: str, snippet: str = "", query: str = "") -> int:
+    """Relevance of an article to the user's query: term overlap + phrase bonus."""
+    terms = [t for t in re.findall(r"[a-z0-9]+", (query or "").lower())
+             if len(t) > 2 and t not in _TOPIC_STOPWORDS]
+    if not terms:
+        return 0
+    blob = f"{title} {snippet}".lower()
+    score = 0
+    for term in terms:
+        if term in blob:
+            score += 5
+    phrase = " ".join(terms)
+    if phrase and phrase in blob:
+        score += 5
+    return score
+
+
 def _india_score(title: str, snippet: str = "", source: str = "") -> int:
     blob = f"{title} {snippet} {source}".lower()
     score = 0
@@ -208,19 +262,262 @@ class NewsFetcher:
             print(f"Warning: news feed parsing failed for {feed_url}: {e}")
         return articles
 
-    def search_news(self, query: str, limit: Optional[int] = None) -> List[NewsArticle]:
-        """Search Google News RSS with when:24h qualifier for fresh real-time results."""
-        n = limit or self.max_articles
+    def _http_get(self, url: str) -> httpx.Response:
+        """Single GET with the shared UA/timeout. Test seam: monkeypatch in tests."""
+        with httpx.Client(headers=_HTTP_HEADERS, timeout=self._timeout,
+                          follow_redirects=True) as client:
+            return client.get(url)
+
+    def _fetch_rss_or_raise(
+        self,
+        feed_url: str,
+        limit: int,
+        fallback_source: str = "Live Wire",
+        max_age_hours: Optional[float] = 24.0,
+    ) -> List[NewsArticle]:
+        """RSS fetch that raises on transport/HTTP failure (#121).
+
+        Unlike :meth:`_parse_feed` (which swallows failures for best-effort
+        pool callers), this surfaces the failure so the multi-source chain
+        can record exactly which source failed and why.
+        """
+        r = self._http_get(feed_url)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code} for {feed_url}")
+        feed = feedparser.parse(r.content)
+        if getattr(feed, "bozo", False) and not feed.entries:
+            raise RuntimeError(f"unparseable feed: {feed_url}")
+        articles: List[NewsArticle] = []
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for entry in feed.entries:
+            title = clean_html(getattr(entry, "title", "Untitled"))
+            link = getattr(entry, "link", "")
+            published = getattr(entry, "published", "")
+            source = fallback_source
+            if " - " in title:
+                parts = title.rsplit(" - ", 1)
+                title = parts[0].strip()
+                source = parts[1].strip()
+            elif hasattr(entry, "source") and hasattr(entry.source, "title"):
+                source = entry.source.title
+            dt = _parse_pub_datetime(published, entry)
+            age_h = None
+            time_lbl = ""
+            if dt:
+                age_h = max(0.0, (now - dt).total_seconds() / 3600.0)
+                time_lbl = _format_relative_time(dt, now)
+                if max_age_hours is not None and age_h > max_age_hours:
+                    continue
+            elif max_age_hours is not None:
+                time_lbl = "Today"
+            snippet = clean_html(getattr(entry, "summary", ""))
+            if not title or not link:
+                continue
+            articles.append(
+                NewsArticle(
+                    title=title,
+                    link=link,
+                    source=source,
+                    snippet=snippet,
+                    published=published,
+                    age_hours=round(age_h, 1) if age_h is not None else None,
+                    time_label=time_lbl,
+                )
+            )
+            if len(articles) >= limit:
+                break
+        return articles
+
+    # -- #121 multi-source chain -------------------------------------------
+
+    _DDG_INTERNAL_HOSTS = frozenset({"duckduckgo.com", "www.duckduckgo.com"})
+
+    def _src_google_news(self, query: str, limit: int) -> Tuple[List[NewsArticle], List[Dict[str, object]]]:
+        """Google News RSS: strict 24h search, then a looser 48h fallback."""
+        attempts: List[Dict[str, object]] = []
         q = f"when:24h {query.strip()}"
-        encoded_query = urllib.parse.quote(q)
-        feed_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
-        results = self._parse_feed(feed_url, n, fallback_source="News Wire", max_age_hours=24.0)
-        if not results:
-            # Fallback to standard query without when:24h if too restrictive
-            encoded_query = urllib.parse.quote(query.strip())
-            feed_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
-            results = self._parse_feed(feed_url, n, fallback_source="News Wire", max_age_hours=48.0)
-        return results
+        feed_url = ("https://news.google.com/rss/search?q="
+                    + urllib.parse.quote(q) + "&hl=en-IN&gl=IN&ceid=IN:en")
+        arts = self._fetch_rss_or_raise(feed_url, limit, fallback_source="News Wire",
+                                       max_age_hours=24.0)
+        attempts.append({"source": "google-news-rss/24h",
+                         "outcome": "ok" if arts else "empty",
+                         "count": len(arts), "detail": ""})
+        if not arts:
+            feed_url = ("https://news.google.com/rss/search?q="
+                        + urllib.parse.quote(query.strip()) + "&hl=en-IN&gl=IN&ceid=IN:en")
+            arts = self._fetch_rss_or_raise(feed_url, limit, fallback_source="News Wire",
+                                           max_age_hours=48.0)
+            attempts.append({"source": "google-news-rss/48h",
+                             "outcome": "ok" if arts else "empty",
+                             "count": len(arts), "detail": "24h query was empty"})
+        return arts, attempts
+
+    def _src_bing_news(self, query: str, limit: int) -> List[NewsArticle]:
+        """Bing News RSS — independent RSS index from Google's."""
+        feed_url = ("https://www.bing.com/news/search?q="
+                    + urllib.parse.quote(query.strip()) + "&format=rss")
+        return self._fetch_rss_or_raise(feed_url, limit, fallback_source="Bing News",
+                                       max_age_hours=48.0)
+
+    @staticmethod
+    def _ddg_real_url(href: str) -> str:
+        """Unwrap a DuckDuckGo redirect href to the real article URL."""
+        href = (href or "").strip()
+        if not href:
+            return ""
+        if href.startswith("//"):
+            href = "https:" + href
+        try:
+            parsed = urllib.parse.urlparse(href)
+        except Exception:
+            return ""
+        if parsed.netloc.lower() in NewsFetcher._DDG_INTERNAL_HOSTS:
+            qs = urllib.parse.parse_qs(parsed.query)
+            real = (qs.get("uddg") or [""])[0]
+            return real.strip()
+        if parsed.netloc:
+            return href
+        return ""
+
+    def _src_duckduckgo(self, query: str, limit: int) -> List[NewsArticle]:
+        """DuckDuckGo HTML search with regex-based link extraction (#121).
+
+        Last-resort source: no API, no RSS — parse the classic HTML
+        endpoint and regex out result anchors + snippets, unwrapping
+        DDG's redirect URLs to the real article links.
+        """
+        url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query.strip())
+        r = self._http_get(url)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code} for {url}")
+        page = r.text or ""
+        anchors = re.findall(
+            r'<a\b(?=[^>]*\bclass="result__a")[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>',
+            page, re.DOTALL | re.IGNORECASE)
+        snippets = re.findall(
+            r'<a\b(?=[^>]*\bclass="result__snippet")[^>]*>(.*?)</a>',
+            page, re.DOTALL | re.IGNORECASE)
+        if not anchors:
+            # Page shape changed or was blocked — say so loudly, don't
+            # pretend the query had no results.
+            raise RuntimeError("no result anchors found in DuckDuckGo HTML "
+                               "(page shape changed or request blocked)")
+        articles: List[NewsArticle] = []
+        for i, (href, inner) in enumerate(anchors):
+            link = self._ddg_real_url(html.unescape(href))
+            if not link:
+                continue
+            title = clean_html(inner)
+            if not title:
+                continue
+            snippet = clean_html(snippets[i]) if i < len(snippets) else ""
+            articles.append(
+                NewsArticle(
+                    title=title,
+                    link=link,
+                    source="DuckDuckGo",
+                    snippet=snippet,
+                    published="",
+                    age_hours=None,
+                    time_label="",
+                )
+            )
+            if len(articles) >= limit:
+                break
+        return articles
+
+    def _dedupe_rank_topic(self, articles: List[NewsArticle], query: str,
+                          limit: int) -> List[NewsArticle]:
+        """Dedupe + rank by query relevance, then recency (#121)."""
+        seen = set()
+        ranked: List[tuple] = []
+        for art in articles:
+            key = _norm_title(art.title)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            recency_bonus = 0
+            if art.age_hours is not None:
+                if art.age_hours <= 3.0:
+                    recency_bonus = 10
+                elif art.age_hours <= 6.0:
+                    recency_bonus = 7
+                elif art.age_hours <= 12.0:
+                    recency_bonus = 4
+                elif art.age_hours <= 24.0:
+                    recency_bonus = 2
+            score = (_india_score(art.title, art.snippet, art.source)
+                     + _topic_score(art.title, art.snippet, query)
+                     + recency_bonus)
+            ranked.append((score, -(art.age_hours if art.age_hours is not None else 999.0), art))
+        ranked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [art for _, _, art in ranked[:limit]]
+
+    def search_news_multi(self, query: str,
+                          limit: Optional[int] = None) -> Tuple[List[NewsArticle], List[Dict[str, object]]]:
+        """Aggressive multi-source news search (#121).
+
+        Tries Google News RSS → Bing News RSS → DuckDuckGo HTML (regex
+        extraction) in order, aggregates everything found, dedupes and
+        ranks by relevance to ``query``. Real network calls — never
+        local-only.
+
+        Returns (articles, report); raises :class:`NewsFetchError` with
+        the full per-source report when every source failed or returned
+        nothing — never a silent empty list.
+        """
+        n = limit or self.max_articles
+        q = (query or "").strip()
+        if not q:
+            raise NewsFetchError([{"source": "none", "outcome": "error",
+                                   "count": 0, "detail": "empty query"}])
+        report: List[Dict[str, object]] = []
+        pooled: List[NewsArticle] = []
+
+        def _record(name: str, arts: List[NewsArticle], detail: str = "") -> None:
+            report.append({"source": name,
+                           "outcome": "ok" if arts else "empty",
+                           "count": len(arts), "detail": detail})
+            pooled.extend(arts)
+
+        # 1. Google News RSS (24h, then 48h fallback)
+        try:
+            g_arts, g_attempts = self._src_google_news(q, n)
+            report.extend(g_attempts)
+            pooled.extend(g_arts)
+        except Exception as e:  # noqa: BLE001 - recorded in the report, raised loudly below
+            report.append({"source": "google-news-rss", "outcome": "error",
+                           "count": 0, "detail": f"{type(e).__name__}: {e}"})
+        # 2. Bing News RSS
+        try:
+            _record("bing-news-rss", self._src_bing_news(q, n))
+        except Exception as e:  # noqa: BLE001 - recorded, chain continues
+            report.append({"source": "bing-news-rss", "outcome": "error",
+                           "count": 0, "detail": f"{type(e).__name__}: {e}"})
+        # 3. DuckDuckGo HTML + regex extraction
+        try:
+            _record("duckduckgo-html", self._src_duckduckgo(q, n))
+        except Exception as e:  # noqa: BLE001 - recorded, chain continues
+            report.append({"source": "duckduckgo-html", "outcome": "error",
+                           "count": 0, "detail": f"{type(e).__name__}: {e}"})
+
+        ranked = self._dedupe_rank_topic(pooled, q, n)
+        if not ranked:
+            raise NewsFetchError(report)
+        return ranked, report
+
+    def search_news(self, query: str, limit: Optional[int] = None) -> List[NewsArticle]:
+        """Multi-source news search (#121).
+
+        Same signature as before; now backed by the Google → Bing →
+        DuckDuckGo chain with relevance ranking. Raises
+        :class:`NewsFetchError` (carrying the per-source report) when
+        every source failed or returned nothing — callers surface it
+        loudly instead of reporting an empty result.
+        """
+        articles, _report = self.search_news_multi(query, limit)
+        return articles
 
     def get_top_world_news(self, limit: int = 8) -> List[NewsArticle]:
         """Fetch real-time top global world headlines from the last 24 hours."""
