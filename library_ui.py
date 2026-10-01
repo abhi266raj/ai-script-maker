@@ -265,10 +265,15 @@ def inject_library_css() -> None:
         background: rgba(128, 128, 128, 0.08) !important;
         border-radius: 14px !important;
     }
+    /* #56: width: fit-content (not auto) — the column can never exceed
+       its content even if the row's layout mode is not flex (e.g. a
+       grid, where width:auto would fill the track) or a future
+       Streamlit DOM nests differently. flex: 0 0 auto stays the primary
+       shrink-wrap on the verified DOM. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
         flex: 0 0 auto !important;
-        width: auto !important;
+        width: fit-content !important;
         min-width: 0 !important;
         position: relative !important;
     }
@@ -283,6 +288,9 @@ def inject_library_css() -> None:
         [data-testid="stHorizontalBlock"] .lib-chip {
         padding-right: 34px !important;
         white-space: nowrap !important;
+        width: fit-content !important;  /* #56: the pill hugs its label —
+           never wider than content + padding, even if an ancestor rule
+           misbehaves. max-width below still caps long labels. */
         max-width: 340px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -747,6 +755,26 @@ def _news_chip_label(title: str, source: str) -> str:
     title = (title or "").strip() or "News link"
     source = (source or "").strip()
     return source if source else title
+
+
+def _chip_col_weights(labels) -> list:
+    """Proportional ``st.columns`` weights for chip rows (#56).
+
+    Chip columns used to be equal-weighted (``st.columns(len(tags))``), so
+    every column was as wide as the longest label and short pills floated
+    in dead space whenever the CSS shrink-wrap chain missed (the
+    ``stLayoutWrapper``-adjacent selectors assume one exact Streamlit DOM,
+    and requirements.txt leaves Streamlit unpinned). The CSS shrink-wrap
+    (``flex: 0 0 auto`` + ``width: fit-content``) remains the primary
+    sizer; these weights are the fallback so a missed selector can only
+    ever produce a *proportionally* sized column, never a full-width one.
+
+    Weight tracks the rendered pill width: label length plus ~6 chars for
+    the pill's fixed horizontal padding (12px left + 34px × clearance ≈
+    46px at ~7.5px/char). The floor keeps degenerate labels tappable.
+    Pure (no Streamlit) so it is unit-testable.
+    """
+    return [max(len(str(_l)), 4) + 6 for _l in labels]
 
 
 def _fm_warmup_button_props(state: dict) -> tuple:
@@ -1464,7 +1492,7 @@ def _render_story_detail(story_id: str) -> None:
         st.markdown('<div class="lib-section">Hashtags</div>', unsafe_allow_html=True)
         st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
                     unsafe_allow_html=True)
-        _tcols = st.columns(len(tags))
+        _tcols = st.columns(_chip_col_weights(tags))
         for _i, (_tc, _tag) in enumerate(zip(_tcols, tags)):
             with _tc:
                 st.markdown(f'<span class="lib-chip">{_html.escape(_tag)}</span>',
@@ -1551,12 +1579,13 @@ def _render_story_detail(story_id: str) -> None:
         st.markdown('<div class="lib-section">News Links</div>', unsafe_allow_html=True)
         st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
                     unsafe_allow_html=True)
-        _lcols = st.columns(len(links))
-        for _i, (_lc, _lk) in enumerate(zip(_lcols, links)):
+        _labels = [_news_chip_label((_lk.get("title") or "News link"),
+                                       (_lk.get("source") or ""))
+                   for _lk in links]
+        _lcols = st.columns(_chip_col_weights(_labels))
+        for _i, (_lc, _lk, _label) in enumerate(zip(_lcols, links, _labels)):
             _ltitle = _lk.get("title", "News link") or "News link"
-            _lsrc = _lk.get("source", "") or ""
             _lurl = (_lk.get("url") or "").strip()
-            _label = _news_chip_label(_ltitle, _lsrc)
             with _lc:
                 st.markdown(
                     f'<span class="lib-chip"><a href="{_html.escape(_lurl, quote=True)}" '
