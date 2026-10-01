@@ -16,7 +16,6 @@ class WordCountDurationAgent:
         self,
         narration: str,
         hook: str,
-        cta: str,
         target_seconds: int,
         sub_instruction: Optional[str] = None,
     ) -> Tuple[bool, int, str, float, str, int, str]:
@@ -37,7 +36,7 @@ class WordCountDurationAgent:
 
         w_count, w_status, w_feedback = verify_word_count(narration, target_seconds)
         e_dur, t_status, t_feedback = verify_timeline_fit(w_count, target_seconds)
-        clarity = evaluate_clarity(narration, hook, cta)
+        clarity = evaluate_clarity(narration, hook)
 
         # STRICT VERIFICATION:
         # Over max_words -> FAIL (Issue)

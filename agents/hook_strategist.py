@@ -110,13 +110,8 @@ class CharacterFinaliserAgent(BaseAgent):
         duration_sec: int = 30,
         sub_instruction: Optional[str] = None,
         engine_mode: str = "first_local_then_agy",
-    ) -> Tuple[str, str]:
-        """Generate a viral 0-3s Hindi hook and an engaging Call-To-Action (CTA)."""
-        cta_guidance = (
-            "Keep CTA ultra-short (1-2 words e.g. 'फॉलो करें!') because reel is very short."
-            if duration_sec <= 10 else
-            "Keep CTA concise (3-5 words e.g. 'फॉलो करें और राय बताएं!')."
-        )
+    ) -> str:
+        """Generate a viral 0-3s Hindi hook. No CTA is generated (removed per user request)."""
         sub_directive = f"\nChief Editor Directive:\n{sub_instruction}\n" if sub_instruction else ""
         prompt = render_prompt(
             "hook_strategist/craft_hook.md",
@@ -125,7 +120,6 @@ class CharacterFinaliserAgent(BaseAgent):
             angle_desc=angle_desc,
             tone=tone,
             duration_sec=duration_sec,
-            cta_guidance=cta_guidance,
             sub_directive=sub_directive,
             verification_summary=verification.verification_summary,
         )
@@ -142,27 +136,19 @@ class CharacterFinaliserAgent(BaseAgent):
             ) from e
 
         hook = ""
-        cta = ""
 
         for line in raw_output.split("\n"):
             line_str = line.strip()
             if line_str.startswith("HOOK:"):
                 hook = line_str.replace("HOOK:", "").strip("[] \"'\"")
-            elif line_str.startswith("CTA:"):
-                cta = line_str.replace("CTA:", "").strip("[] \"'\"")
 
         if not hook:
             raise ModelGenerationError(
                 "Stage 2 failed: hook model returned no parseable HOOK: line. "
                 f"News topic: {news_topic[:200]!r}. Raw output snippet: {(raw_output or '')[:300]!r}"
             )
-        if not cta:
-            raise ModelGenerationError(
-                "Stage 2 failed: hook model returned no parseable CTA: line. "
-                f"News topic: {news_topic[:200]!r}. Raw output snippet: {(raw_output or '')[:300]!r}"
-            )
 
-        return hook, cta
+        return hook
 
     def craft_hooks_batch(
         self,
@@ -173,14 +159,12 @@ class CharacterFinaliserAgent(BaseAgent):
         duration_sec: int = 30,
         sub_instruction: Optional[str] = None,
         engine_mode: str = "first_local_then_agy",
-    ) -> List[Tuple[str, str]]:
-        """Generate viral hooks and CTAs for multiple angles in a single optimized inference call."""
+    ) -> List[str]:
+        """Generate viral hooks for multiple angles in a single optimized inference call.
+
+        No CTA is generated (removed per user request): each angle yields one hook string.
+        """
         angles_text = "\n".join([f"ANGLE {i+1}: {a[0]} ({a[1]})" for i, a in enumerate(angles)])
-        cta_guidance = (
-            f"Because reel is {duration_sec}s, keep CTA strictly 1 to 3 words (e.g. 'फॉलो करें!' or 'शेयर करें!')."
-            if duration_sec <= 10 else
-            f"Keep CTA concise (under 6 words)."
-        )
         sub_directive = f"\nChief Editor Directive for Hooks & Angles:\n{sub_instruction}\n" if sub_instruction else ""
         facts_text = "\n".join([f"- {f}" for f in (verification.verified_facts if verification else [])[:3]])
         prompt = render_prompt(
@@ -188,7 +172,6 @@ class CharacterFinaliserAgent(BaseAgent):
             news_topic=news_topic,
             tone=tone,
             duration_sec=duration_sec,
-            cta_guidance=cta_guidance,
             sub_directive=sub_directive,
             facts_text=facts_text or news_topic,
             verification_summary=verification.verification_summary if verification else news_topic,
@@ -206,7 +189,7 @@ class CharacterFinaliserAgent(BaseAgent):
                 f"News topic: {news_topic[:200]!r}"
             ) from e
 
-        results: List[Tuple[str, str]] = []
+        results: List[str] = []
         blocks = re.split(r"ANGLE\s*(\d+):", raw_output, flags=re.IGNORECASE)
 
         parsed_map = {}
@@ -215,34 +198,28 @@ class CharacterFinaliserAgent(BaseAgent):
                 idx = int(blocks[i]) - 1
                 content = blocks[i + 1]
                 h = None
-                c = None
                 for line in content.split("\n"):
                     ls = line.strip()
                     if ls.startswith("HOOK:"):
                         h = ls.replace("HOOK:", "").strip("[] \"'\"")
-                    elif ls.startswith("CTA:"):
-                        c = ls.replace("CTA:", "").strip("[] \"'\"")
-                if h and c:
-                    parsed_map[idx] = (h, c)
+                if h:
+                    parsed_map[idx] = h
 
         if 0 not in parsed_map and len(angles) == 1:
             h = None
-            c = None
             for line in raw_output.split("\n"):
                 ls = line.strip()
                 if ls.upper().startswith("HOOK:") and not h:
                     h = ls.split(":", 1)[1].strip("[] \"'\"")
-                elif ls.upper().startswith("CTA:") and not c:
-                    c = ls.split(":", 1)[1].strip("[] \"'\"")
-            if h and c:
-                parsed_map[0] = (h, c)
+            if h:
+                parsed_map[0] = h
 
-        # Fail loudly: every angle must get a model-generated hook/CTA.
+        # Fail loudly: every angle must get a model-generated hook.
         # Never substitute template hooks for angles the model skipped.
         missing = [i for i in range(len(angles)) if i not in parsed_map]
         if missing:
             raise ModelGenerationError(
-                f"Stage 2 failed: hooks batch model returned no parseable HOOK/CTA for angle(s) "
+                f"Stage 2 failed: hooks batch model returned no parseable HOOK for angle(s) "
                 f"{[i + 1 for i in missing]} of {len(angles)}. "
                 f"Raw output snippet: {(raw_output or '')[:400]!r}"
             )

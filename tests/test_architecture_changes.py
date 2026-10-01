@@ -497,7 +497,7 @@ class TestFactsPiping:
             finalise_character_groups=fake_fcg,
             derive_scene_options=MagicMock(),
             # Stage 2 generates hooks via the model (fail-loud); mock it here.
-            craft_hooks_batch=MagicMock(return_value=[("H", "C")]),
+            craft_hooks_batch=MagicMock(return_value=["H"]),
         )
         ed.execute_stage_2(base_state(verif), engine_mode="test")
         v = captured.get("verification")
@@ -531,7 +531,7 @@ class TestFactsPiping:
         state = base_state(verif)
         state.update({
             "selected_angles": [("Funny & Relatable", "why")],
-            "hooks_and_ctas": [(HOOK, "Follow!")],
+            "hooks": [HOOK],
             "finalized_characters": [],
         })
         ed.execute_stage_3(state, engine_mode="test")

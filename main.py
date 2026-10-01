@@ -91,7 +91,6 @@ def run_cli(news: str, scenario: str, batch: int = 10, target_sec: int = 30):
             Panel(
                 f"[bold red]🔥 HOOK (0-3s):[/bold red] {first.hook_hindi}\n\n"
                 f"[bold cyan]📜 HINDI NARRATION:[/bold cyan]\n{first.narration_hindi}\n\n"
-                f"[bold green]📣 CALL TO ACTION:[/bold green] {first.call_to_action}\n\n"
                 f"[dim]Word Count: {first.word_count} ({first.word_count_status}) | Est Duration: {first.estimated_duration_sec}s (Target: {first.target_duration_sec}s)[/dim]",
                 title=f"Sample: {first.title}",
                 border_style="blue",

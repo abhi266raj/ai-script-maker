@@ -98,12 +98,10 @@ def test_timing_auditor_agent_verification():
     """
     target_sec = 15  # min=12, rec=30, max=34
     hook = "सावधान दोस्तों!"
-    cta = "फॉलो जरूर करें!"
-
     # Test A: Very short dialogue (6 words) -> MUST PASS (less is not an issue)
     short_dialogue = "यह तकनीक पूरी दुनिया बदल देगी"
     passed, w_cnt, w_stat, e_dur, t_stat, clarity, feedback = timing_auditor.audit_script(
-        narration=short_dialogue, hook=hook, cta=cta, target_seconds=target_sec
+        narration=short_dialogue, hook=hook, target_seconds=target_sec
     )
     assert passed is True, f"Short dialogue should pass without issue, got: {feedback}"
     assert w_stat == "Concise (Safe)"
@@ -112,7 +110,7 @@ def test_timing_auditor_agent_verification():
     # Test B: Optimal dialogue (28 words) -> MUST PASS
     opt_dialogue = " " .join(["यह तकनीक पूरी दुनिया को हिलाकर रख देगी और भारत का नाम सबसे ऊपर होगा"] * 2)
     passed, w_cnt, w_stat, e_dur, t_stat, clarity, feedback = timing_auditor.audit_script(
-        narration=opt_dialogue, hook=hook, cta=cta, target_seconds=target_sec
+        narration=opt_dialogue, hook=hook, target_seconds=target_sec
     )
     assert passed is True
     assert w_stat == "Optimal"
@@ -120,7 +118,7 @@ def test_timing_auditor_agent_verification():
     # Test C: Over-budget dialogue (50 words > 34 max) -> MUST FAIL (issue if more)
     over_dialogue = " " .join(["खबर बहुत बड़ी है और विश्लेषण बहुत लंबा है"] * 7)
     passed, w_cnt, w_stat, e_dur, t_stat, clarity, feedback = timing_auditor.audit_script(
-        narration=over_dialogue, hook=hook, cta=cta, target_seconds=target_sec
+        narration=over_dialogue, hook=hook, target_seconds=target_sec
     )
     assert passed is False, f"Over-budget dialogue must fail verification, got: {feedback}"
     assert w_stat == "Exceeds Limit"

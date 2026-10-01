@@ -119,11 +119,10 @@ class TestStepwiseWorkflow(unittest.TestCase):
         )
 
         self.assertEqual(state2["step"], 2)
-        self.assertIn("hooks_and_ctas", state2)
-        self.assertEqual(len(state2["hooks_and_ctas"]), 1)
-        hook, cta = state2["hooks_and_ctas"][0]
+        self.assertIn("hooks", state2)
+        self.assertEqual(len(state2["hooks"]), 1)
+        hook = state2["hooks"][0]
         self.assertTrue(len(hook) > 0)
-        self.assertTrue(len(cta) > 0)
         self.assertIn(extra_hook_inst, state2["sub_instructions"]["hook_strategist"])
         # Verify Character & Scene Finalisation output (2X generation)
         self.assertIn("available_characters", state2)
@@ -249,7 +248,7 @@ class TestStepwiseWorkflow(unittest.TestCase):
         
         # First attempt of Step 2
         state2_first = reel_workflow.run_step_2(state=state1, engine_mode="fm_only")
-        hooks_first = list(state2_first["hooks_and_ctas"])
+        hooks_first = list(state2_first["hooks"])
 
         # Re-run Step 2 with new extra instruction
         state2_rerun = reel_workflow.run_step_2(

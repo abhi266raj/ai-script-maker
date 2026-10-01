@@ -2786,7 +2786,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
         _roles = [getattr(c, "role_or_job", "?") for c in _chars]
         _group_a = step_state.get("character_group_a") or []
         _group_b = step_state.get("character_group_b") or []
-        _hooks = step_state.get("hooks_and_ctas") or []
+        _hooks = step_state.get("hooks") or []
 
         _outer_ctx2 = st.expander(_root_title, expanded=_is_main) if as_root else contextlib.nullcontext()
         with _outer_ctx2:
@@ -2870,11 +2870,10 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                 with st.expander("2.3 Viral Angles & Hooks Formulation — 🤖 AI generation", expanded=False):
                     st.markdown("**📥 Input:**")
                     st.caption(f"Selected editorial angle(s) + verified news + vibe: {_tone}")
-                    st.markdown("**📤 Output (Formulated Hooks & CTAs):**")
+                    st.markdown("**📤 Output (Formulated Hooks):**")
                     for _hi, _hk in enumerate(_hooks, 1):
-                        st.markdown(f"**Angle {_hi}:** `{getattr(_hk, 'angle', '')}`")
-                        st.markdown(f"• 🎣 **Hook:** “{getattr(_hk, 'hook_text', '')}”")
-                        st.markdown(f"• 🎯 **CTA:** “{getattr(_hk, 'call_to_action', '')}”")
+                        _hook_text = _hk if isinstance(_hk, str) else getattr(_hk, "hook_text", "")
+                        st.markdown(f"• 🎣 **Hook {_hi}:** “{_hook_text}”")
                     _render_raw_json(_hooks, label="Raw JSON — hooks", key_prefix=f"{key_prefix}s2_hk_")
 
     elif step_num == 3:

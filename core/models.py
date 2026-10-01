@@ -118,7 +118,9 @@ class ReelScript(BaseModel):
     angle: str
     hook_hindi: str
     narration_hindi: str
-    call_to_action: str
+    # Auto-generated CTAs were removed per user request: always "" for new
+    # scripts. Kept (optional) so previously saved scripts still load.
+    call_to_action: str = ""
     scenes: List[SceneItem] = Field(default_factory=list)
 
     # Step 2: Spoken Dialogue Word Count Verification (Narration Only)

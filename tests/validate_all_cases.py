@@ -153,7 +153,7 @@ def test_5_dialogue_pacing_and_asymmetry_verification():
 
     # Under-budget (less words) must pass and NOT be an issue
     passed_under, _, status_under, _, _, _, fb_under = timing_auditor.audit_script(
-        narration="इसरो का नया मिशन सफल रहा", hook="बड़ी खबर!", cta="फॉलो करें", target_seconds=10
+        narration="इसरो का नया मिशन सफल रहा", hook="बड़ी खबर!", target_seconds=10
     )
     assert passed_under is True, f"Under budget must pass: {fb_under}"
     assert "Safe" in status_under or "Optimal" in status_under
@@ -162,7 +162,7 @@ def test_5_dialogue_pacing_and_asymmetry_verification():
     # Over-budget (more words than max) must fail and BE flagged as an issue
     long_narration = " " .join(["अत्यंत महत्वपूर्ण और लंबा विश्लेषण"] * 10)  # 40 words > 23 max for 10s
     passed_over, _, status_over, _, _, _, fb_over = timing_auditor.audit_script(
-        narration=long_narration, hook="बड़ी खबर!", cta="फॉलो करें", target_seconds=10
+        narration=long_narration, hook="बड़ी खबर!", target_seconds=10
     )
     assert passed_over is False, "Over max_words dialogue must fail verification!"
     assert status_over == "Exceeds Limit"

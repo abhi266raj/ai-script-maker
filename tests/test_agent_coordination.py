@@ -229,7 +229,7 @@ class TestAgentCoordination(unittest.TestCase):
         # 10s -> 2 scenes
         res_10s = dialogue_writer.write_dialogues_batch(
             news_input="Indore poster campaign",
-            items=[{"angle": "Funny & Relatable", "hook": "इंदौर में पोस्टर लग गए!", "cta": "फॉलो करें!"}],
+            items=[{"angle": "Funny & Relatable", "hook": "इंदौर में पोस्टर लग गए!"}],
             tone="Funny & Relatable",
             duration_sec=10,
             verification=report,
@@ -243,7 +243,7 @@ class TestAgentCoordination(unittest.TestCase):
         # 45s -> 4 scenes
         res_45s = dialogue_writer.write_dialogues_batch(
             news_input="Indore poster campaign",
-            items=[{"angle": "Funny & Relatable", "hook": "इंदौर में पोस्टर लग गए!", "cta": "फॉलो करें!"}],
+            items=[{"angle": "Funny & Relatable", "hook": "इंदौर में पोस्टर लग गए!"}],
             tone="Funny & Relatable",
             duration_sec=45,
             verification=report,

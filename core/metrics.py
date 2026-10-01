@@ -161,15 +161,15 @@ def verify_timeline_fit(word_count: int, target_seconds: int = 30) -> Tuple[floa
     return estimated_seconds, status, feedback
 
 
-def evaluate_clarity(narration: str, hook: str, cta: str) -> int:
+def evaluate_clarity(narration: str, hook: str) -> int:
     """
-    Step 4: Score clarity, retention hook, and call to action (0 - 100).
+    Step 4: Score clarity and retention hook (0 - 100).
+
+    No CTA is scored: auto-generated CTAs were removed per user request.
     """
     score = 80
     if hook and len(hook.strip()) > 4:
         score += 8
-    if cta and len(cta.strip()) > 4:
-        score += 7
     if any(p in hook for p in ["!", "?", "🚀", "🔥", "😂", "क्या", "सावधान", "भाई", "सुनो"]):
         score += 5
     return min(score, 99)

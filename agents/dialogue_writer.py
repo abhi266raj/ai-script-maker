@@ -2198,9 +2198,11 @@ class DialogueNarrationAgent(BaseAgent):
             entry = parsed_map.get(i)
             if entry and len(entry[0]) > 10:
                 raw_text, scene_lines = entry
-                final_text = smart_trim_dialogue(raw_text, budget["max_words"], budget["recommended_words"], it["cta"])
+                final_text = smart_trim_dialogue(raw_text, budget["max_words"], budget["recommended_words"])
 
-                # If no structured scene lines parsed, split sentences evenly across characters
+                # If no structured scene lines parsed, split sentences evenly across characters.
+                # No CTA is ever injected as a scene line (removed per user request):
+                # the final scene falls back to the trimmed narration text.
                 if not scene_lines:
                     sentences = [s.strip() for s in re.split(r"[।!?]", final_text) if s.strip()]
                     scene_lines = []
@@ -2208,8 +2210,6 @@ class DialogueNarrationAgent(BaseAgent):
                         char_for_scene = personas[s_idx % len(personas)]
                         if s_idx < len(sentences):
                             line_text = sentences[s_idx] + "।"
-                        elif s_idx == actual_scenes - 1:
-                            line_text = it["cta"]
                         else:
                             line_text = final_text
                         scene_lines.append({
