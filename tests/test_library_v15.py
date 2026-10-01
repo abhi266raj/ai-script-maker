@@ -1450,8 +1450,11 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     # deep-linking into the installed Mac app (#28) with NO target="_blank"
     # (#95) — st.link_button's forced new tab defeats the deep link.
     assert fake.link_buttons == []
-    assert len(fake.markup) == 1
-    anchor = fake.markup[0]
+    # #90: the first markup chunk is the tbicon marker for the icon-only
+    # trigger; the second is the WhatsApp anchor.
+    assert len(fake.markup) == 2
+    assert fake.markup[0] == '<div data-tbicon style="display:none"></div>'
+    anchor = fake.markup[1]
     assert 'class="lib-wa-direct"' in anchor
     assert "target=" not in anchor
     import re as _re
