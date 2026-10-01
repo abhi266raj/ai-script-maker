@@ -733,7 +733,7 @@ def _library_ui_module():
     return library_ui
 
 
-def test_compose_news_tags_text_links_then_tags():
+def test_compose_news_tags_text_title_then_tags_then_links():
     lui = _library_ui_module()
     meta = {
         "news_links": [
@@ -742,8 +742,9 @@ def test_compose_news_tags_text_links_then_tags():
         ],
         "hashtags": ["#DogShowdown", "#Reel"],
     }
-    assert lui._compose_news_tags_text(meta) == (
-        "https://a.example/1\nhttps://b.example/2\n\n#DogShowdown #Reel"
+    assert lui._compose_news_tags_text(meta, "My Story Title") == (
+        "My Story Title\n\n#DogShowdown #Reel\n\n"
+        "https://a.example/1\nhttps://b.example/2"
     )
 
 
@@ -758,14 +759,15 @@ def test_compose_news_tags_text_dedupes_and_skips_blanks():
         ],
         "hashtags": [],
     }
-    assert lui._compose_news_tags_text(meta) == "https://a.example/1\nhttps://b.example/2"
+    assert lui._compose_news_tags_text(meta, "T") == "T\n\nhttps://a.example/1\nhttps://b.example/2"
 
 
 def test_compose_news_tags_text_tags_only_and_empty():
     lui = _library_ui_module()
+    assert lui._compose_news_tags_text({"hashtags": ["#Only"]}, "T") == "T\n\n#Only"
+    assert lui._compose_news_tags_text({}, "") == ""
+    assert lui._compose_news_tags_text({"news_links": [], "hashtags": []}, "") == ""
     assert lui._compose_news_tags_text({"hashtags": ["#Only"]}) == "#Only"
-    assert lui._compose_news_tags_text({}) == ""
-    assert lui._compose_news_tags_text({"news_links": [], "hashtags": []}) == ""
 
 
 # ---------------------------------------------------------------------------
