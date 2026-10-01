@@ -2701,6 +2701,48 @@ def start_fm_warmup() -> Tuple[bool, str]:
         return False, f"Could not start warm-up: {type(e).__name__}: {e}"
 
 
+# ---------------------------------------------------------------------------
+# Automatic cold-start (#115)
+# ---------------------------------------------------------------------------
+
+_auto_cold_start_lock = threading.Lock()
+_auto_cold_start_fired = False
+
+
+def maybe_auto_cold_start() -> None:
+    """Kick off the FM warm-up automatically once per process (#115).
+
+    Cold-start init must run in a background thread without disturbing
+    anything else: the UI renders immediately and stays interactive while
+    the probe warms up the on-device model. This only *fires* the daemon
+    thread via :func:`start_fm_warmup` — it never waits for it, never
+    touches ``st.session_state`` (not thread-safe), and never raises.
+
+    Safe to call on every render: the per-process flag guarantees at most
+    one kick-off, and ``start_fm_warmup`` itself refuses a double-start
+    while a warm-up is already in flight. If the kick-off fails, it stays
+    silent here — the manual "Cold start" button remains available, and
+    the worker itself fails loudly via the mailbox on probe failure.
+    """
+    global _auto_cold_start_fired
+    with _auto_cold_start_lock:
+        if _auto_cold_start_fired:
+            return
+        _auto_cold_start_fired = True
+    try:
+        start_fm_warmup()
+    except Exception:
+        # Never break the render for a background kick-off failure.
+        pass
+
+
+def _reset_auto_cold_start_for_tests() -> None:
+    """Reset the per-process auto cold-start flag. Tests only."""
+    global _auto_cold_start_fired
+    with _auto_cold_start_lock:
+        _auto_cold_start_fired = False
+
+
 def _do_reset(story_id: str, topic: str,
               ai_engine: Optional[str] = None) -> Tuple[bool, str]:
     """Destructive reset: discard ALL hashtags, fetched images and news

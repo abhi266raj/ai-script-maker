@@ -1259,6 +1259,10 @@ def _render_fm_warmup_result() -> None:
 
 def render_tab_bar() -> str:
     """Render the macOS-style tab bar. Returns 'studio' or 'library'."""
+    # #115: cold-start init runs in a background thread — fire it once per
+    # process before anything else so the UI renders immediately and stays
+    # interactive while the FM probe warms up. Never blocks, never raises.
+    lib.maybe_auto_cold_start()
     inject_library_css()
     # Developer warm-up (issue #37) rides in a compact trailing column so
     # the normal author flow keeps its centered tab strip untouched.
