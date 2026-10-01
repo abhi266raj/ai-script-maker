@@ -405,44 +405,22 @@ def select_script_grounded_trio(topic_or_script: str) -> Tuple[str, str, str]:
     return random.choice(DIVERSE_SOCIOECONOMIC_TRIOS)
 
 
-def format_sample_personas(personas: List[str], character_count: int) -> List[str]:
-    """Ensure sample personas match requested character count with rich, sanitized tags."""
-    if not personas:
-        return []
-    if character_count == 1:
-        return [sanitize_persona_name(personas[0])]
-    if character_count == 2:
-        if len(personas) >= 2:
-            return [sanitize_persona_name(personas[0]), sanitize_persona_name(personas[1])]
-        first = personas[0]
-        f_lower = first.lower()
-        if "wife" in f_lower or "पत्नी" in f_lower or "homemaker" in f_lower:
-            partner = "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)"
-        elif "husband" in f_lower or "पति" in f_lower:
-            partner = "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)"
-        elif "father" in f_lower or "पिता" in f_lower:
-            partner = "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)"
-        elif "son" in f_lower or "बेटा" in f_lower:
-            partner = "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)"
-        elif "doctor" in f_lower or "डॉक्टर" in f_lower:
-            partner = "🧑 Ramesh (Patient - मरीज)"
-        elif "teacher" in f_lower or "मास्टर" in f_lower:
-            partner = "🧑 Aarav (Student - छात्र)"
-        elif "colleague" in f_lower or "कलीग" in f_lower:
-            partner = "🧑 Rohan (Office Colleague / Colleague 2 - जूनियर कलीग)"
-        else:
-            partner = "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)"
-        return [sanitize_persona_name(first), sanitize_persona_name(partner)]
-    if character_count >= 3:
-        res = [sanitize_persona_name(p) for p in personas[:character_count]]
-        while len(res) < character_count:
-            res.append(sanitize_persona_name(f"👤 Character {len(res)+1} (साक्षी / साथी)"))
-        return res
-    return [sanitize_persona_name(p) for p in personas]
+def format_sample_personas(personas: List[str]) -> List[str]:
+    """Sanitize sample-derived personas.
+
+    The sample story is the director's guide: its cast is returned whole and is
+    NEVER truncated or padded to fit a configured character count. When a
+    sample is present, the sample's cast wins on conflict with setup rules.
+    """
+    return [sanitize_persona_name(p) for p in personas or []]
 
 
-def format_speaker_names_to_personas(speaker_names: List[str], character_count: int) -> List[str]:
-    """Map raw speaker names extracted from sample script to rich, properly tagged personas."""
+def format_speaker_names_to_personas(speaker_names: List[str]) -> List[str]:
+    """Map raw speaker names extracted from sample script to rich, properly tagged personas.
+
+    Returns one persona per detected speaker — never force-fit to a configured
+    character count; the sample's cast wins on conflict with setup rules.
+    """
     role_map = {
         "wife": "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
         "patni": "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
@@ -487,10 +465,10 @@ def format_speaker_names_to_personas(speaker_names: List[str], character_count: 
         else:
             emoji = "👩" if any(f in n_lower for f in female_names) else "🧑"
             personas.append(f"{emoji} {raw_name.strip().title()} (Character {idx+1})")
-    return format_sample_personas(personas, character_count)
+    return format_sample_personas(personas)
 
 
-def extract_sample_story_personas(sample_story: str, character_count: int = 2) -> Optional[List[str]]:
+def extract_sample_story_personas(sample_story: str) -> Optional[List[str]]:
     """
     Extract and construct authentic character personas directly from a sample story or sample script.
     Follows sample story discrepancy precedence:
@@ -498,6 +476,9 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
     2. Explicit dialogue speaker headings (e.g. 'ANANYA: ...', 'VIKRAM: ...', 'WIFE: ...', 'HUSBAND: ...').
     3. Interpersonal relationships explicitly mentioned in narrative prose:
        (Husband & Wife, Father & Son, Mother & Son, Colleagues, Friends, Doctor & Patient, etc.).
+
+    The sample is the director's guide: the extracted cast is returned whole and
+    is NEVER truncated or padded to fit a configured character count.
     """
     if not sample_story or not sample_story.strip():
         return None
@@ -518,7 +499,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
                 emoji = "👩" if any(f in c_name.lower() or f in role_clean.lower() for f in female_names) else "🧑"
                 extracted.append(f"{emoji} {c_name.title()} ({role_clean})")
         if extracted:
-            return format_sample_personas(extracted, character_count)
+            return format_sample_personas(extracted)
 
     # 2. Check for explicit dialogue speaker cues (e.g., 'ANANYA: "..."', 'VIKRAM: "..."', 'Wife: "..."', 'पति: "..."')
     RESERVED_HEADERS = {
@@ -538,7 +519,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
                 detected_speakers.append(spk_clean)
 
     if detected_speakers:
-        return format_speaker_names_to_personas(detected_speakers, character_count)
+        return format_speaker_names_to_personas(detected_speakers)
 
     # 3. Explicit relationship or role mentions in narrative prose
     # A. Husband & Wife / पति-पत्नी
@@ -547,7 +528,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👩 Sunita (Wife / Pragmatic Homemaker - समझदार पत्नी)",
             "🧑 Rajesh (Husband / Salaried Man - नौकरीपेशा पति)",
             "👵 Amma (Elder Mother-in-Law - सास जी)"
-        ], character_count)
+        ])
 
     # B. Father & Son / पिता-पुत्र
     if any(k in lower_text for k in ["father and son", "father & son", "father son", "pita aur beta", "पिता और बेटा", "पिता-पुत्र", "बाप-बेटा"]):
@@ -555,7 +536,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👴 Sharma Ji (Traditional Father - पुराने खयालात के पिता)",
             "🧑 Aarav (Gen-Z Son - आधुनिक बेटा)",
             "👩 Sunita (Mother - माँ)"
-        ], character_count)
+        ])
 
     # C. Mother & Son / माँ-बेटा
     if any(k in lower_text for k in ["mother and son", "mother & son", "mother son", "maa aur beta", "माँ और बेटा", "माँ-बेटा", "माता-पुत्र"]):
@@ -563,7 +544,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👩 Meera (Caring Mother - ममतामयी माँ)",
             "🧑 Kabir (Career-Minded Son - महत्वाकांक्षी बेटा)",
             "👴 Chacha Ji (Elder Uncle - चाचा जी)"
-        ], character_count)
+        ])
 
     # D. Mother & Daughter / माँ-बेटी
     if any(k in lower_text for k in ["mother and daughter", "mother & daughter", "mother daughter", "maa aur beti", "माँ और बेटी", "माँ-बेटी"]):
@@ -571,7 +552,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👩 Meera (Caring Mother - ममतामयी माँ)",
             "👩 Ananya (College Daughter - समझदार बेटी)",
             "👵 Dadi (Grandmother - दादी)"
-        ], character_count)
+        ])
 
     # E. Colleagues / Coworkers / सहकर्मी / कलीग
     if any(k in lower_text for k in ["colleague", "coworker", "office colleagues", "दो कलीग", "सहकर्मी", "कलीग"]):
@@ -579,7 +560,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👩 Priya (Senior Office Colleague / Colleague 1 - सीनियर कलीग)",
             "🧑 Rohan (Office Colleague / Colleague 2 - जूनियर कलीग)",
             "👔 Manager Mehra (Corporate Boss - मैनेजर)"
-        ], character_count)
+        ])
 
     # F. Friends / दोस्त
     if any(k in lower_text for k in ["two friends", "friends", "दो दोस्त", "मित्र"]):
@@ -587,7 +568,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👩 Ananya (College Friend 1 - कॉलेज दोस्त)",
             "🧑 Vikram (Street-Smart Friend 2 - पक्का यार)",
             "🧑 Rohan (Witty Friend 3 - दोस्त 3)"
-        ], character_count)
+        ])
 
     # G. Doctor & Patient / डॉक्टर और मरीज
     if any(k in lower_text for k in ["doctor and patient", "doctor patient", "doctor & patient", "डॉक्टर और मरीज", "डॉक्टर और पेशेंट"]):
@@ -595,7 +576,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "🩺 Dr. Rajesh (Hospital Doctor - वरिष्ठ चिकित्सक)",
             "🧑 Ramesh (Patient - मरीज)",
             "👩 Nurse Sneha (Staff Nurse - नर्स)"
-        ], character_count)
+        ])
 
     # H. Teacher & Student / शिक्षक और छात्र
     if any(k in lower_text for k in ["teacher and student", "teacher student", "teacher & student", "मास्टर और छात्र", "शिक्षक और छात्र"]):
@@ -603,7 +584,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "📚 Master Ji (School Teacher - सरकारी शिक्षक)",
             "🧑 Aarav (Student - छात्र)",
             "👵 Amma (Parent - अभिभावक)"
-        ], character_count)
+        ])
 
     # I. Shopkeeper & Customer / दुकानदार और ग्राहक
     if any(k in lower_text for k in ["shopkeeper and customer", "shopkeeper customer", "shopkeeper & customer", "दुकानदार और ग्राहक"]):
@@ -611,7 +592,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "🛒 Mohan (Local Shopkeeper - किराना दुकानदार)",
             "🧑 Rajesh (Customer - ग्राहक)",
             "🛵 Kabir (Delivery Guy - डिलीवरी राइडर)"
-        ], character_count)
+        ])
 
     # J. Lawyer & Client / वकील और मुवक्किल
     if any(k in lower_text for k in ["lawyer and client", "lawyer client", "lawyer & client", "वकील और मुवक्किल"]):
@@ -619,7 +600,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "⚖️ Advocate Verma (Senior Lawyer - वरिष्ठ वकील)",
             "🧑 Kabir (Client - मुवक्किल)",
             "👔 Clerk Tripathi (Court Clerk - पेशकार)"
-        ], character_count)
+        ])
 
     # K. Neighbors / पड़ोसी
     if any(k in lower_text for k in ["neighbor", "neighbour", "दो पड़ोसी", "पड़ोसी"]):
@@ -627,7 +608,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "🧑 Verma Ji (Curious Neighbor - पड़ोसी 1)",
             "🧑 Gupta Ji (Opinionated Neighbor - पड़ोसी 2)",
             "👵 Amma (Elder Neighbor - बुजुर्ग पड़ोसी)"
-        ], character_count)
+        ])
 
     # L. Police & Citizen / Driver / Suspect
     if any(k in lower_text for k in ["police and citizen", "police and driver", "पुलिस और नागरिक", "पुलिस और ड्राइवर"]):
@@ -635,7 +616,7 @@ def extract_sample_story_personas(sample_story: str, character_count: int = 2) -
             "👮 Sub-Inspector Sunita (Traffic Police - पुलिस दरोगा)",
             "🛵 Rohan (Citizen / Delivery Partner - नागरिक)",
             "🧑 Kabir (Eyewitness - प्रत्यक्षदर्शी)"
-        ], character_count)
+        ])
 
     return None
 
@@ -649,9 +630,19 @@ def get_character_personas(
     sample_story: Optional[str] = None,
 ) -> List[str]:
     """Generate rich, socioeconomically diverse character personas grounded in the script topic and representing India."""
-    # NOTE: a sample story is only a style/tone EXAMPLE — it never overrides
-    # character selection. Characters come from finalized Stage-2 output or
-    # from news-grounded creative generation below. The news always comes first.
+    # NOTE: a provided sample story is the director's guide — when it names or
+    # implies a cast, that cast wins over the configured character count and
+    # vibe/tone settings below. Verified news facts still outrank the sample,
+    # but the sample outranks creative setup on every character choice.
+
+    # Director's guide first: an explicit sample cast bypasses the setup rules.
+    # Fail-loud note: extraction returning None (no recognizable cast) is the
+    # documented fallthrough to setup-driven generation, not a silent skip —
+    # the sample simply carried no cast to honor.
+    if sample_story and sample_story.strip():
+        sample_personas = extract_sample_story_personas(sample_story)
+        if sample_personas:
+            return sample_personas
 
     import random
     combined = f"{tone} {angle}".lower()
@@ -1778,12 +1769,13 @@ class DialogueNarrationAgent(BaseAgent):
         sample_directive = ""
         if sample_story and sample_story.strip():
             sample_directive = (
-                f"\n📌 SAMPLE EXAMPLE (style/format reference ONLY \u2014 lowest precedence):\n"
+                f"\n📌 SAMPLE STORY \u2014 DIRECTOR'S GUIDE (highest creative precedence):\n"
                 f"\"{sample_story.strip()}\"\n"
-                f"Generate from the NEWS facts above with your own creativity. This sample is ONLY an "
-                f"example of tone and format \u2014 do NOT copy its characters, plot points, or dialogue lines. "
-                f"If the sample conflicts with the verified news facts or the locked characters above, "
-                f"the NEWS and the LOCKED decisions win.\n"
+                f"Follow this sample as the director's guide: its characters, relationships, "
+                f"direction, and tone lead the script. If the sample conflicts with the creative "
+                f"settings above (vibe, character count, scene style), the SAMPLE WINS.\n"
+                f"Hard boundary: verified news facts always outrank the sample \u2014 the NEWS "
+                f"wins on facts, the sample wins on creative choices.\n"
             )
 
         items_desc = "\n\n".join([

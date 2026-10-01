@@ -60,8 +60,11 @@ def inject_library_css() -> None:
         --lib-script-bg: #EFF4FF;
         --lib-script-border: #6B8DD6;
         --lib-script-text: #1E3A6E;
-        --lib-chip-bg: #F0E9DB;
-        --lib-chip-text: #6B5433;
+        /* Chips: warm pill, hairline edge for definition (HIG: flat,
+           bordered pills, no shadow). Text contrast ≥ 7:1 both themes. */
+        --lib-chip-bg: #F0E7D5;
+        --lib-chip-text: #5A4227;
+        --lib-chip-border: rgba(90, 66, 39, 0.28);
         /* IDE-style token colors for the full script view */
         --lib-spk: #1D4ED8;
         --lib-said: #047857;
@@ -84,8 +87,11 @@ def inject_library_css() -> None:
         --lib-script-bg: #1E2A44;
         --lib-script-border: #5B7BC0;
         --lib-script-text: #C9D9F5;
-        --lib-chip-bg: #3A3129;
-        --lib-chip-text: #D8C49A;
+        /* Chips (dark): lifted warm surface replaces the muddy flat
+           fill; hairline edge keeps the pill defined on dark trays. */
+        --lib-chip-bg: #4A4034;
+        --lib-chip-text: #F2E4C2;
+        --lib-chip-border: rgba(242, 228, 194, 0.22);
         /* IDE-style token colors for the full script view */
         --lib-spk: #93C5FD;
         --lib-said: #6EE7B7;
@@ -228,9 +234,11 @@ def inject_library_css() -> None:
     .lib-chip {
         display: inline-flex;
         align-items: center;
+        box-sizing: border-box;  /* border must not grow the 30px pill */
         min-height: var(--lib-chip-h);
         background: var(--lib-chip-bg);
         color: var(--lib-chip-text);
+        border: 1px solid var(--lib-chip-border);
         border-radius: 999px;
         padding: 3px 12px;
         margin: 2px 4px 2px 0;
@@ -257,18 +265,32 @@ def inject_library_css() -> None:
         background: rgba(128, 128, 128, 0.08) !important;
         border-radius: 14px !important;
     }
+    /* #56: width: fit-content (not auto) — the column can never exceed
+       its content even if the row's layout mode is not flex (e.g. a
+       grid, where width:auto would fill the track) or a future
+       Streamlit DOM nests differently. flex: 0 0 auto stays the primary
+       shrink-wrap on the verified DOM. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"] {
         flex: 0 0 auto !important;
-        width: auto !important;
+        width: fit-content !important;
         min-width: 0 !important;
         position: relative !important;
     }
-    /* Chips inside scroll rows: single line with clearance for the ×. */
+    /* Chips inside scroll rows: single line, never clipped by the ×.
+       #51: the × now sits INSIDE the pill as a macOS token-field remove
+       glyph (22px target, 6px from the pill's trailing edge), so the
+       pill's own padding-right carries the clearance: 34px = 22px
+       target + 6px inset + 6px breathing room before the label. The
+       #25/#26 no-truncation guarantee now lives here, in the chip —
+       the column no longer reserves padding for the × (rule removed). */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         [data-testid="stHorizontalBlock"] .lib-chip {
-        padding-right: 26px !important;
+        padding-right: 34px !important;
         white-space: nowrap !important;
+        width: fit-content !important;  /* #56: the pill hugs its label —
+           never wider than content + padding, even if an ancestor rule
+           misbehaves. max-width below still caps long labels. */
         max-width: 340px;
         overflow: hidden;
         text-overflow: ellipsis;
@@ -360,33 +382,92 @@ def inject_library_css() -> None:
         color: inherit !important;
         border-color: rgba(128, 128, 128, 0.7) !important;
     }
-    /* Detail action buttons (Share/Copy) share the same system: one
-       button height (--lib-act-h), one gap, top-aligned in their columns.
-       Marker-scoped: a hidden [data-marker="lib-actions"] div sits
-       directly before the actions st.columns() call. The copy buttons
-       render inside an iframe (components.html) and get their height from
-       _LIB_ACTION_BTN_H_PX in Python — same value, same system. */
-    div[data-testid="stElementContainer"]:has([data-marker="lib-actions"])
-        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] {
-        gap: var(--lib-chip-gap) !important;
-        align-items: start !important;
+    /* v1.6 (#46): the Share/Copy dropdowns moved INTO the single detail
+       toolbar row, so the old marker-scoped actions-row rule is gone (dead
+       selector). The triggers now share the toolbar's own gap/alignment. */
+    /* #51: the chip × becomes a macOS token-field remove glyph, centered
+       inside the pill. Chip-scoped: columns holding a chip
+       (:has(.lib-chip)) with the lib-x-r marker. Image cards have no
+       .lib-chip, so their top-right corner × over the image is untouched;
+       the ✎ is lib-x-l, also untouched. The extra :has(.lib-chip) makes
+       these selectors strictly more specific than the generic × rules
+       above, so they win without touching them. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
+        + div[data-testid="stElementContainer"] {
+        top: 50% !important;
+        right: 6px !important;
+        transform: translateY(-50%) !important;
     }
-    /* v1.5.4: the sibling after the marker is stLayoutWrapper (not
-       stElementContainer), and the anchor is nested inside the link
-       button (descendant, not direct child) — with the real selectors the
-       WhatsApp link button shares the 38px action height with the copy
-       buttons. */
-    div[data-testid="stElementContainer"]:has([data-marker="lib-actions"])
-        + div[data-testid="stLayoutWrapper"] [data-testid="stLinkButton"] a {
-        min-height: var(--lib-act-h) !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
+        background: transparent !important;
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+        box-shadow: none !important;
+        border: none !important;
+        color: var(--lib-chip-text) !important;
+        opacity: 0.65 !important;
+        font-size: 15px !important;
     }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
+        opacity: 1 !important;
+        background: rgba(128, 128, 128, 0.22) !important;
+        color: var(--lib-chip-text) !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    /* v1.6 (#27/#28/#30): the WhatsApp link button moved inside the Share
+       popover, which renders in a portal outside the marker's subtree, so the
+       old marker-scoped 38px height rule no longer applies. The popover's
+       link button uses use_container_width and Streamlit's native button
+       metrics — no custom height needed. */
     /* macOS HIG: deference — toolbar rows use a hairline, not a heavy box */
     .lib-hairline {
         border-bottom: 1px solid rgba(128, 128, 128, 0.25);
         margin: 4px 0 12px 0;
+    }
+    /* v1.6 (#53) HIG progress: the button that starts work owns its loading
+       state — its label NEVER changes, it shows a spinner and stays
+       disabled while the work runs. A hidden marker
+       (data-marker="lib-spin-<kind>") is emitted directly before the
+       running button's element container; the spinner is painted via
+       ::before with currentColor so it follows the light/dark theme
+       automatically. Width stability comes from use_container_width on
+       the toolbar buttons (each fills its fixed column slot), so no width
+       CSS is needed and nothing shoves its neighbours. */
+    @keyframes lib-spin {
+        to { transform: rotate(360deg); }
+    }
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-spin-"]) {
+        display: none !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-hashtags"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-images"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-reset"])
+        + div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
+        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"]::before {
+        content: "";
+        display: inline-block;
+        width: 13px;
+        height: 13px;
+        margin-right: 7px;
+        vertical-align: -2px;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: lib-spin 0.9s linear infinite;
     }
     /* macOS HIG section header: plain semibold text, no emoji, no boxes */
     .lib-section {
@@ -466,6 +547,19 @@ def _inject_story_list_css() -> None:
         opacity: 0.55;
         margin: 2px 0 6px 2px;
     }
+    /* v1.6 (#24): the lib-danger-/lib-danger-pop- marker divs are
+       display:none themselves, but their stElementContainer wrapper still
+       occupies one inter-element gap in Streamlit's vertical block —
+       pushing the "Reset"/"Delete" popover triggers (and the red
+       destructive button inside the popover) one gap lower than their
+       plain-button siblings.
+       Collapse the wrapper: CSS `+` sibling combinators and :has() match
+       on DOM order regardless of display, so the red-button rule below
+       keeps matching. Prefix-scoped: lib-x-/lib-hscroll/
+       lib-story-list markers are untouched. */
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {
+        display: none !important;
+    }
     /* Destructive actions: macOS system red text (graceful — plain button if unmatched) */
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
@@ -477,23 +571,48 @@ def _inject_story_list_css() -> None:
         color: #FF3B30 !important;
         border-color: rgba(255, 59, 48, 0.6) !important;
     }
-    /* Destructive popover trigger: same macOS system red on the native
-       popover button (graceful — plain button if the selector ever misses).
-       #FF3B30 reads on both light and dark themes; no theme overrides. */
-    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
-        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"] {
-        color: #FF3B30 !important;
-        border-color: rgba(255, 59, 48, 0.35) !important;
-    }
-    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
-        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"]:hover {
-        color: #FF3B30 !important;
-        border-color: rgba(255, 59, 48, 0.6) !important;
+    /* v1.6 (#58): destructive popover triggers are NEUTRAL — they read as
+       plain buttons like their neighbours (see the approved screenshot).
+       macOS system red lives ONLY on the explicit destructive button
+       inside the popover (the lib-danger- rule above). This deliberately
+       reverses the #38 red trigger. */
+    /* v1.6 (#38): HIG-anchored destructive popover. Streamlit renders the
+       popover body inside a floating overlay portal, so the lib-danger-pop-
+       marker sitting before the trigger cannot reach the body with sibling
+       combinators. A lib-danger-pop-body marker is therefore emitted as the
+       first node *inside* the popover body (see _confirm_popover), and the
+       caret below anchors to the body itself. The 45° square inherits the
+       body's own background, so it tracks the light/dark theme with no
+       hard-coded surface color. Graceful: if the selector ever misses, the
+       popover simply renders without the caret. */
+    div[data-testid="stPopoverBody"]:has([data-marker="lib-danger-pop-body"])::before {
+        content: "" !important;
+        position: absolute !important;
+        top: -8px !important;
+        right: 32px !important;
+        width: 14px !important;
+        height: 14px !important;
+        background: inherit !important;
+        transform: rotate(45deg) !important;
+        pointer-events: none !important;
     }
 </style>
         """,
         unsafe_allow_html=True,
     )
+
+
+def _md_escape(text: str) -> str:
+    """Backslash-escape Markdown special characters so user-controlled text
+    (e.g. a story title) renders literally inside ``st.markdown``.
+
+    ``st.markdown`` already neutralises raw HTML (``unsafe_allow_html``
+    defaults to False), but Markdown *syntax* in the text — ``**``, ``[]()``,
+    backticks — would still be interpreted and could break the surrounding
+    formatting or inject a link. Every Markdown special is escaped; the
+    function is total (None/empty → "") and never raises.
+    """
+    return _re.sub(r"([\\`*_{}\[\]()#+\-.!|])", r"\\\1", text or "")
 
 
 def _danger_button(label: str, key: str, **kwargs) -> bool:
@@ -530,32 +649,42 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
                      trigger_help: str = "",
                      use_container_width: bool = False,
                      fail_label: str = "Confirm",
+                     destructive_label: str,
                      disabled: bool = False) -> None:
-    """Apple-style confirmation: native popover, red Yes, normal No.
+    """Apple-style confirmation: native popover, explicit red destructive
+    verb, standard Cancel. (#58)
 
-    The trigger is a red destructive button (marker-scoped CSS, graceful if
-    the selector misses). Inside the popover: a bold title, a secondary
-    message line, then "Yes" (red, destructive) and "No" (standard) side by
-    side.
+    The trigger is a NEUTRAL button, like its neighbours — macOS system red
+    lives only on the destructive action inside the popover (this reverses
+    the #38 red trigger, per the approved screenshot). Inside the popover:
+    a bold title, a secondary message line, then "Cancel" (standard, left)
+    and the destructive verb (red, right) side by side — never a bare
+    "Yes"/"No".
 
-    "Yes" arms a ``<key>-go`` flag via an ``on_click`` callback and closes
-    the popover; the flag is consumed at the top of the next script run —
-    *before* the popover widget instantiates, which is the only moment its
-    key may be driven programmatically (doing it after raises
-    ``StreamlitWidgetAlreadyInstantiatedError``). ``on_yes`` must raise on
-    failure: the error is shown loudly inside the reopened popover and the
-    popover stays open. "No" only closes the popover. The native popover
-    follows the light/dark theme; the only custom color is macOS system red,
-    which reads on both themes.
+    The destructive verb arms a ``<key>-go`` flag via an ``on_click``
+    callback and closes the popover; the flag is consumed at the top of
+    the next script run — *before* the popover widget instantiates, which
+    is the only moment its key may be driven programmatically (doing it
+    after raises ``StreamlitWidgetAlreadyInstantiatedError``). ``on_yes``
+    must raise on failure: the error is shown loudly inside the reopened
+    popover and the popover stays open. "Cancel" only closes the popover.
+    The native popover follows the light/dark theme; the only custom color
+    is macOS system red, which reads on both themes.
 
-    ``fail_label`` prefixes the loud error (e.g. "Delete", "Reset").
-    ``disabled`` disables the trigger (e.g. while its work is running) —
-    the trigger label can then carry the loading state ("Resetting…").
+    ``title`` may carry user-controlled text (e.g. a story name): Markdown
+    specials are escaped so it renders literally and can never break the
+    bold wrapper or inject a link. ``fail_label`` prefixes the loud error
+    (e.g. "Delete", "Reset"); ``destructive_label`` is the explicit red
+    button verb (e.g. "Delete story", "Reset media"). ``disabled`` disables
+    the trigger (e.g. while its work is running). Per the HIG progress
+    contract (#53) the trigger label NEVER changes to show progress — a
+    separate marker carries the spinner while the work runs.
     """
     _go_key = f"{popover_key}-go"
     _err_key = f"{popover_key}-err"
     # Marker first: it must sit directly before the popover's element
-    # container for the red-trigger CSS sibling selector to hit.
+    # container for the #24 collapse rule (the marker's wrapper would
+    # otherwise push the trigger one gap lower than its siblings).
     st.markdown(f'<div data-marker="lib-danger-pop-{popover_key}" style="display:none"></div>',
                 unsafe_allow_html=True)
     # Consume a previously armed confirmation *before* the popover
@@ -570,30 +699,40 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
                     help=trigger_help or None,
                     use_container_width=use_container_width,
                     disabled=disabled):
+        # v1.6 (#38): anchor marker for the HIG popover caret. The popover
+        # body lives in a floating overlay portal, unreachable from the
+        # trigger marker, so this marker rides inside the body itself. It is
+        # emitted first so the red-button `+` sibling rules (which match on
+        # DOM order) never see a button-bearing container after it.
+        st.markdown('<div data-marker="lib-danger-pop-body" style="display:none"></div>',
+                    unsafe_allow_html=True)
         _failure = st.session_state.pop(_err_key, None)
         if _failure:
             st.error(f"{fail_label} failed: {_failure}")
-        st.markdown(f"**{title}**")
+        st.markdown(f"**{_md_escape(title)}**")
         st.caption(message)
-        _by, _bn = st.columns(2)
-        with _by:
+        _bc, _bd = st.columns(2)
+        with _bc:
+            st.button(
+                "Cancel", key=f"{popover_key}-no", use_container_width=True,
+                on_click=lambda: st.session_state.update({popover_key: False}),
+            )
+        with _bd:
             _danger_button(
-                "Yes", key=f"{popover_key}-yes", use_container_width=True,
+                destructive_label, key=f"{popover_key}-yes",
+                use_container_width=True,
                 on_click=lambda: st.session_state.update(
                     {popover_key: False, _go_key: True}),
-            )
-        with _bn:
-            st.button(
-                "No", key=f"{popover_key}-no", use_container_width=True,
-                on_click=lambda: st.session_state.update({popover_key: False}),
             )
 
 
 def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
                     message: str, on_yes: Callable[[], None],
                     trigger_help: str = "",
-                    use_container_width: bool = False) -> None:
-    """Apple-style delete confirmation: native popover, red Yes, normal No.
+                    use_container_width: bool = False,
+                    destructive_label: str) -> None:
+    """Apple-style delete confirmation: neutral trigger, red explicit
+    destructive verb + Cancel inside (#58).
 
     Thin wrapper over :func:`_confirm_popover` with the failure label set
     to "Delete" (kept for the existing delete flows and their tests).
@@ -607,23 +746,60 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
         trigger_help=trigger_help,
         use_container_width=use_container_width,
         fail_label="Delete",
+        destructive_label=destructive_label,
     )
 
 
-def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
-                          ai_engine) -> None:
-    """Toolbar Reset: destructive confirm popover (red Yes / normal No).
+def _render_kind_button(*, story_id: str, kind: str, label: str,
+                       button_key: str, help_text: str, kick_label: str,
+                       busy_kinds, ai_engine) -> None:
+    """One toolbar refresh button (#53/#54).
 
-    The trigger owns its loading state ("Resetting…") and stays disabled
-    while any refresh is busy. Confirming kicks a "reset" refresh —
-    hashtags, fetched images and news links are discarded and re-fetched
-    fresh (uploads and the screenplay are never touched).
+    The label NEVER changes; while ``kind`` runs the button shows the CSS
+    spinner (``lib-spin-<kind>`` marker, painted via ::before) and stays
+    disabled. ``use_container_width`` keeps the width stable — the button
+    fills its fixed column slot, so nothing shoves its neighbours. Each
+    kind disables only while IT runs: hashtags and images are independent
+    and stay clickable while the other runs (#54).
     """
-    resetting = refresh_kind == "reset"
+    running = kind in busy_kinds
+    if running:
+        st.markdown(f'<div data-marker="lib-spin-{kind}" style="display:none"></div>',
+                    unsafe_allow_html=True)
+    if st.button(label, key=button_key, help=help_text,
+                 disabled=running, use_container_width=True):
+        ok, reason = lib.start_refresh(story_id, kind, ai_engine=ai_engine)
+        if ok:
+            st.rerun()
+        else:
+            st.error(f"Could not start the {kick_label} refresh: {reason}" if reason
+                     else f"Could not start the {kick_label} refresh.")
+
+
+def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
+    """Toolbar Reset: destructive confirm popover (red "Reset media" /
+    standard "Cancel", #58).
+
+    #53 HIG progress: the trigger label NEVER changes — while resetting it
+    keeps "Reset", shows the CSS spinner (``lib-spin-reset`` marker) and
+    stays disabled. #54: Reset is destructive and exclusive — the trigger
+    also disables while any OTHER kind runs (no spinner then: it is
+    blocked, not working). Confirming kicks a "reset" refresh — hashtags,
+    fetched images and news links are discarded and re-fetched fresh
+    (uploads and the screenplay are never touched).
+
+    The spin marker is emitted BEFORE _confirm_popover's danger marker so
+    the danger trigger's ``+`` sibling selectors keep matching.
+    """
+    resetting = "reset" in busy_kinds
+    blocked = bool(set(busy_kinds) - {"reset"})
+    if resetting:
+        st.markdown('<div data-marker="lib-spin-reset" style="display:none"></div>',
+                    unsafe_allow_html=True)
 
     def _on_reset_yes() -> None:
         # Raises loudly on failure: the popover shows it and stays open.
-        # No st.rerun() here — the Yes click already reruns via the
+        # No st.rerun() here — the destructive click already reruns via the
         # popover's on_change, and the busy state + auto-poll take over.
         ok, reason = lib.start_refresh(story_id, "reset", ai_engine=ai_engine)
         if not ok:
@@ -632,7 +808,7 @@ def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
                 else "Could not start the reset.")
 
     _confirm_popover(
-        trigger_label="Resetting…" if resetting else "Reset",
+        trigger_label="Reset",
         popover_key=f"lib_resetpop_{story_id}",
         title="Reset media rows?",
         message=("Clears all hashtags, fetched images and news links, "
@@ -641,8 +817,56 @@ def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
         on_yes=_on_reset_yes,
         trigger_help="Clear and re-fetch hashtags, images and news links",
         fail_label="Reset",
-        disabled=busy,
+        destructive_label="Reset media",
+        use_container_width=True,
+        disabled=resetting or blocked,
     )
+
+
+def _refresh_outcome_icon(status: str) -> str:
+    """Toast icon for a finished refresh outcome (#53)."""
+    return {"succeeded": "✅", "no_change": "ℹ️",
+            "failed": "⚠️", "interrupted": "⚠️"}.get(status, "ℹ️")
+
+
+def _refresh_toast_text(kind: str, status: str, note: str) -> str:
+    """One-line toast text for a finished refresh outcome (#53).
+
+    Pure helper (kept pure for unit tests): the kind label, an outcome
+    head, and the worker's honest note.
+    """
+    label = {"hashtags": "Hashtags", "images": "Images",
+             "reset": "Reset", "enrich": "Enrichment"}.get(kind, kind)
+    head = {"succeeded": f"{label} updated",
+            "no_change": f"{label}: nothing new",
+            "failed": f"{label} failed",
+            "interrupted": f"{label} interrupted"}.get(status, label)
+    return f"{head} — {note}" if note else head
+
+
+def _fire_refresh_toasts(story_id: str, meta: dict) -> None:
+    """Toast each freshly-finished refresh outcome exactly once (#53).
+
+    Workers append to ``refresh_outcome_pending`` (persisted in the
+    story file, one JSON entry per finished kind). The first render that
+    sees an entry toasts it and drains it from the file — so the toast
+    fires exactly once even across reruns, and entries written while the
+    detail page was closed still surface when it opens. Malformed entries
+    are reported loudly with st.error and dropped (never toasted).
+    """
+    pending = meta.get("refresh_outcome_pending") or []
+    if not isinstance(pending, list) or not pending:
+        return
+    for entry in pending:
+        outcome = lib.parse_refresh_outcome(entry)
+        if outcome is None:
+            st.error(f"Could not read a saved refresh outcome "
+                     f"({str(entry)[:80]}); dropped.")
+            continue
+        st.toast(_refresh_toast_text(outcome["kind"], outcome["status"],
+                                     outcome["note"]),
+                 icon=_refresh_outcome_icon(outcome["status"]))
+    lib.update_story_fields(story_id, refresh_outcome_pending=[])
 def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     """Tiny ×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).
 
@@ -659,27 +883,124 @@ def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     return st.button(label, key=key, help=help)
 
 
+def _news_chip_label(title: str, source: str) -> str:
+    """#26: a news-link chip shows the source website name when known
+    (e.g. "The Times of India") instead of the full headline. The
+    headline remains available as the link's title tooltip. Empty or
+    missing values fall back honestly to "News link", never to an
+    empty chip."""
+    title = (title or "").strip() or "News link"
+    source = (source or "").strip()
+    return source if source else title
+
+
+def _chip_col_weights(labels) -> list:
+    """Proportional ``st.columns`` weights for chip rows (#56).
+
+    Chip columns used to be equal-weighted (``st.columns(len(tags))``), so
+    every column was as wide as the longest label and short pills floated
+    in dead space whenever the CSS shrink-wrap chain missed (the
+    ``stLayoutWrapper``-adjacent selectors assume one exact Streamlit DOM,
+    and requirements.txt leaves Streamlit unpinned). The CSS shrink-wrap
+    (``flex: 0 0 auto`` + ``width: fit-content``) remains the primary
+    sizer; these weights are the fallback so a missed selector can only
+    ever produce a *proportionally* sized column, never a full-width one.
+
+    Weight tracks the rendered pill width: label length plus ~6 chars for
+    the pill's fixed horizontal padding (12px left + 34px × clearance ≈
+    46px at ~7.5px/char). The floor keeps degenerate labels tappable.
+    Pure (no Streamlit) so it is unit-testable.
+    """
+    return [max(len(str(_l)), 4) + 6 for _l in labels]
+
+
+def _fm_warmup_button_props(state: dict) -> tuple:
+    """Pure helper: (label, disabled) for the warm-up button given the
+    mailbox state. Kept pure so the HIG loading/disabled contract is
+    unit-testable without a Streamlit runtime."""
+    if (state or {}).get("state") == "warming":
+        return "Warming up…", True
+    return "Cold start", False
+
+
+def _render_fm_warmup_button() -> None:
+    """Developer warm-up control (issue #37): subtle, compact, sits next to
+    the Studio/Library tab bar. Tapping it kicks off the #4 FM probe in a
+    daemon thread so the first real generation skips the cold-start delay.
+
+    HIG: the button owns its progress — while warming it paints
+    "Warming up…" and stays disabled (no second tap), and the page
+    auto-polls until the worker writes its terminal state.
+    """
+    _state = lib.read_fm_warmup_state()
+    _label, _disabled = _fm_warmup_button_props(_state)
+    if _disabled:
+        st.button(_label, key="fm_warmup_btn", disabled=True,
+                  help="Warming up the on-device Apple FM model…",
+                  use_container_width=True)
+        # Auto-poll while the probe is in flight: the daemon worker cannot
+        # trigger st.rerun() itself. Same pattern as the library refresh
+        # flow — the loop always terminates because the worker always
+        # writes a terminal state and stale states are recovered.
+        _time.sleep(1.0)
+        st.rerun()
+        return
+    if st.button(_label, key="fm_warmup_btn", disabled=False,
+                 help=("Developer: warm up the on-device Apple FM model now "
+                       "so the first generation doesn't pay the cold-start "
+                       "delay. Runs the FM availability probe (up to ~2 min "
+                       "on first run)."),
+                 use_container_width=True):
+        _ok, _reason = lib.start_fm_warmup()
+        if not _ok:
+            st.error(f"Could not start warm-up: {_reason}")
+        st.rerun()
+
+
+def _render_fm_warmup_result() -> None:
+    """Honest terminal result under the tab bar: success carries the real
+    timing, failure carries the probe's own message verbatim (#4
+    messaging) — never a fake 'ready' state."""
+    _state = lib.read_fm_warmup_state()
+    _stt = (_state or {}).get("state")
+    if _stt == "done":
+        _secs = _state.get("seconds") or 0.0
+        _msg = (_state.get("message") or "").strip()
+        st.success(f"Apple FM warmed up in {_secs:.1f}s"
+                   + (f" — {_msg}" if _msg else ""))
+    elif _stt == "failed":
+        _msg = (_state.get("message") or "unknown error").strip()
+        st.error(f"Warm-up failed: {_msg}")
+
+
 def render_tab_bar() -> str:
     """Render the macOS-style tab bar. Returns 'studio' or 'library'."""
     inject_library_css()
-    seg = getattr(st, "segmented_control", None)
-    if seg is not None:
-        choice = seg(
-            "View",
-            options=[TAB_STUDIO, TAB_LIBRARY],
-            default=TAB_STUDIO,
-            key="lib_view",
-            label_visibility="collapsed",
-        )
-    else:  # older Streamlit: horizontal radio dressed as a segmented control
-        choice = st.radio(
-            "View",
-            options=[TAB_STUDIO, TAB_LIBRARY],
-            index=0 if st.session_state.get("lib_view", TAB_STUDIO) == TAB_STUDIO else 1,
-            key="lib_view",
-            label_visibility="collapsed",
-            horizontal=True,
-        )
+    # Developer warm-up (issue #37) rides in a compact trailing column so
+    # the normal author flow keeps its centered tab strip untouched.
+    _tab_col, _warm_col = st.columns([6.0, 1.0], vertical_alignment="center")
+    with _tab_col:
+        seg = getattr(st, "segmented_control", None)
+        if seg is not None:
+            choice = seg(
+                "View",
+                options=[TAB_STUDIO, TAB_LIBRARY],
+                default=TAB_STUDIO,
+                key="lib_view",
+                label_visibility="collapsed",
+            )
+        else:  # older Streamlit: horizontal radio dressed as a segmented control
+            choice = st.radio(
+                "View",
+                options=[TAB_STUDIO, TAB_LIBRARY],
+                index=0 if st.session_state.get("lib_view", TAB_STUDIO) == TAB_STUDIO else 1,
+                key="lib_view",
+                label_visibility="collapsed",
+                horizontal=True,
+            )
+    with _warm_col:
+        _render_fm_warmup_button()
+    _render_fm_warmup_result()
     return "library" if choice == TAB_LIBRARY else "studio"
 
 
@@ -947,6 +1268,7 @@ def render_library_page() -> None:
             on_yes=_confirm_delete_all,
             trigger_help="Delete every saved story",
             use_container_width=True,
+            destructive_label="Delete all stories",
         )
     with detail:
         _render_story_detail(sel)
@@ -1078,38 +1400,75 @@ def _compose_news_tags_text(meta: dict) -> str:
 
 
 def _whatsapp_share_url(text: str) -> str:
-    """wa.me share link carrying the EXACT share text (URL-encoded for
-    transport only — the text itself is never reformatted). Opens
-    WhatsApp with the text prefilled; no connection or connector needed.
+    """whatsapp:// deep link carrying the EXACT share text (URL-encoded for
+    transport only — the text itself is never reformatted). macOS routes the
+    whatsapp:// scheme to the installed WhatsApp Mac app, opening it directly
+    with the text prefilled — unlike wa.me links, which always resolve in the
+    browser (WhatsApp Web flow) even when the app is installed. No connection
+    or connector needed.
+
+    Note: st.link_button passes the URL to the frontend unmodified (no scheme
+    validation on the Python side; it renders a plain anchor), so non-http(s)
+    schemes like whatsapp:// work the same way mailto: links already do.
     """
     import urllib.parse as _up
-    return "https://wa.me/?text=" + _up.quote(text, safe="")
+    return "whatsapp://send?text=" + _up.quote(text, safe="")
 
 
-def _render_share_column(story_id: str, share_text: str) -> None:
-    """Share column: "Copy News Link + Hashtags" and "Send via WhatsApp"
-    side by side, then the share-text preview.
+def _render_share_popover(story_id: str, share_text: str) -> None:
+    """Share dropdown (native popover, macOS HIG): sub-actions for the
+    story's news-links + hashtags share text.
 
-    The WhatsApp button is a native ``st.link_button`` (theme-safe) to a
-    wa.me deep link carrying the EXACT share text — no reformatting, no
-    WhatsApp connection needed.
+    The trigger label is plain "Share" — Streamlit's popover natively
+    renders its own chevron, so baking "⌄" into the label doubled it (#46).
+
+    The redundant st.code(share_text) preview is gone (#27) — the dedicated
+    Hashtags / News Links sections already show that content, and the text
+    stays one click away via "Copy News Link + Hashtags". "Send via WhatsApp"
+    deep-links straight into the installed WhatsApp Mac app (#28).
     """
-    st.markdown('<div class="lib-quiet" style="text-align:left;margin:0 0 4px 0">Share</div>',
-                unsafe_allow_html=True)
-    if share_text:
-        _sh1, _sh2 = st.columns(2)
-        with _sh1:
-            _copy_button("Copy News Link + Hashtags", share_text, f"n-{story_id}")
-        with _sh2:
+    with st.popover("Share", key=f"lib_sharepop_{story_id}",
+                     help="Share this story's news links and hashtags",
+                     use_container_width=True):
+        if share_text:
+            _copy_button("Copy News Link + Hashtags", share_text,
+                         f"n-{story_id}")
             st.link_button(
                 "Send via WhatsApp",
                 _whatsapp_share_url(share_text),
-                help="Open WhatsApp with this text prefilled",
+                help="Open the installed WhatsApp Mac app with this text prefilled",
                 use_container_width=True,
             )
-        st.code(share_text)
-    else:
-        st.caption("No news links or hashtags to share yet.")
+        else:
+            st.caption("No news links or hashtags to share yet.")
+
+
+def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
+    """Copy dropdown (native popover, macOS HIG): Script / Script + Tags /
+    Script + Media / All — the same one-click copy texts as before, now
+    revealed as sub-actions. The trigger label is plain "Copy" (native
+    chevron only — no baked-in "⌄", #46). Each copy button owns its loading
+    state ("Copied ✓") via _copy_button — no second click.
+    """
+    with st.popover("Copy", key=f"lib_copypop_{story_id}",
+                     help="Copy the screenplay in different formats",
+                     use_container_width=True):
+        if script_md:
+            _copy_button("Script", _script_plain_text(script_md),
+                         f"s-{story_id}")
+            _copy_button("Script + Tags",
+                         _compose_share_text(meta, script_md, False, True),
+                         f"h-{story_id}")
+            _copy_button("Script + Media",
+                         _compose_share_text(meta, script_md, True, False),
+                         f"m-{story_id}")
+            _copy_button("All",
+                         _compose_share_text(meta, script_md, True, True),
+                         f"a-{story_id}")
+        else:
+            st.caption("No script to copy yet.")
+
+
 
 
 # Shared with --lib-act-h in inject_library_css: the copy button renders
@@ -1148,6 +1507,18 @@ def _copy_button(label: str, text: str, key: str) -> None:
     )
 
 
+# v1.6 (#38, #46, #53): story-detail toolbar column weights. Streamlit
+# ellipsizes ("…") any button/popover label wider than its column, so every
+# action column is weighted to fit its label — #53: labels never change
+# mid-work ("Update Hashtags", "Update Images", "Reset", "Delete" +
+# chevron), so the static labels are the longest state. Share / Copy are
+# short native-popover labels; a slim spacer keeps Delete visually
+# trailing. Each total is unchanged (10.0) so the overall layout is
+# preserved and the #24 baseline alignment is untouched.
+_DETAIL_TOOLBAR_WEIGHTS = [2.2, 2.0, 1.4, 1.1, 1.1, 0.5, 1.7]
+_TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
+
+
 def _render_story_detail(story_id: str) -> None:
     story = lib.load_story(story_id)
     if not story:
@@ -1155,40 +1526,48 @@ def _render_story_detail(story_id: str) -> None:
         st.session_state.pop("lib_selected_story", None)
         return
     meta = story["meta"]
+    script_md = story["script"].strip()
+    _share_text = _compose_news_tags_text(meta)
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
-    # toolbar — Update Hashtags, Update Images, Reset — with Delete
-    # trailing. The title carries its own inline ✏️ edit icon next to the
-    # centered title text. Progress lives inside the initiating button
-    # (in-button loader); there are no detached progress messages.
-    # Refreshes run in daemon threads, so tab switches never interrupt them.
-    _status = meta.get("enrichment_status")
-    _refresh_kind = meta.get("refresh_kind", "") if _status in lib.BUSY_STATES else ""
-    _busy = bool(_refresh_kind)
+    # toolbar — Update Hashtags, Update Images, Reset, Share, Copy — with
+    # Delete trailing (#46). The title carries its own inline ✏️ edit icon
+    # next to the centered title text.
+    #
+    # #53 HIG progress: a refresh button NEVER changes its label. While
+    # its kind runs the button keeps its label, shows a CSS spinner (the
+    # lib-spin-<kind> marker, painted via ::before) and stays disabled.
+    # Stable width comes from use_container_width — each button fills its
+    # fixed column slot, so nothing shoves its neighbours. Refreshes run
+    # in daemon threads, so tab switches never interrupt them.
+    #
+    # #54 concurrency: "hashtags" and "images" are independent — each
+    # button disables only while ITS kind runs. Reset is destructive and
+    # exclusive: its trigger disables while ANY kind runs.
+    _busy_kinds = lib.refresh_busy_kinds(meta)
+    _busy = bool(_busy_kinds)
     _editing = bool(st.session_state.get(f"lib_edit_title_{story_id}"))
     _ai_engine = _library_ai_engine()
 
-    def _kick_refresh(kind: str, label: str) -> None:
-        ok, reason = lib.start_refresh(story_id, kind, ai_engine=_ai_engine)
-        if ok:
-            st.rerun()
-        else:
-            st.error(f"Could not start the {label} refresh: {reason}" if reason
-                     else f"Could not start the {label} refresh.")
-
     def _story_delete_popover() -> None:
+        # #58: the confirmation names the story, quoted — the title is
+        # user-editable, so _confirm_popover escapes Markdown specials.
+        _story_title = meta.get("title", "Untitled Story") or "Untitled Story"
         _delete_popover(
             trigger_label="Delete",
             popover_key=f"lib_delpop_{story_id}",
-            title="Delete this story?",
+            title=f'Delete "{_story_title}"?',
             message="This can't be undone.",
             on_yes=lambda: _confirm_delete_story(story_id),
             trigger_help="Delete this story",
+            destructive_label="Delete story",
+            use_container_width=True,
         )
 
     if _editing:
-        # Title edit mode: Save/Cancel lead, Delete stays trailing.
-        ec1, ec2, _esp, ec3 = st.columns([1.0, 1.0, 7.0, 1.0])
+        # Title edit mode: Save/Cancel lead, Share/Copy stay available,
+        # Delete stays trailing.
+        ec1, ec2, ec3, ec4, _esp, ec5 = st.columns(_TITLE_EDIT_TOOLBAR_WEIGHTS)
         with ec1:
             if st.button("Save", key=f"lib_title_save_{story_id}", type="primary"):
                 _new = (st.session_state.get(f"lib_title_{story_id}") or "").strip()
@@ -1201,61 +1580,43 @@ def _render_story_detail(story_id: str) -> None:
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
         with ec3:
+            _render_share_popover(story_id, _share_text)
+        with ec4:
+            _render_copy_popover(story_id, meta, script_md)
+        with ec5:
             _story_delete_popover()
     else:
-        tc2, tc3, tc4, _tsp, tc5 = st.columns([1.7, 1.6, 1.3, 4.4, 1.0])
+        tc1, tc2, tc3, tc4, tc5, _tsp, tc6 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
+        with tc1:
+            _render_kind_button(
+                story_id=story_id, kind="hashtags", label="Update Hashtags",
+                button_key=f"lib_tags_{story_id}", kick_label="hashtag",
+                help_text="Find hashtags for this story's topic and add them",
+                busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc2:
-            _loading = _refresh_kind == "hashtags"
-            if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
-                         key=f"lib_tags_{story_id}",
-                         help="Find hashtags for this story's topic and add them",
-                         disabled=_busy):
-                _kick_refresh("hashtags", "hashtag")
+            _render_kind_button(
+                story_id=story_id, kind="images", label="Update Images",
+                button_key=f"lib_imgs_{story_id}", kick_label="image",
+                help_text="Re-fetch news images for this story's topic",
+                busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc3:
-            _loading = _refresh_kind == "images"
-            if st.button("Updating Images…" if _loading else "Update Images",
-                         key=f"lib_imgs_{story_id}",
-                         help="Re-fetch news images for this story's topic",
-                         disabled=_busy):
-                _kick_refresh("images", "image")
-        with tc4:
             # Reset is destructive: it confirms via the same native popover
-            # pattern as Delete (red Yes / normal No). The trigger owns its
-            # loading state ("Resetting…") and stays disabled while busy.
-            _render_reset_popover(story_id, _busy, _refresh_kind, _ai_engine)
+            # pattern as Delete (red explicit verb / standard Cancel, #58).
+            # #53: the trigger label never changes; #54: it stays disabled
+            # while any kind runs (exclusive).
+            _render_reset_popover(story_id, _busy_kinds, _ai_engine)
+        with tc4:
+            _render_share_popover(story_id, _share_text)
         with tc5:
+            _render_copy_popover(story_id, meta, script_md)
+        with tc6:
             _story_delete_popover()
+    # #53: toast each freshly-finished refresh outcome exactly once, then
+    # drain it. The file (not session state) is the drain record, so a
+    # toast never fires twice and outcomes that finished while this page
+    # was closed still surface when it opens.
+    _fire_refresh_toasts(story_id, meta)
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
-    script_md = story["script"].strip()
-
-    # Actions at top (compact): Share + Copy live here so the user can grab
-    # anything without scrolling past the script. Copied texts are identical
-    # to before — only the position changed.
-    st.markdown('<div class="lib-section">Actions</div>', unsafe_allow_html=True)
-    _share_text = _compose_news_tags_text(meta)
-    st.markdown('<div data-marker="lib-actions" style="display:none"></div>',
-                unsafe_allow_html=True)
-    _aa1, _aa2 = st.columns([3, 2])
-    with _aa1:
-        _render_share_column(story_id, _share_text)
-    with _aa2:
-        st.markdown('<div class="lib-quiet" style="text-align:left;margin:0 0 4px 0">Copy</div>',
-                    unsafe_allow_html=True)
-        if script_md:
-            _ac1, _ac2 = st.columns(2)
-            with _ac1:
-                _copy_button("Script", _script_plain_text(script_md), f"s-{story_id}")
-                _copy_button("Script + Tags",
-                             _compose_share_text(meta, script_md, False, True),
-                             f"h-{story_id}")
-            with _ac2:
-                _copy_button("Script + Media",
-                             _compose_share_text(meta, script_md, True, False),
-                             f"m-{story_id}")
-                _copy_button("All", _compose_share_text(meta, script_md, True, True),
-                             f"a-{story_id}")
-        else:
-            st.caption("No script to copy yet.")
 
     # Title at top: big, multiline, centered, with a small inline edit icon.
     # While editing, a borderless editor takes its place (Save/Cancel live
@@ -1274,17 +1635,6 @@ def _render_story_detail(story_id: str) -> None:
                          help="Edit title", disabled=_busy):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
                 st.rerun()
-    created = (meta.get("created_at", "") or "").replace("T", " ")
-    _sub = f"Created {created}" + (f" · Tone: {meta.get('tone')}" if meta.get("tone") else "")
-    st.markdown(f"<div style='text-align:center' class='stCaption'>{_html.escape(_sub)}</div>",
-                unsafe_allow_html=True)
-
-    # Refresh outcome — quiet inline status, never a loud banner and never a
-    # detached progress message (progress lives in the toolbar button itself).
-    _note = (meta.get("refresh_note") or "").strip()
-    if _note:
-        st.caption(f"Last refresh: {_note}")
-
     # Hashtags: ONE horizontal scroll row. Every tag is a chip with a ×
     # that removes exactly that tag (fail loudly, rerun after).
     tags = [t for t in (meta.get("hashtags") or []) if t]
@@ -1292,7 +1642,7 @@ def _render_story_detail(story_id: str) -> None:
         st.markdown('<div class="lib-section">Hashtags</div>', unsafe_allow_html=True)
         st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
                     unsafe_allow_html=True)
-        _tcols = st.columns(len(tags))
+        _tcols = st.columns(_chip_col_weights(tags))
         for _i, (_tc, _tag) in enumerate(zip(_tcols, tags)):
             with _tc:
                 st.markdown(f'<span class="lib-chip">{_html.escape(_tag)}</span>',
@@ -1367,7 +1717,9 @@ def _render_story_detail(story_id: str) -> None:
                         else:
                             st.error("Could not remove the image — "
                                      "the story may have been deleted.")
-    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
+    elif not (_busy_kinds & {"images", "reset", "enrich"}):
+        # #54: only kinds that (re-)fetch images suppress the hint — a
+        # concurrent hashtag run leaves it visible.
         st.caption("No images yet — try Reset or upload manually below.")
 
     # News links: ONE horizontal scroll row. Each verified link is a chip
@@ -1379,16 +1731,18 @@ def _render_story_detail(story_id: str) -> None:
         st.markdown('<div class="lib-section">News Links</div>', unsafe_allow_html=True)
         st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
                     unsafe_allow_html=True)
-        _lcols = st.columns(len(links))
-        for _i, (_lc, _lk) in enumerate(zip(_lcols, links)):
+        _labels = [_news_chip_label((_lk.get("title") or "News link"),
+                                       (_lk.get("source") or ""))
+                   for _lk in links]
+        _lcols = st.columns(_chip_col_weights(_labels))
+        for _i, (_lc, _lk, _label) in enumerate(zip(_lcols, links, _labels)):
             _ltitle = _lk.get("title", "News link") or "News link"
-            _lsrc = _lk.get("source", "") or ""
             _lurl = (_lk.get("url") or "").strip()
-            _label = f"{_ltitle} ({_lsrc})" if _lsrc else _ltitle
             with _lc:
                 st.markdown(
                     f'<span class="lib-chip"><a href="{_html.escape(_lurl, quote=True)}" '
-                    f'target="_blank" rel="noopener">{_html.escape(_label)}</a></span>',
+                    f'target="_blank" rel="noopener" '
+                    f'title="{_html.escape(_ltitle, quote=True)}">{_html.escape(_label)}</a></span>',
                     unsafe_allow_html=True)
                 if _overlay_button("lib-x-r", f"lib_xlink_{story_id}_{_i}", "×",
                                    help="Remove this news link"):
@@ -1398,14 +1752,64 @@ def _render_story_detail(story_id: str) -> None:
                         st.error(str(e))
                     else:
                         st.rerun()
-    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
+    elif not (_busy_kinds & {"reset", "enrich"}):
+        # #54: only kinds that re-verify links suppress the hint.
         st.caption("No news links yet.")
 
     # Whole script — always through the color-coded renderer so dialogue
-    # never falls back to plain markdown.
-    if script_md:
-        st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
-        _render_full_script(script_md)
+    # never falls back to plain markdown. The ✏️ edit control mirrors the
+    # title's inline edit: it swaps the renderer for a text area and
+    # persists through lib.update_story_script, which fails loudly.
+    _script_editing = bool(st.session_state.get(f"lib_edit_script_{story_id}"))
+    _script_saving = bool(st.session_state.get(f"lib_saving_script_{story_id}"))
+    if _script_saving:
+        # HIG save, phase 2: the Save button already painted "Saving…"
+        # and disabled on the rerun; now perform the write. Errors
+        # surface loudly and edit mode is kept — the save is never
+        # pretended to have landed.
+        st.session_state.pop(f"lib_saving_script_{story_id}", None)
+        _new_script = (st.session_state.get(f"lib_script_{story_id}") or "").strip()
+        if not _new_script:
+            st.error("The script can't be saved empty — keep editing or Cancel.")
+        else:
+            try:
+                lib.update_story_script(story_id, _new_script)
+            except Exception as e:
+                st.error(f"Could not save the script: {e}")
+            else:
+                st.session_state.pop(f"lib_edit_script_{story_id}", None)
+                st.rerun()
+    if script_md or _script_editing:
+        _sh1, _sh2 = st.columns([11, 1], vertical_alignment="center")
+        with _sh1:
+            st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
+        with _sh2:
+            if st.button("✏️", key=f"lib_script_edit_{story_id}",
+                         help="Edit script",
+                         disabled=_busy or _script_editing or _script_saving):
+                st.session_state[f"lib_edit_script_{story_id}"] = True
+                st.rerun()
+        if _script_editing:
+            st.text_area("Edit script", value=script_md,
+                         key=f"lib_script_{story_id}", height=400,
+                         label_visibility="collapsed", disabled=_script_saving)
+            _sb1, _sb2, _sbs = st.columns([1, 1, 6])
+            with _sb1:
+                # HIG, phase 1: the initiating control owns the loading
+                # state — it paints "Saving…" and stays disabled until
+                # the write lands on the rerun above.
+                if st.button("Saving…" if _script_saving else "Save",
+                             key=f"lib_script_save_{story_id}", type="primary",
+                             disabled=_script_saving or _busy):
+                    st.session_state[f"lib_saving_script_{story_id}"] = True
+                    st.rerun()
+            with _sb2:
+                if st.button("Cancel", key=f"lib_script_cancel_{story_id}",
+                             disabled=_script_saving):
+                    st.session_state.pop(f"lib_edit_script_{story_id}", None)
+                    st.rerun()
+        else:
+            _render_full_script(script_md)
     elif story["dialogue"].strip():
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
@@ -1447,10 +1851,11 @@ def _render_story_detail(story_id: str) -> None:
     # never repaint on completion — and the loader painted by the kickoff
     # rerun could miss its window entirely. While busy, re-render on a
     # short cadence; the moment the worker writes its terminal state the
-    # page settles to the idle buttons plus the honest result note. Fully
-    # automatic — no "click to check status" hunting. The loop always
-    # terminates: workers always write a terminal state, and startup
-    # recovery clears anything a dead process left behind.
+    # page settles to the idle buttons and _fire_refresh_toasts reports
+    # the honest outcome. Fully automatic — no "click to check status"
+    # hunting. The loop always terminates: workers always write a
+    # terminal state, and startup recovery clears anything a dead process
+    # left behind.
     if _busy:
         _time.sleep(1.0)
         st.rerun()

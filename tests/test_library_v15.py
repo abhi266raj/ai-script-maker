@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import story_library as lib  # noqa: E402
+from _fake_images import fetch_for  # noqa: E402
 
 
 @pytest.fixture
@@ -32,6 +34,22 @@ def _make_story(**kw):
     kw.setdefault("source_topic", "chubby dogs voting contest")
     kw.setdefault("source_headline", "Chubby dogs battle in voting contest")
     return lib.save_story(**kw)
+
+
+def _settle_enrichment(sid):
+    """Production-faithful setup for manual-refresh tests.
+
+    ``save_story`` seeds ``enrichment_status="pending"`` and production
+    always settles it via ``start_enrichment`` before any manual refresh
+    can run. Tests that drive ``_refresh_worker`` directly must settle
+    the seed first, otherwise the legacy fallback reads it as a phantom
+    busy "enrich" kind.
+    """
+    lib._set_refresh_busy(sid, "enrich")
+    lib._finish_refresh(sid, "enrich", "succeeded", "save-time enrichment done")
+    # Drain the settled outcome: like the UI's first render, the toast has
+    # been "shown" — manual-refresh tests start from a clean idle state.
+    lib.update_story_fields(sid, refresh_outcome_pending=[])
 
 
 # ---------------------------------------------------------------------------
@@ -242,6 +260,19 @@ def test_start_refresh_refuses_while_busy(libdir):
     assert meta["refresh_kind"] == "hashtags"
 
 
+def test_start_refresh_refuses_while_busy_new_format(libdir):
+    # Same contract on the per-kind format (#53/#54): the same kind
+    # re-kicked while busy is refused and the in-flight state is kept.
+    sid = _make_story()
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "hashtags")
+    ok, reason = lib.start_refresh(sid, "hashtags")
+    assert not ok and "already running" in reason
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "running"
+    assert lib.refresh_busy_kinds(meta) == {"hashtags"}
+
+
 def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
     sid = _make_story()
 
@@ -249,6 +280,11 @@ def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(lib, "refresh_hashtags", _boom)
+    # Production flow: the starter marks the kind busy, the worker only
+    # finishes it. (Without the mark, the save-seeded legacy "pending"
+    # state would read as a phantom busy kind.)
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "hashtags")
     lib._refresh_worker(sid, "hashtags", "chubby dogs voting contest")
     meta = lib.load_story(sid)["meta"]
     assert meta["enrichment_status"] == "failed"
@@ -261,6 +297,8 @@ def test_refresh_worker_no_change_state(libdir, monkeypatch):
     sid = _make_story()
     monkeypatch.setattr(lib, "refresh_images",
                         lambda sid_, topic: (False, "No new images found; kept 1 existing."))
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "images")
     lib._refresh_worker(sid, "images", "chubby dogs voting contest")
     meta = lib.load_story(sid)["meta"]
     assert meta["enrichment_status"] == "no_change"
@@ -270,18 +308,19 @@ def test_refresh_worker_no_change_state(libdir, monkeypatch):
 
 def test_refresh_worker_busy_lock_leaves_state_untouched(libdir):
     sid = _make_story()
-    lib.update_story_fields(sid, enrichment_status="running", refresh_kind="hashtags")
-    lock = lib._ENRICH_LOCKS.setdefault(sid, threading.Lock())
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "hashtags")
+    lock = lib._ENRICH_LOCKS.setdefault((sid, "hashtags"), threading.Lock())
     assert lock.acquire(blocking=False)
     try:
         lib._refresh_worker(sid, "hashtags", "chubby dogs voting contest")
     finally:
         lock.release()
     meta = lib.load_story(sid)["meta"]
-    # The losing worker must not clobber the in-flight "running" state —
-    # the UI keeps showing the loader instead of flipping to idle.
+    # The losing worker must not clobber the in-flight busy state — the UI
+    # keeps showing the spinner instead of flipping to idle.
     assert meta["enrichment_status"] == "running"
-    assert meta["refresh_kind"] == "hashtags"
+    assert lib.refresh_busy_kinds(meta) == {"hashtags"}
 
 
 # ---------------------------------------------------------------------------
@@ -390,12 +429,18 @@ def test_grab_article_images_extracts_body_img_tags(libdir, monkeypatch):
     monkeypatch.setattr("httpx.get", _fake_httpx_get(_ARTICLE_HTML))
     found = lib._grab_article_images(["https://publisher.example/story"],
                                      tries=1)
-    # og:image first, then in-article photos; relative + lazy-load absolutized.
-    assert found[0] == "https://publisher.example/hero.jpg"
-    assert "https://publisher.example/photos/dog1.jpg" in found
-    assert "https://cdn.example/lazy/dog2.jpg" in found
+    # (url, alt) pairs: og:image first, then in-article photos;
+    # relative + lazy-load absolutized.
+    urls = [u for u, _ in found]
+    alts = {u: a for u, a in found}
+    assert urls[0] == "https://publisher.example/hero.jpg"
+    assert "https://publisher.example/photos/dog1.jpg" in urls
+    assert "https://cdn.example/lazy/dog2.jpg" in urls
+    # Alt text is captured for in-article photos; hero images have none.
+    assert alts["https://publisher.example/photos/dog1.jpg"] == "dogs"
+    assert alts["https://publisher.example/hero.jpg"] is None
     # Logos and tracking pixels are filtered out.
-    assert not any("logo" in u or "pixel" in u for u in found)
+    assert not any("logo" in u or "pixel" in u for u in urls)
 
 
 def test_grab_article_images_skips_non_html(libdir, monkeypatch):
@@ -423,12 +468,20 @@ def test_refresh_images_merges_not_replaces(libdir, monkeypatch):
         lib, "_fetch_images_for_story",
         lambda story, topic, **k: ["https://img.example/old.jpg",
                                   "https://img.example/new.jpg"])
+    # Image fetches feed the content/visual dedupe: distinct bytes per URL.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
     assert changed is True
     meta = lib.load_story(sid)["meta"]
     # Existing URLs keep their order; new ones are appended, deduplicated.
     assert meta["image_urls"] == ["https://img.example/old.jpg",
                                  "https://img.example/new.jpg"]
+    # Content hashes are persisted alongside, aligned by position.
+    assert len(meta["image_hashes"]) == 2
+    assert meta["image_hashes"][0] != meta["image_hashes"][1]
+    # Perceptual hashes ride alongside, aligned by position as well.
+    assert len(meta["image_phashes"]) == 2
+    assert all(meta["image_phashes"])
     assert "Added 1 new image(s)" in note and "kept 1 existing" in note
 
 
@@ -436,21 +489,32 @@ def test_refresh_images_keeps_existing_when_fetch_empty(libdir, monkeypatch):
     sid = _make_story(image_urls=["https://img.example/old.jpg"])
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: [])
+    # Issue #57: the merge always runs, so missing hashes for the stored
+    # image are backfilled (one-time network cost, then persisted) even
+    # though the fetch found nothing new.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
-    assert changed is False
-    assert lib.load_story(sid)["meta"]["image_urls"] == [
-        "https://img.example/old.jpg"]
-    assert "kept 1 existing" in note
+    assert changed is True  # backfilled hashes were persisted
+    meta = lib.load_story(sid)["meta"]
+    assert meta["image_urls"] == ["https://img.example/old.jpg"]
+    assert len(meta["image_hashes"]) == 1 and all(meta["image_hashes"])
+    assert len(meta["image_phashes"]) == 1 and all(meta["image_phashes"])
+    assert "No new images found" in note and "kept 1 existing" in note
 
 
 def test_refresh_images_no_change_when_nothing_new(libdir, monkeypatch):
     sid = _make_story(image_urls=["https://img.example/old.jpg"])
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: ["https://img.example/old.jpg"])
+    # Issue #57: the stored image's missing hashes are backfilled even
+    # though the only candidate is a URL-dupe — that backfill is
+    # persisted, so the refresh reports a change.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
-    assert changed is False
-    assert lib.load_story(sid)["meta"]["image_urls"] == [
-        "https://img.example/old.jpg"]
+    assert changed is True
+    meta = lib.load_story(sid)["meta"]
+    assert meta["image_urls"] == ["https://img.example/old.jpg"]
+    assert all(meta["image_hashes"]) and all(meta["image_phashes"])
 
 
 # ---------------------------------------------------------------------------
@@ -972,12 +1036,16 @@ class _FakeSt:
         self.successes = []
         self.reran = False
         self.popover_kwargs = None
+        self.popovers = []  # every popover's kwargs, in render order
         self.buttons = []  # (label, key) in render order
+        self.button_kwargs = []  # full kwargs per button, in render order
         self.link_buttons = []  # (label, url) in render order
         self.codes = []
+        self.markup = []  # raw markdown html, in render order
+        self.toasts = []  # (message, icon) in render order
 
     def markdown(self, *a, **k):
-        pass
+        self.markup.append(a[0] if a else "")
 
     def caption(self, *a, **k):
         pass
@@ -993,11 +1061,15 @@ class _FakeSt:
 
     def button(self, label, key=None, on_click=None, **k):
         self.buttons.append((label, key))
+        self.button_kwargs.append({"label": label, "key": key, **k})
         if key in self._clicks:
             if on_click is not None:
                 on_click()
             return True
         return False
+
+    def toast(self, msg, icon=None):
+        self.toasts.append((msg, icon))
 
     def columns(self, spec):
         n = spec if isinstance(spec, int) else len(spec)
@@ -1005,6 +1077,7 @@ class _FakeSt:
 
     def popover(self, label, **k):
         self.popover_kwargs = {"label": label, **k}
+        self.popovers.append(self.popover_kwargs)
         return _FakeCtx()
 
     def link_button(self, label, url, **k):
@@ -1023,7 +1096,8 @@ def _ui_with_fake_st(clicks=()):
     try:
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
-                     "button", "columns", "popover", "link_button", "code"):
+                     "button", "columns", "popover", "link_button", "code",
+                     "toast"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -1037,26 +1111,27 @@ def _ui_with_fake_st(clicks=()):
 
 def _pop_kwargs(**kw):
     d = dict(trigger_label="Delete", popover_key="dp",
-             title="Delete this story?", message="M")
+             title="Delete this story?", message="M",
+             destructive_label="Delete story")
     d.update(kw)
     return d
 
 
-def test_delete_popover_renders_yes_and_no():
+def test_delete_popover_renders_cancel_and_destructive_verb():
     lui, fake = _ui_with_fake_st()
     lui._delete_popover(**_pop_kwargs(on_yes=lambda: None))
     assert fake.popover_kwargs["label"] == "Delete"
     assert fake.popover_kwargs["key"] == "dp"
     assert fake.popover_kwargs["on_change"] == "rerun"
-    assert ("Yes", "dp-yes") in fake.buttons
-    assert ("No", "dp-no") in fake.buttons
+    # #58: explicit red verb + standard Cancel, never Yes/No. Cancel leads.
+    assert fake.buttons == [("Cancel", "dp-no"), ("Delete story", "dp-yes")]
 
 
-def test_delete_popover_yes_runs_callback_and_closes():
+def test_delete_popover_destructive_runs_callback_and_closes():
     lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
     fired = []
     kw = _pop_kwargs(on_yes=lambda: fired.append(1))
-    lui._delete_popover(**kw)  # run 1: Yes clicked -> close + go flags armed
+    lui._delete_popover(**kw)  # run 1: destructive clicked -> close + go flags armed
     assert fired == []
     assert fake.session_state["dp"] is False
     assert fake.session_state["dp-go"] is True
@@ -1067,7 +1142,7 @@ def test_delete_popover_yes_runs_callback_and_closes():
     assert fake.errors == []
 
 
-def test_delete_popover_no_dismisses_without_deleting():
+def test_delete_popover_cancel_dismisses_without_deleting():
     lui, fake = _ui_with_fake_st(clicks=("dp-no",))
     fired = []
     lui._delete_popover(**_pop_kwargs(on_yes=lambda: fired.append(1)))
@@ -1076,7 +1151,7 @@ def test_delete_popover_no_dismisses_without_deleting():
     assert "dp-go" not in fake.session_state
 
 
-def test_delete_popover_yes_failure_is_loud():
+def test_delete_popover_destructive_failure_is_loud():
     lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
 
     def _boom():
@@ -1191,6 +1266,8 @@ def _reset_mocks(monkeypatch, tags, images, articles):
                         lambda story, topic, **k: images)
     monkeypatch.setattr(lib, "_fetch_news_articles",
                         lambda topic, limit=6: articles)
+    # Reset now content-hashes fresh images: distinct bytes per URL.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
 
 
 def test_do_reset_clears_and_refetches_all_rows(libdir, monkeypatch):
@@ -1219,6 +1296,8 @@ def test_do_reset_clears_and_refetches_all_rows(libdir, monkeypatch):
     assert meta["news_links"] == [{"title": "New story",
                                    "url": "https://example.com/new",
                                    "source": "Ex"}]
+    # The reset also stored the fresh image's perceptual hash.
+    assert len(meta["image_phashes"]) == 1 and all(meta["image_phashes"])
     # Never touched: manual uploads, screenplay, story content.
     assert meta["uploaded_images"] == ["upload1.png"]
     assert "AARAV: hello" in story["script"]
@@ -1291,6 +1370,8 @@ def test_refresh_worker_reset_failure_is_failed_not_done(libdir):
     # AI off -> _do_reset raises the disabled message -> failed, and the
     # stored rows are untouched (the write never happened).
     sid = _make_story(hashtags=["#KeepMe"])
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "reset")
     lib._refresh_worker(sid, "reset", "chubby dogs voting contest",
                         ai_engine=None)
     meta = lib.load_story(sid)["meta"]
@@ -1310,7 +1391,9 @@ def test_whatsapp_share_url_carries_exact_text():
     text = ("https://example.com/a\nhttps://example.com/b\n\n"
             "#DogShowdown #Funny")
     url = lui._whatsapp_share_url(text)
-    assert url.startswith("https://wa.me/?text=")
+    # #28: deep-link into the installed Mac app, not the browser (wa.me).
+    assert url.startswith("whatsapp://send?text=")
+    assert "wa.me" not in url
     import urllib.parse as up
     assert up.unquote(url.split("?text=", 1)[1]) == text
 
@@ -1322,7 +1405,7 @@ def test_confirm_popover_fail_label_is_used():
         raise RuntimeError("nope")
 
     kw = dict(trigger_label="Reset", popover_key="rp", title="T", message="M",
-              on_yes=_boom, fail_label="Reset")
+              on_yes=_boom, fail_label="Reset", destructive_label="Reset media")
     lui._confirm_popover(**kw)  # run 1: arm the confirmation
     fake._clicks.clear()
     lui._confirm_popover(**kw)  # run 2: on_yes raises -> loud error, reopened
@@ -1331,66 +1414,132 @@ def test_confirm_popover_fail_label_is_used():
 
 
 # ---------------------------------------------------------------------------
-# share column + reset popover widget wiring (fake streamlit)
+# share / copy dropdowns (fake streamlit) — #27/#28/#29/#30
 # ---------------------------------------------------------------------------
 
-def test_share_column_renders_copy_and_whatsapp(monkeypatch):
+def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     lui, fake = _ui_with_fake_st()
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: copies.append((label, text, key)))
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
-    lui._render_share_column("sid1", share_text)
+    lui._render_share_popover("sid1", share_text)
+    # Popover trigger is the self-describing dropdown (#30).
+    assert fake.popover_kwargs["label"] == "Share"
+    assert fake.popover_kwargs["key"] == "lib_sharepop_sid1"
     # Copy button gets the exact share text…
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
-    # …and the WhatsApp link carries the exact same text, URL-encoded.
+    # …and the WhatsApp link carries the exact same text, URL-encoded,
+    # deep-linking into the installed Mac app (#28).
     assert fake.link_buttons == [("Send via WhatsApp",
                                   lui._whatsapp_share_url(share_text))]
+    assert fake.link_buttons[0][1].startswith("whatsapp://send?text=")
     import urllib.parse as up
     sent = up.unquote(fake.link_buttons[0][1].split("?text=", 1)[1])
     assert sent == share_text
-    # Preview shows the same text.
-    assert fake.codes == [share_text]
+    # No share-text preview block anymore (#27).
+    assert fake.codes == []
 
 
-def test_share_column_empty_state(monkeypatch):
+def test_share_popover_empty_state(monkeypatch):
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
-    lui._render_share_column("sid1", "")
+    lui._render_share_popover("sid1", "")
+    assert fake.popover_kwargs["label"] == "Share"
     assert fake.link_buttons == []
     assert fake.codes == []
 
 
+def test_copy_popover_renders_four_actions(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    copies = []
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: copies.append((label, text, key)))
+    meta = {"hashtags": ["#DogShowdown", "#Funny"],
+            "image_urls": ["https://example.com/pic.jpg"],
+            "uploaded_images": []}
+    script_md = "**Hook:** hello"
+    lui._render_copy_popover("sid1", meta, script_md)
+    assert fake.popover_kwargs["label"] == "Copy"
+    assert fake.popover_kwargs["key"] == "lib_copypop_sid1"
+    labels = [c[0] for c in copies]
+    assert labels == ["Script", "Script + Tags", "Script + Media", "All"]
+    keys = [c[2] for c in copies]
+    assert keys == ["s-sid1", "h-sid1", "m-sid1", "a-sid1"]
+    # Copied texts are identical to the old flat buttons (#30).
+    plain = lui._script_plain_text(script_md)
+    assert copies[0][1] == plain
+    assert copies[1][1] == lui._compose_share_text(meta, script_md, False, True)
+    assert copies[2][1] == lui._compose_share_text(meta, script_md, True, False)
+    assert copies[3][1] == lui._compose_share_text(meta, script_md, True, True)
+    assert "#DogShowdown #Funny" in copies[1][1]
+    assert "https://example.com/pic.jpg" in copies[2][1]
+
+
+def test_copy_popover_empty_state(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: (_ for _ in ()).throw(
+                            AssertionError("copy must not render")))
+    lui._render_copy_popover("sid1", {}, "")
+    assert fake.popover_kwargs["label"] == "Copy"
+    assert fake.codes == []
+
+
+def test_action_dropdowns_have_no_actions_header(monkeypatch):
+    # #29: the vague "Actions" lib-section header is gone — the Share /
+    # Copy triggers are self-describing. #46: the dropdowns now live in
+    # the single detail toolbar row, so the old separate-row helper is
+    # gone; assert at the source level that no "Actions" header markup
+    # remains and the helper was removed.
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    assert '<div class="lib-section">Actions</div>' not in src
+    assert "_render_action_dropdowns" not in src
+
+
 def test_reset_popover_idle_wiring():
     lui, fake = _ui_with_fake_st()
-    lui._render_reset_popover("sid1", busy=False, refresh_kind="",
-                              ai_engine=None)
+    lui._render_reset_popover("sid1", set(), ai_engine=None)
     assert fake.popover_kwargs["label"] == "Reset"
     assert fake.popover_kwargs["key"] == "lib_resetpop_sid1"
     assert fake.popover_kwargs["disabled"] is False
     assert fake.popover_kwargs["on_change"] == "rerun"
-    assert ("Yes", "lib_resetpop_sid1-yes") in fake.buttons
-    assert ("No", "lib_resetpop_sid1-no") in fake.buttons
+    # #58: explicit red verb + standard Cancel, never Yes/No.
+    assert ("Reset media", "lib_resetpop_sid1-yes") in fake.buttons
+    assert ("Cancel", "lib_resetpop_sid1-no") in fake.buttons
 
 
-def test_reset_popover_busy_shows_resetting_and_disabled():
+def test_reset_popover_busy_label_stable_and_disabled():
+    # #53: the trigger label NEVER changes to "Resetting…" — it keeps
+    # "Reset", shows the CSS spinner and stays disabled while resetting.
     lui, fake = _ui_with_fake_st()
-    lui._render_reset_popover("sid1", busy=True, refresh_kind="reset",
-                              ai_engine=None)
-    assert fake.popover_kwargs["label"] == "Resetting…"
+    lui._render_reset_popover("sid1", {"reset"}, ai_engine=None)
+    assert fake.popover_kwargs["label"] == "Reset"
     assert fake.popover_kwargs["disabled"] is True
 
 
-def test_reset_popover_yes_kicks_reset_refresh(monkeypatch):
+def test_reset_popover_blocked_by_other_kind_no_spinner():
+    # #54: Reset is exclusive — disabled (but no spinner: it is blocked,
+    # not working) while another kind runs.
+    lui, fake = _ui_with_fake_st()
+    lui._render_reset_popover("sid1", {"hashtags"}, ai_engine=None)
+    assert fake.popover_kwargs["label"] == "Reset"
+    assert fake.popover_kwargs["disabled"] is True
+    assert 'data-marker="lib-spin-reset"' not in "".join(fake.markup)
+
+
+def test_reset_popover_destructive_kicks_reset_refresh(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_resetpop_sid1-yes",))
     calls = []
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (
                             calls.append((sid, kind, ai_engine)) or (True, "")))
-    kw = dict(story_id="sid1", busy=False, refresh_kind="", ai_engine="eng1")
-    lui._render_reset_popover(**kw)  # run 1: Yes clicked -> flags armed
+    kw = dict(story_id="sid1", busy_kinds=set(), ai_engine="eng1")
+    lui._render_reset_popover(**kw)  # run 1: destructive clicked -> flags armed
     fake._clicks.clear()
     lui._render_reset_popover(**kw)  # run 2: confirmation consumed
     assert calls == [("sid1", "reset", "eng1")]
@@ -1398,11 +1547,11 @@ def test_reset_popover_yes_kicks_reset_refresh(monkeypatch):
     assert fake.session_state.get("lib_resetpop_sid1") is not True
 
 
-def test_reset_popover_yes_failure_is_loud(monkeypatch):
+def test_reset_popover_destructive_failure_is_loud(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_resetpop_sid1-yes",))
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (False, "boom"))
-    kw = dict(story_id="sid1", busy=False, refresh_kind="", ai_engine=None)
+    kw = dict(story_id="sid1", busy_kinds=set(), ai_engine=None)
     lui._render_reset_popover(**kw)  # run 1: arm the confirmation
     fake._clicks.clear()
     lui._render_reset_popover(**kw)  # run 2: start fails -> loud, reopened
@@ -1481,15 +1630,266 @@ def test_image_cards_share_one_baseline(monkeypatch):
 
 
 def test_actions_row_buttons_share_38px_height(monkeypatch):
-    """The WhatsApp link button selector must include the sibling step
-    (it was missing, so the rule never matched), and the copy-button
-    iframe height must equal the 38px action system."""
+    """v1.6 (#27/#28/#30, #46): the Share/Copy dropdowns moved INTO the
+    single detail toolbar row, so the old marker-scoped actions-row gap
+    rule is gone (dead selector — its DOM target no longer exists). The
+    triggers now share the toolbar's own gap/alignment. The copy-button
+    iframe height still equals the 38px action system."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_library_css(lui, monkeypatch)
-    # Per Streamlit's real DOM, the sibling after the marker's element
-    # container is stLayoutWrapper (not stElementContainer), and the
-    # WhatsApp link renders its <a> inside the link-button container.
-    assert ('[data-marker="lib-actions"])\n'
-            '        + div[data-testid="stLayoutWrapper"] [data-testid="stLinkButton"] a') in css
-    assert "min-height: var(--lib-act-h)" in css
+    # The lib-actions marker rule is gone…
+    assert '[data-marker="lib-actions"]' not in css
+    # …and the flat-layout link-button height rule stays gone.
+    assert '[data-testid="stLinkButton"] a' not in css
     assert lui._LIB_ACTION_BTN_H_PX == 38
+
+
+# ---------------------------------------------------------------------------
+# v1.6 (#24) — danger-marker containers collapsed: "Reset"/"Delete"
+# triggers and the red destructive button must share the baseline of plain buttons.
+# ---------------------------------------------------------------------------
+
+def _capture_story_list_css(lui, monkeypatch):
+    """Capture the <style> HTML emitted by _inject_story_list_css (the
+    Library-view block holding the danger-marker / red-button rules)."""
+    chunks = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: chunks.append(a[0] if a else ""))
+    lui._inject_story_list_css()
+    return "\n".join(chunks)
+
+
+def test_danger_marker_containers_are_collapsed(monkeypatch):
+    """The hidden lib-danger-/lib-danger-pop- marker divs are display:none,
+    but their stElementContainer wrapper still occupies one inter-element
+    gap in Streamlit's vertical block — that gap pushed the
+    "Reset"/"Delete" triggers (and the red destructive button) lower than
+    their plain-button siblings. The wrapper must be collapsed out of flow."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_story_list_css(lui, monkeypatch)
+    assert css.count("{") == css.count("}")
+    # One rule covers both _danger_button (lib-danger-…) and the popover
+    # trigger (lib-danger-pop-…) markers; other markers are untouched.
+    assert ('div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {'
+            in css)
+    assert 'display: none !important;' in css
+    # The collapse must not have swallowed the neighbouring sidebar rules
+    # in the same block, and the selector must stay prefix-scoped.
+    assert '[data-marker="lib-story-list"]' in css
+    assert '[data-marker^="lib-"]' not in css  # never collapse all markers
+
+
+def test_danger_red_button_rules_survive_collapse_trigger_is_neutral(monkeypatch):
+    """#58: macOS red lives ONLY on the explicit destructive button inside
+    the popover — the trigger is neutral (deliberate reversal of #38).
+
+    display:none removes the marker container from layout but NOT from
+    the DOM, so the adjacent-sibling red rule for the destructive button
+    (which matches on DOM order) must still be present in normal and
+    :hover states. The old red popover-TRIGGER rules must be gone."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_story_list_css(lui, monkeypatch)
+    red_btn = ('div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])\n'
+               '        + div[data-testid="stElementContainer"] [data-testid="stButton"] button')
+    assert red_btn in css
+    assert red_btn + ":hover" in css
+    # The trigger is neutral now: no red popover-trigger selectors remain.
+    assert '[data-testid="stPopoverButton"]' not in css
+    # Exactly the destructive button + its hover carry the red.
+    assert css.count("color: #FF3B30 !important;") == 2
+
+
+def test_danger_button_marker_immediately_precedes_button(monkeypatch):
+    """DOM prerequisite for the red-button `+` rule: the marker must be
+    the immediate predecessor of the button element."""
+    lui, _fake = _ui_with_fake_st()
+    seq = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: seq.append(("md", a[0] if a else "")))
+    orig_button = lui.st.button
+
+    def rec_button(label, key=None, **k):
+        seq.append(("btn", label, key))
+        return orig_button(label, key=key, **k)
+
+    monkeypatch.setattr(lui.st, "button", rec_button)
+    assert lui._danger_button("Delete story", key="dp-yes") is False
+    assert [s[0] for s in seq] == ["md", "btn"]
+    assert 'data-marker="lib-danger-dp-yes"' in seq[0][1]
+    assert seq[1][1:] == ("Delete story", "dp-yes")
+
+
+def test_confirm_popover_marker_immediately_precedes_popover(monkeypatch):
+    """DOM prerequisite for the red-trigger `+` rule: the marker must be
+    the immediate predecessor of the popover element."""
+    lui, fake = _ui_with_fake_st()
+    seq = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: seq.append(("md", a[0] if a else "")))
+    orig_popover = lui.st.popover
+
+    def rec_popover(label, **k):
+        seq.append(("pop", label))
+        return orig_popover(label, **k)
+
+    monkeypatch.setattr(lui.st, "popover", rec_popover)
+    lui._confirm_popover(**_pop_kwargs(on_yes=lambda: None))
+    assert seq[0][0] == "md"
+    assert 'data-marker="lib-danger-pop-dp"' in seq[0][1]
+    assert seq[1] == ("pop", "Delete")
+    assert fake.popover_kwargs["key"] == "dp"
+
+
+# v1.6 (#38) — Delete popover HIG: full trigger labels + anchored caret.
+# ---------------------------------------------------------------------------
+
+def test_detail_toolbar_weights_fit_full_labels():
+    """#38: the Delete trigger was ellipsized to "D..." in the 1.0-weight
+    column, and "Update Hashtags"/"Update Images" also showed "…". Every
+    action column must be weighted to fit its label — #53: labels never
+    change mid-work, so the static labels ("Update Hashtags",
+    "Update Images", "Reset", "Delete" + chevron) are the longest state.
+    #46: Share/Copy joined the same row — Delete stays the trailing (last)
+    column and each toolbar total is unchanged (10.0) so the overall
+    layout — and the #24 baseline alignment — is preserved."""
+    lui, _fake = _ui_with_fake_st()
+    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.0
+    assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0
+    # Minimum widths that fit the longest label states (generous headroom
+    # over the old 1.7/1.6/1.3/1.0 weights that truncated).
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 2.0  # Update Hashtags
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 1.8  # Update Images
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.0  # Share popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Copy popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] >= 1.5  # Delete popover trigger
+    assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
+
+
+def test_destructive_popover_has_hig_anchor_caret(monkeypatch):
+    """#38: the confirmation must read as a HIG popover anchored to its
+    trigger, not a detached card. The caret is scoped to popover bodies
+    carrying the lib-danger-pop-body marker: a 45° square inheriting the
+    body's own background, so it tracks the light/dark theme with no
+    hard-coded surface color."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_story_list_css(lui, monkeypatch)
+    assert css.count("{") == css.count("}")
+    rule = ('div[data-testid="stPopoverBody"]'
+            ':has([data-marker="lib-danger-pop-body"])::before')
+    assert rule in css
+    assert 'transform: rotate(45deg) !important;' in css
+    assert 'background: inherit !important;' in css
+    # Theme-safe: the caret introduces no hard-coded surface color, and the
+    # #58 red rule set is exactly the destructive button + hover (the
+    # trigger is neutral now).
+    assert css.count("color: #FF3B30 !important;") == 2
+
+
+def test_confirm_popover_emits_body_anchor_marker_first(monkeypatch):
+    """#38: the lib-danger-pop-body marker must be the first node inside the
+    popover body. The body lives in a floating overlay portal, unreachable
+    from the trigger marker, so the caret rule anchors to this marker
+    instead. Emitted first so the red-button `+` sibling rules (DOM order)
+    never see a button-bearing container after it."""
+    lui, fake = _ui_with_fake_st()
+    seq = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: seq.append(("md", a[0] if a else "")))
+    orig_popover = lui.st.popover
+
+    def rec_popover(label, **k):
+        seq.append(("pop", label))
+        return orig_popover(label, **k)
+
+    monkeypatch.setattr(lui.st, "popover", rec_popover)
+    lui._confirm_popover(**_pop_kwargs(on_yes=lambda: None))
+    md_calls = [s[1] for s in seq if s[0] == "md"]
+    # [0] trigger marker (outside), [1] body anchor marker (first inside).
+    assert 'data-marker="lib-danger-pop-dp"' in md_calls[0]
+    assert 'data-marker="lib-danger-pop-body"' in md_calls[1]
+    # The body marker must not disturb the Cancel/destructive buttons.
+    assert ("Cancel", "dp-no") in fake.buttons
+    assert ("Delete story", "dp-yes") in fake.buttons
+
+
+# ---------------------------------------------------------------------------
+# v1.6 (#58) — destructive popovers name the object and use explicit verbs:
+# Cancel + "Delete story" / "Delete all stories" / "Reset media" (red),
+# never Yes/No. Triggers are neutral; red lives only inside the popover.
+# ---------------------------------------------------------------------------
+
+def test_md_escape_neutralises_markdown_syntax():
+    lui, _fake = _ui_with_fake_st()
+    assert lui._md_escape('A *B* [C](http://x) `code`') == \
+        'A \\*B\\* \\[C\\]\\(http://x\\) \\`code\\`'
+    assert lui._md_escape('100% #hashtag _under_') == \
+        '100% \\#hashtag \\_under\\_'
+    assert lui._md_escape('back\\slash') == 'back\\\\slash'
+    assert lui._md_escape('') == ''
+    assert lui._md_escape(None) == ''
+    # Plain prose (the common case) passes through untouched.
+    assert lui._md_escape("Delete this story?") == "Delete this story?"
+
+
+def test_confirm_popover_escapes_markdown_in_title():
+    """#58: the title may carry a user-editable story name — Markdown
+    specials must render literally and must not break the bold wrapper
+    or inject a link."""
+    lui, fake = _ui_with_fake_st()
+    lui._confirm_popover(**_pop_kwargs(
+        title='Delete "A *B* [C]"?', on_yes=lambda: None))
+    title_md = [m for m in fake.markup if m.startswith("**")]
+    assert title_md == ['**Delete "A \\*B\\* \\[C\\]"?**']
+
+
+def test_confirm_popover_requires_destructive_label():
+    """#58: the explicit verb is mandatory — a missing destructive_label
+    fails loudly (TypeError), never renders a bare Yes."""
+    lui, _fake = _ui_with_fake_st()
+    kw = dict(_pop_kwargs(on_yes=lambda: None))
+    del kw["destructive_label"]
+    with pytest.raises(TypeError):
+        lui._confirm_popover(**kw)
+
+
+def test_delete_all_popover_uses_explicit_verb():
+    """#58: the library sidebar Delete-All confirmation uses the explicit
+    red verb "Delete all stories" (source-level: render_library_page is
+    too heavy for the fake streamlit harness)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    seg = src[src.index('popover_key="lib_delpop_all"'):]
+    seg = seg[:seg.index(")", seg.index("destructive_label"))]
+    assert 'destructive_label="Delete all stories"' in seg
+    assert 'title="Delete all stories?"' in seg
+
+
+def test_story_delete_popover_names_the_story():
+    """#58: the story-delete confirmation titles the popover with the
+    quoted story name and the explicit verb (source-level: the helper is
+    a closure inside _render_story_detail)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    seg = src[src.index("def _story_delete_popover"):]
+    seg = seg[:seg.index("def ", 10)]
+    assert 'title=f\'Delete "{_story_title}"?\'' in seg
+    assert 'destructive_label="Delete story"' in seg
+    # The title comes from meta (bound before the closure runs), with the
+    # same Untitled fallback the header uses.
+    assert 'meta.get("title", "Untitled Story") or "Untitled Story"' in seg
+
+
+def test_reset_popover_uses_explicit_verb_source():
+    """#58: the Reset confirmation's destructive verb is the explicit
+    "Reset media" (behavioral part is covered by
+    test_reset_popover_idle_wiring)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    seg = src[src.index("def _render_reset_popover"):]
+    seg = seg[:seg.index("\ndef ", 10)]
+    assert 'destructive_label="Reset media"' in seg
+    assert 'title="Reset media rows?"' in seg

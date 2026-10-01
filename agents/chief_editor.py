@@ -118,11 +118,13 @@ class ChiefEditorCoordinatorAgent:
         sample_clause = ""
         if sample_story and sample_story.strip():
             sample_clause = (
-                f"\n📌 SAMPLE EXAMPLE (style/format reference ONLY \u2014 lowest precedence):\n"
+                f"\n📌 SAMPLE STORY \u2014 DIRECTOR'S GUIDE (highest creative precedence):\n"
                 f"Reference Sample: \"{sample_story.strip()}\"\n"
-                f"Rule: Generate from the NEWS with your own creativity. The sample is only an example "
-                f"of tone/format \u2014 never copy its characters, plot, or lines, and never let it override "
-                f"verified facts or finalized creative decisions.\n"
+                f"Rule: This sample is the author/director's guide. Follow its characters, "
+                f"relationships, direction, and tone. On any conflict with the vibe, character "
+                f"count, scene style, or other creative settings, the SAMPLE WINS.\n"
+                f"Hard boundary: verified news facts always outrank the sample \u2014 never "
+                f"alter confirmed facts to match the sample.\n"
             )
 
         all_instructions = {

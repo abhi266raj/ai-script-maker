@@ -290,11 +290,15 @@ def build_tailored_instruction(
     if sample_story and sample_story.strip():
         sample_clean = sample_story.strip()
         parts.append(
-            "⭐ OPTIONAL SAMPLE STORY \u2014 STYLE REFERENCE ONLY:\n"
+            "⭐ SAMPLE STORY \u2014 DIRECTOR'S GUIDE (highest creative precedence):\n"
             'Reference Sample Story: "' + sample_clean + '"\n'
-            "Use this sample ONLY as inspiration for structure, rhythm, and tone. "
-            "DO NOT copy its characters, names, relationships, locations, objects, "
-            "dialogue, situations, or plot details \u2014 invent everything fresh for the current news story."
+            "This sample is the author/director's guide for what they want. Follow its "
+            "characters, names, relationships, direction, structure, rhythm, and tone. "
+            "When the sample conflicts with the vibe, character count, or scene style "
+            "settings above, the SAMPLE WINS on every creative choice.\n"
+            "HARD BOUNDARY \u2014 verified news facts always outrank the sample: adapt the "
+            "sample's creative direction to the confirmed facts; never invent or alter "
+            "facts to match the sample."
         )
 
     return "\n\n".join(parts)

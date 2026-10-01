@@ -18,6 +18,7 @@ threads AFTER the story is saved, so saving never waits on the network.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import re
 import threading
@@ -25,7 +26,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 
 # ---------------------------------------------------------------------------
@@ -37,8 +38,14 @@ STORIES_DIR = LIBRARY_ROOT / "stories"
 PREFS_PATH = LIBRARY_ROOT / "prefs.json"
 
 _STORY_ID_RE = re.compile(r"^[0-9A-Za-z-]{8,64}$")
-_ENRICH_LOCKS: Dict[str, threading.Lock] = {}
+_ENRICH_LOCKS: Dict[tuple, threading.Lock] = {}
 _ENRICH_THREADS: Dict[str, threading.Thread] = {}
+_META_WRITE_LOCKS: Dict[str, threading.RLock] = {}
+
+# Per-story write lock guarding every read-modify-write of a story's
+# frontmatter file (#53/#54: concurrent per-kind workers must not clobber
+# each other). Keyed by story_id; independent from _ENRICH_LOCKS (which are
+# per (story_id, kind) and guard "is this kind already running").
 
 # Set once per process by recover_orphaned_refreshes().
 _RECOVERY_DONE = False
@@ -53,6 +60,35 @@ _RECOVERY_DONE = False
 # Legacy values "refreshing" (busy) and "done" (terminal) are still
 # recognized when *reading* old stories, but are never written anymore.
 BUSY_STATES = ("pending", "refreshing", "running")
+
+# ---------------------------------------------------------------------------
+# Refresh-state model (#53/#54)
+# ---------------------------------------------------------------------------
+# Refresh work is tracked PER KIND, not with a single busy flag:
+#
+# - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"`` and
+#   ``"images"`` are independent and may run concurrently (#54); ``"reset"``
+#   is destructive and exclusive; ``"enrich"`` is the save-time enrichment
+#   and also exclusive with manual refreshes.
+# - ``refresh_busy`` (frontmatter, list of kind names): the kinds currently
+#   running. A list round-trips through _dump_frontmatter/_parse_frontmatter
+#   (nested dicts do not — never store one in frontmatter).
+# - ``refresh_outcome_pending`` (frontmatter, list of JSON strings): one
+#   entry per finished kind, ``{"kind", "status", "note"}``. The UI toasts
+#   each entry exactly once and drains it. JSON-per-entry keeps the
+#   hand-rolled frontmatter format honest.
+#
+# The legacy single-flag format (``enrichment_status`` + ``refresh_kind``)
+# is still read by refresh_busy_kinds() as a migration fallback, and
+# ``enrichment_status``/``refresh_note`` are still WRITTEN (back-compat),
+# but they are no longer authoritative for "is anything busy".
+#
+# All read-modify-write cycles on the frontmatter go through
+# _meta_write_lock(story_id): concurrent per-kind workers must not clobber
+# each other's updates. Lock order is always kind-lock (_ENRICH_LOCKS) THEN
+# meta-lock — never the reverse (deadlock avoidance).
+_REFRESH_KINDS = ("hashtags", "images", "reset", "enrich")
+_EXCLUSIVE_KINDS = ("reset", "enrich")
 
 # Hard wall-clock bound for one AI hashtag-discovery call inside a refresh.
 _AI_HASHTAG_TIMEOUT_S = 45
@@ -264,8 +300,17 @@ def save_story(
     news_links: Optional[List[Dict[str, str]]] = None,
     image_urls: Optional[List[str]] = None,
 ) -> str:
-    """Save a story immediately (no network). Returns the story id."""
+    """Save a story immediately (no network). Returns the story id.
+
+    Fetched image URLs are deduplicated by normalized URL before
+    storing — the same image is never stored twice (issue #21). This
+    stays deliberately network-free: byte-identical or visual duplicates
+    under different URLs that slip through here are collapsed by every
+    later image refresh, which backfills content/perceptual hashes and
+    collapses stored duplicates (issue #57).
+    """
     story_id = new_story_id()
+    image_urls, _, _ = _dedupe_stored_image_entries(image_urls, [], [])
     meta = {
         "id": story_id,
         "title": title or "Untitled Story",
@@ -273,7 +318,9 @@ def save_story(
         "tone": tone or "",
         "hashtags": [h for h in (hashtags or []) if h],
         "news_links": [dict(l) for l in (news_links or [])],
-        "image_urls": [u for u in (image_urls or []) if u],
+        "image_urls": image_urls,
+        "image_hashes": [],
+        "image_phashes": [],
         "uploaded_images": [],
         "video_file": "",
         "enrichment_status": "pending",
@@ -286,12 +333,41 @@ def save_story(
 
 
 def load_story(story_id: str) -> Optional[Dict[str, Any]]:
-    """Load a story: {'meta': {...}, 'body': '...', 'dialogue': '...', 'script': '...' }."""
+    """Load a story: {'meta': {...}, 'body': '...', 'dialogue': '...', 'script': '...' }.
+
+    Migration (issue #21): stories saved before dedupe may carry the
+    same image twice (or trivial URL variants). The stored list is
+    collapsed by normalized URL on load so the detail view shows each
+    image once, and the cleanup is persisted back so it sticks. The
+    returned view is always deduped, even if the write-back fails.
+    Byte-identical / visual duplicates under different URLs need the
+    network to detect, so they are NOT collapsed here — the image
+    refresh backfills hashes and collapses them (issue #57).
+    """
     path = story_path(story_id)
     if not path.exists():
         return None
     meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
     dialogue, script = _split_sections(body)
+    stored_urls = [u for u in (meta.get("image_urls") or []) if u]
+    stored_hashes = meta.get("image_hashes")
+    had_hashes = "image_hashes" in meta
+    stored_phashes = meta.get("image_phashes")
+    had_phashes = "image_phashes" in meta
+    urls, hashes, phashes = _dedupe_stored_image_entries(
+        stored_urls, stored_hashes, stored_phashes)
+    meta["image_urls"] = urls
+    meta["image_hashes"] = hashes
+    meta["image_phashes"] = phashes
+    if (urls != stored_urls or not had_hashes or stored_hashes != hashes
+            or not had_phashes or stored_phashes != phashes):
+        # Best-effort write-back: the in-memory view above is already
+        # clean, so a failed write is simply retried on the next load.
+        try:
+            update_story_fields(story_id, image_urls=urls, image_hashes=hashes,
+                                image_phashes=phashes)
+        except Exception:
+            pass
     return {"meta": meta, "body": body, "dialogue": dialogue, "script": script}
 
 
@@ -334,16 +410,190 @@ def list_stories() -> List[Dict[str, Any]]:
     return stories
 
 
+def _meta_write_lock(story_id: str) -> threading.RLock:
+    """Return the per-story RLock guarding frontmatter read-modify-write.
+
+    A single module-level dict of locks (not a global lock) keeps
+    concurrent workers on DIFFERENT stories fully parallel; workers on the
+    same story serialize only for the brief file update (#53/#54).
+    """
+    return _META_WRITE_LOCKS.setdefault(story_id, threading.RLock())
+
+
+def _read_meta_body(story_id: str) -> Optional[tuple]:
+    """Read (meta, body) for a story, or None if the file is gone.
+
+    Callers hold _meta_write_lock(story_id) so the returned meta is a
+    consistent snapshot for an atomic read-modify-write cycle.
+    """
+    path = story_path(story_id)
+    if not path.exists():
+        return None
+    return _parse_frontmatter(path.read_text(encoding="utf-8"))
+
+
+def _write_meta_body(story_id: str, meta: Dict[str, Any], body: str) -> None:
+    """Persist (meta, body); caller must hold _meta_write_lock(story_id)."""
+    story_path(story_id).write_text(
+        f"{_dump_frontmatter(meta)}\n\n{body.strip()}\n", encoding="utf-8")
+
+
+def refresh_busy_kinds(meta: Optional[Dict[str, Any]]) -> Set[str]:
+    """Return the set of refresh kinds currently running for this story.
+
+    Reads the authoritative ``refresh_busy`` list first. Stories written
+    before the per-kind model (#53/#54) carry only the legacy single-flag
+    ``enrichment_status`` (+ ``refresh_kind``): a busy status with a known
+    kind maps to that kind; a busy status with an unknown/empty kind maps
+    to ``{"enrich"}`` (exclusive — the old code blocked everything while
+    busy, so exclusivity is the safe migration). Never raises: unreadable
+    state reads as idle; start_refresh re-checks honestly before kicking.
+    """
+    if not isinstance(meta, dict):
+        return set()
+    raw = meta.get("refresh_busy")
+    if isinstance(raw, list):
+        return {k for k in raw if k in _REFRESH_KINDS}
+    # Legacy single-flag fallback.
+    if meta.get("enrichment_status") in BUSY_STATES:
+        kind = meta.get("refresh_kind")
+        if kind in _REFRESH_KINDS:
+            return {kind}
+        return {"enrich"}
+    return set()
+
+
+def _outcome_entry_kind(entry: Any) -> Optional[str]:
+    """Return the kind recorded in a refresh_outcome_pending entry, or None
+    if the entry is malformed (it is then dropped by the drain)."""
+    parsed = parse_refresh_outcome(entry)
+    return parsed["kind"] if parsed else None
+
+
+def parse_refresh_outcome(entry: Any) -> Optional[Dict[str, str]]:
+    """Parse one refresh_outcome_pending entry.
+
+    Returns {"kind", "status", "note"} (all strings) or None when the
+    entry is malformed. The UI uses this to toast finished outcomes (#53);
+    malformed entries are reported loudly and dropped, never toasted.
+    """
+    if not isinstance(entry, str):
+        return None
+    try:
+        data = json.loads(entry)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("kind")
+    status = data.get("status")
+    if kind not in _REFRESH_KINDS or not isinstance(status, str):
+        return None
+    return {"kind": kind, "status": status,
+            "note": str(data.get("note") or "")}
+
+
+def _drop_pending_outcomes(meta: Dict[str, Any], kind: str) -> None:
+    """Remove pending outcome entries for kind (a new run toasts fresh)."""
+    pending = meta.get("refresh_outcome_pending")
+    if not isinstance(pending, list):
+        meta.pop("refresh_outcome_pending", None)
+        return
+    kept = [e for e in pending if _outcome_entry_kind(e) != kind]
+    if kept:
+        meta["refresh_outcome_pending"] = kept
+    else:
+        meta.pop("refresh_outcome_pending", None)
+
+
+def _set_refresh_busy(story_id: str, kind: str) -> bool:
+    """Mark kind busy (idempotent). Clears that kind's stale pending
+    outcomes and makes the per-kind list authoritative (legacy single-flag
+    fields are reset). Returns False if the story file is gone."""
+    with _meta_write_lock(story_id):
+        snap = _read_meta_body(story_id)
+        if snap is None:
+            return False
+        meta, body = snap
+        busy = sorted(refresh_busy_kinds(meta) | {kind})
+        meta["refresh_busy"] = busy
+        meta["enrichment_status"] = "running"
+        meta["refresh_kind"] = ""
+        _drop_pending_outcomes(meta, kind)
+        _write_meta_body(story_id, meta, body)
+        return True
+
+
+def _finish_refresh(story_id: str, kind: str, status: str, note: str) -> bool:
+    """Clear kind's busy flag and record its outcome (atomic, per-kind).
+
+    Only kind's own state is touched — a concurrently running sibling kind
+    keeps its busy flag and its pending outcomes (#54). While any kind is
+    still busy the legacy ``enrichment_status`` stays "running"; otherwise
+    it takes this run's terminal status. Returns False if the story file
+    is gone (e.g. deleted mid-refresh — nothing left to record).
+    """
+    with _meta_write_lock(story_id):
+        snap = _read_meta_body(story_id)
+        if snap is None:
+            return False
+        meta, body = snap
+        busy = sorted(refresh_busy_kinds(meta) - {kind})
+        if busy:
+            meta["refresh_busy"] = busy
+        else:
+            meta.pop("refresh_busy", None)
+        pending = meta.get("refresh_outcome_pending")
+        if not isinstance(pending, list):
+            pending = []
+        pending = [e for e in pending if _outcome_entry_kind(e) != kind]
+        pending.append(json.dumps(
+            {"kind": kind, "status": status, "note": note or ""}))
+        meta["refresh_outcome_pending"] = pending
+        meta["enrichment_status"] = "running" if busy else status
+        meta["refresh_kind"] = ""
+        meta["refresh_note"] = note or ""
+        _write_meta_body(story_id, meta, body)
+        return True
+
+
 def update_story_fields(story_id: str, **fields: Any) -> bool:
-    """Merge fields into the story's frontmatter (body untouched)."""
+    """Merge fields into the story's frontmatter (body untouched).
+
+    Serialized per story via _meta_write_lock: refresh workers and the UI
+    may update the same file concurrently (#53/#54) and must not clobber
+    each other's read-modify-write cycles.
+    """
     path = story_path(story_id)
     if not path.exists():
         return False
-    meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
-    meta.update(fields)
-    path.write_text(
-        f"{_dump_frontmatter(meta)}\n\n{body.strip()}\n", encoding="utf-8")
+    with _meta_write_lock(story_id):
+        meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+        meta.update(fields)
+        path.write_text(
+            f"{_dump_frontmatter(meta)}\n\n{body.strip()}\n", encoding="utf-8")
     return True
+
+
+def update_story_script(story_id: str, script_md: str) -> None:
+    """Replace the story's ``## Script`` section, preserving the title,
+    dialogue, and all frontmatter.
+
+    Raises FileNotFoundError if the story does not exist, ValueError for
+    a blank script or an invalid id. Any write error propagates — the
+    caller must surface it (fail loud), never pretend the save landed.
+    """
+    _check_id(story_id)
+    if not (script_md or "").strip():
+        raise ValueError("Script text must not be empty.")
+    path = story_path(story_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Story not found: {story_id}")
+    meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+    dialogue, _old_script = _split_sections(body)
+    path.write_text(
+        build_story_markdown(meta, dialogue, script_md.strip()),
+        encoding="utf-8")
 
 
 def delete_story(story_id: str) -> bool:
@@ -433,12 +683,21 @@ def media_path(story_id: str, filename: str) -> Optional[Path]:
 
 
 def remove_fetched_image(story_id: str, url: str) -> bool:
-    """Remove one auto-fetched image URL (the overwrite control)."""
+    """Remove one auto-fetched image URL (the overwrite control).
+
+    Content hashes stay aligned with the surviving URLs.
+    """
     story = load_story(story_id)
     if not story:
         return False
-    urls = [u for u in (story["meta"].get("image_urls") or []) if u != url]
-    update_story_fields(story_id, image_urls=urls)
+    urls = list(story["meta"].get("image_urls") or [])
+    hashes = _align_hashes(urls, story["meta"].get("image_hashes"))
+    phashes = _align_hashes(urls, story["meta"].get("image_phashes"))
+    kept = [(u, h, p) for u, h, p in zip(urls, hashes, phashes) if u != url]
+    update_story_fields(story_id,
+                        image_urls=[u for u, _, _ in kept],
+                        image_hashes=[h for _, h, _ in kept],
+                        image_phashes=[p for _, _, p in kept])
     return True
 
 
@@ -446,8 +705,12 @@ def update_fetched_image_url(story_id: str, index: int, new_url: str) -> bool:
     """Replace one auto-fetched image URL by list position (the edit control).
 
     Fails loudly with ValueError when the story is unknown, the index is
-    out of range, or the new value is not a non-empty http(s) URL — the
-    caller surfaces the error instead of silently keeping a bad value.
+    out of range, the new value is not a non-empty http(s) URL, or the
+    new address is already attached to the story (normalized-URL dedupe,
+    issue #21) — the caller surfaces the error instead of silently
+    keeping a bad or duplicate value. The replaced entry's content hash
+    and perceptual hash are invalidated so the next refresh re-hashes
+    the new bytes.
     """
     story = load_story(story_id)
     if not story:
@@ -458,8 +721,17 @@ def update_fetched_image_url(story_id: str, index: int, new_url: str) -> bool:
     u = (new_url or "").strip()
     if not u.lower().startswith(("http://", "https://")):
         raise ValueError("The new image address must be a non-empty http(s) URL.")
+    new_key = normalize_image_url(u)
+    for i, old in enumerate(urls):
+        if i != index and normalize_image_url(old) == new_key:
+            raise ValueError("That image is already attached to this story.")
     urls[index] = u
-    update_story_fields(story_id, image_urls=urls)
+    hashes = _align_hashes(urls, story["meta"].get("image_hashes"))
+    hashes[index] = ""
+    phashes = _align_hashes(urls, story["meta"].get("image_phashes"))
+    phashes[index] = ""
+    update_story_fields(story_id, image_urls=urls, image_hashes=hashes,
+                        image_phashes=phashes)
     return True
 
 
@@ -759,15 +1031,16 @@ def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
 
 
 def _enrich_worker(story_id: str, topic: str, do_work) -> None:
-    """Run do_work under the per-story lock; write back an honest state.
+    """Run do_work under the per-kind lock; write back an honest state.
 
-    ``do_work`` returns ``(changed, note)``. The story's
-    ``enrichment_status`` becomes ``succeeded`` / ``no_change`` /
-    ``failed`` accordingly — a failure is never recorded as a success,
-    and the real error text lands in ``refresh_note``. A failure to
-    persist the final state is printed loudly, never swallowed.
+    ``do_work`` returns ``(changed, note)``. The outcome is recorded
+    honestly (``succeeded`` / ``no_change`` / ``failed``) — a failure is
+    never recorded as a success, and the real error text lands in the
+    note. A failure to persist the final state is printed loudly, never
+    swallowed. Save-time enrichment is the exclusive "enrich" kind: it
+    never clobbers a manual refresh's per-kind state (#53/#54).
     """
-    lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
+    lock = _ENRICH_LOCKS.setdefault((story_id, "enrich"), threading.Lock())
     if not lock.acquire(blocking=False):
         return
     try:
@@ -778,8 +1051,7 @@ def _enrich_worker(story_id: str, topic: str, do_work) -> None:
             status = "failed"
             note = f"Enrichment failed: {type(e).__name__}: {e}"
         try:
-            update_story_fields(story_id, enrichment_status=status,
-                                refresh_kind="", refresh_note=note or "")
+            _finish_refresh(story_id, "enrich", status, note or "")
         except Exception:
             traceback.print_exc()
     finally:
@@ -790,12 +1062,14 @@ def recover_orphaned_refreshes() -> int:
     """Mark stories stuck in a busy refresh state as interrupted.
 
     Refresh workers live only in this process's memory: when the
-    Streamlit process restarts, any persisted busy state (``pending`` /
-    ``refreshing`` / ``running``) is orphaned and its buttons would stay
-    stuck forever. Runs once per process — at process start no worker of
-    ours can be alive, so every busy state found here is orphaned by
-    definition. Recovered stories get ``interrupted`` plus an honest
-    note; nothing else is touched. Returns the number recovered.
+    Streamlit process restarts, any persisted busy state is orphaned and
+    its buttons would stay stuck forever. Runs once per process — at
+    process start no worker of ours can be alive, so every busy state
+    found here is orphaned by definition. Each orphaned kind is cleared
+    and gets an ``interrupted`` pending-outcome entry so the UI toasts
+    the honest note (#53); nothing else is touched. Understands both the
+    current per-kind ``refresh_busy`` list and the legacy single-flag
+    ``enrichment_status`` format. Returns the number recovered.
     """
     global _RECOVERY_DONE
     if _RECOVERY_DONE:
@@ -812,19 +1086,39 @@ def recover_orphaned_refreshes() -> int:
             continue
         if not story:
             continue
-        if (story.get("meta") or {}).get("enrichment_status") in BUSY_STATES:
-            try:
-                update_story_fields(
-                    sid,
-                    enrichment_status="interrupted",
-                    refresh_kind="",
-                    refresh_note=("A previous refresh was interrupted (the app "
-                                  "restarted while it was running). Nothing was "
-                                  "changed — try again."),
-                )
-                recovered += 1
-            except Exception:
-                traceback.print_exc()
+        try:
+            with _meta_write_lock(sid):
+                snap = _read_meta_body(sid)
+                if snap is None:
+                    continue
+                meta, body = snap
+                busy = refresh_busy_kinds(meta)
+                if not busy:
+                    continue
+                meta.pop("refresh_busy", None)
+                pending = meta.get("refresh_outcome_pending")
+                if not isinstance(pending, list):
+                    pending = []
+                noted = {_outcome_entry_kind(e) for e in pending}
+                for kind in sorted(busy):
+                    if kind not in noted:
+                        pending.append(json.dumps({
+                            "kind": kind,
+                            "status": "interrupted",
+                            "note": ("A previous refresh was interrupted (the "
+                                     "app restarted while it was running). "
+                                     "Nothing was changed — try again."),
+                        }))
+                meta["refresh_outcome_pending"] = pending
+                meta["enrichment_status"] = "interrupted"
+                meta["refresh_kind"] = ""
+                meta["refresh_note"] = ("A previous refresh was interrupted (the "
+                                        "app restarted while it was running). "
+                                        "Nothing was changed — try again.")
+                _write_meta_body(sid, meta, body)
+            recovered += 1
+        except Exception:
+            traceback.print_exc()
     return recovered
 
 
@@ -854,6 +1148,355 @@ def _url_is_image(url: str) -> bool:
             return r.status_code == 200 and r.headers.get("content-type", "").startswith("image/")
     except Exception:
         return False
+
+
+class ImageDedupeError(RuntimeError):
+    """An image dedupe check could not be completed honestly.
+
+    Fetching image bytes for content-hash dedupe must never be skipped
+    silently: any failure surfaces here so the refresh fails loudly
+    instead of storing a possibly-duplicate image unchecked.
+    """
+
+
+def normalize_image_url(url: str) -> str:
+    """Canonical dedupe key for an image URL.
+
+    Collapses trivial variants — host case, default ports, trailing
+    slashes, duplicate slashes, query-parameter order, fragments and
+    empty queries — so the same address stored twice is recognised as
+    one image. Deliberately conservative: the scheme (http vs https) and
+    the host (www vs bare) are preserved — true duplicates across those
+    are caught by content hashing instead of key collapsing.
+    """
+    u = (url or "").strip()
+    try:
+        from urllib.parse import urlsplit, urlunsplit, parse_qsl, urlencode
+        parts = urlsplit(u)
+        scheme = parts.scheme.lower()
+        host = (parts.hostname or "").lower()
+        if not host:
+            return u
+        try:
+            port = parts.port
+        except ValueError:
+            return u
+        if (scheme == "http" and port == 80) or (scheme == "https" and port == 443):
+            port = None
+        netloc = host if port is None else f"{host}:{port}"
+        path = parts.path or "/"
+        while "//" in path:
+            path = path.replace("//", "/")
+        if len(path) > 1:
+            path = path.rstrip("/") or "/"
+        query = ""
+        if parts.query.strip("?/"):
+            q = parse_qsl(parts.query, keep_blank_values=True)
+            query = urlencode(sorted(q))
+        return urlunsplit((scheme, netloc, path, query, ""))
+    except Exception:
+        return u
+
+
+def _fetch_image_bytes(url: str, timeout: float = 10.0) -> bytes:
+    """Download raw image bytes for content-hash dedupe.
+
+    Never returns a guess: any network failure, non-200 status or empty
+    body raises :class:`ImageDedupeError` naming the URL — the caller
+    fails loudly instead of silently skipping the dedupe check.
+    """
+    try:
+        import httpx
+        resp = httpx.get(url, timeout=timeout, follow_redirects=True,
+                         headers={"User-Agent": "Mozilla/5.0"})
+    except Exception as e:
+        raise ImageDedupeError(
+            f"Image dedupe failed: could not fetch {url} "
+            f"({type(e).__name__}: {e})") from e
+    if resp.status_code != 200:
+        raise ImageDedupeError(
+            f"Image dedupe failed: {url} returned HTTP {resp.status_code}")
+    data = resp.content
+    if not data:
+        raise ImageDedupeError(
+            f"Image dedupe failed: {url} returned an empty body")
+    return data
+
+
+def _image_content_hash(url: str) -> str:
+    """SHA-256 hex of the image bytes at ``url``.
+
+    Raises :class:`ImageDedupeError` when the bytes cannot be fetched —
+    never a placeholder hash.
+    """
+    return hashlib.sha256(_fetch_image_bytes(url)).hexdigest()
+
+
+# Hamming-distance duplicate threshold for 64-bit dHashes (issue #44).
+# Calibrated on real photos (see tests/test_perceptual_hash_v16.py):
+# JPEG re-saves and resizes score 0, ~5% crops score <= 4, while
+# genuinely different photos score >= 24. A threshold of 10 catches
+# re-sized, re-compressed and slightly cropped variants with a wide
+# margin against false positives on different photos.
+_PHASH_DUP_THRESHOLD = 10
+
+
+def _image_dhash(data: bytes, url: str) -> int:
+    """64-bit difference-hash of raw image bytes — PIL only, no new deps.
+
+    Grayscale → 9x8 LANCZOS shrink → 64 horizontal-gradient bits. Images
+    that look the same (re-sized, re-compressed, slightly cropped) land
+    within a few bits of each other; different photos land far apart
+    (see ``_PHASH_DUP_THRESHOLD``).
+
+    Raises :class:`ImageDedupeError` naming ``url`` when the bytes cannot
+    be decoded as an image — never a placeholder hash.
+    """
+    from PIL import Image
+    import io
+    try:
+        with Image.open(io.BytesIO(data)) as img:
+            px = img.convert("L").resize((9, 8), Image.LANCZOS).tobytes()
+    except Exception as e:
+        raise ImageDedupeError(
+            f"Image dedupe failed: could not decode image bytes from {url} "
+            f"({type(e).__name__}: {e})") from e
+    bits = 0
+    for row in range(8):
+        off = row * 9
+        for col in range(8):
+            bits = (bits << 1) | (1 if px[off + col] > px[off + col + 1] else 0)
+    return bits
+
+
+def _hamming_distance(a: int, b: int) -> int:
+    """Bit differences between two dHash ints."""
+    return bin(a ^ b).count("1")
+
+
+def _dhash_to_hex(ph: int) -> str:
+    """64-bit dHash as a 16-char hex string for frontmatter storage."""
+    return f"{ph:016x}"
+
+
+def _parse_dhash(s: str) -> Optional[int]:
+    """Parse a stored dHash hex string; ``None`` when missing/corrupt.
+
+    A corrupt stored value is treated as missing (backfilled on the next
+    merge) rather than failing the whole dedupe — the corruption is in
+    our own bookkeeping, not the image.
+    """
+    try:
+        return int((s or "").strip(), 16)
+    except (ValueError, TypeError):
+        return None
+
+
+def _image_fingerprints(url: str) -> Tuple[str, int]:
+    """``(SHA-256 hex, 64-bit dHash)`` for the image at ``url`` — one fetch.
+
+    Raises :class:`ImageDedupeError` (naming the URL) on any fetch or
+    decode failure — the dedupe check is never silently skipped.
+    """
+    data = _fetch_image_bytes(url)
+    return hashlib.sha256(data).hexdigest(), _image_dhash(data, url)
+
+
+def _align_hashes(urls: List[str], hashes: Optional[List[str]]) -> List[str]:
+    """Align a stored ``image_hashes`` list with ``image_urls``.
+
+    Unknown hashes become ``""``; the result always matches ``urls`` in
+    length and order. Pure — no network.
+    """
+    hs = [(h or "") for h in (hashes or [])]
+    if len(hs) < len(urls):
+        hs += [""] * (len(urls) - len(hs))
+    return hs[:len(urls)]
+
+
+def _dedupe_stored_image_entries(
+        urls: Optional[List[str]],
+        hashes: Optional[List[str]],
+        phashes: Optional[List[str]] = None) -> Tuple[List[str], List[str], List[str]]:
+    """Order-preserving normalized-URL dedupe of stored image entries.
+
+    Returns ``(urls, hashes, phashes)`` with duplicates dropped (first
+    occurrence wins); all three lists stay aligned. Pure — no network;
+    used by the save/load migration paths.
+    """
+    clean = [u for u in (urls or []) if u]
+    hs = _align_hashes(clean, hashes)
+    ps = _align_hashes(clean, phashes)
+    seen: set = set()
+    out_urls: List[str] = []
+    out_hashes: List[str] = []
+    out_phashes: List[str] = []
+    for u, h, p in zip(clean, hs, ps):
+        key = normalize_image_url(u)
+        if key in seen:
+            continue
+        seen.add(key)
+        out_urls.append(u)
+        out_hashes.append(h)
+        out_phashes.append(p)
+    return out_urls, out_hashes, out_phashes
+
+
+def _merge_story_images(
+    existing_urls: Optional[List[str]],
+    existing_hashes: Optional[List[str]],
+    existing_phashes: Optional[List[str]],
+    candidates,
+) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
+    """Merge image candidates into a story's image list with full dedupe.
+
+    ``candidates`` is an iterable of ``(url, alt_text)`` pairs; a bare
+    URL string is also accepted and treated as alt-less (backward
+    compatibility for callers that do not carry alt text).
+
+    Steps, in order:
+    1. Alt-text relevance filter — the primary signal. Images whose alt
+       text marks them as logos/icons/avatars/ads/share-buttons/decorative
+       are excluded. Missing alt text is NOT a pass: the URL junk rules
+       and content-type preflights applied at extraction still stand.
+    2. Normalized-URL dedupe against existing images and within the batch.
+    3. Content-hash backfill + collapse of EXISTING entries. This always
+       runs — even when no fresh candidates survived — so a refresh that
+       finds nothing new still cleans stored duplicates (issue #57).
+       Backfill fetches bytes only for entries missing hashes (SHA-256
+       and dHash, one fetch per URL; one-time cost, then persisted), so
+       candidates are compared against real content, never skipped. ANY
+       fetch failure raises :class:`ImageDedupeError` — the check is
+       never silently skipped. Existing entries that turn out to be
+       identical bytes collapse here (first occurrence wins).
+    4. Perceptual-hash dedupe (issue #44): byte-different look-alikes
+       (re-sized, re-compressed, slightly cropped) that survived step 3
+       are caught by 64-bit dHash — an entry within
+       ``_PHASH_DUP_THRESHOLD`` bits of any kept image is a visual
+       duplicate and is dropped. Existing entries collapse the same way
+       (first occurrence wins); then each surviving fresh candidate is
+       checked against everything kept. Undecodable image bytes raise
+       :class:`ImageDedupeError` naming the URL — never silently skipped.
+
+    Returns ``(merged_urls, merged_hashes, merged_phashes, stats)``;
+    ``stats`` counts ``added`` / ``dup_url`` / ``dup_content`` /
+    ``dup_visual`` / ``rejected_alt`` / ``removed_existing_dupes``.
+    Existing order is preserved; genuinely new images are appended.
+    """
+    from tools.story_link import image_alt_is_unwanted
+
+    existing_urls = [u for u in (existing_urls or []) if u]
+    hashes = _align_hashes(existing_urls, existing_hashes)
+    phashes = _align_hashes(existing_urls, existing_phashes)
+    stats = {"added": 0, "dup_url": 0, "dup_content": 0, "dup_visual": 0,
+             "rejected_alt": 0, "removed_existing_dupes": 0}
+
+    # 1. Alt-text filter (primary signal).
+    screened: List[str] = []
+    for item in candidates or []:
+        if isinstance(item, (tuple, list)):
+            url = item[0] if len(item) > 0 else ""
+            alt = item[1] if len(item) > 1 else None
+        else:
+            url, alt = item, None
+        url = (url or "").strip()
+        if not url:
+            continue
+        if image_alt_is_unwanted(alt):
+            stats["rejected_alt"] += 1
+            continue
+        screened.append(url)
+
+    # 2. Normalized-URL dedupe against existing images and within the batch.
+    seen_urls = {normalize_image_url(u) for u in existing_urls}
+    fresh: List[str] = []
+    for url in screened:
+        key = normalize_image_url(url)
+        if key in seen_urls:
+            stats["dup_url"] += 1
+            continue
+        seen_urls.add(key)
+        fresh.append(url)
+
+    merged_urls = list(existing_urls)
+    merged_hashes = list(hashes)
+    merged_phashes = list(phashes)
+
+    # 3. Content-hash backfill + collapse of existing entries. ALWAYS
+    #    runs, even when no fresh candidates exist (issue #57): a refresh
+    #    that finds nothing new must still clean stored duplicates.
+    #    Backfill fetches bytes only for entries missing hashes (one-time
+    #    cost, then persisted); the collapse against stored hashes is
+    #    pure. ANY fetch/decode failure raises ImageDedupeError — never
+    #    silently skipped.
+    for i, url in enumerate(merged_urls):
+        if not merged_hashes[i] or not merged_phashes[i]:
+            h, ph = _image_fingerprints(url)
+            if not merged_hashes[i]:
+                merged_hashes[i] = h
+            if not merged_phashes[i]:
+                merged_phashes[i] = _dhash_to_hex(ph)
+    # Collapse existing entries that turn out to be identical bytes
+    # (first occurrence wins).
+    deduped_urls: List[str] = []
+    deduped_hashes: List[str] = []
+    deduped_phashes: List[str] = []
+    seen_hashes: set = set()
+    for url, h, p in zip(merged_urls, merged_hashes, merged_phashes):
+        if h in seen_hashes:
+            stats["removed_existing_dupes"] += 1
+            continue
+        seen_hashes.add(h)
+        deduped_urls.append(url)
+        deduped_hashes.append(h)
+        deduped_phashes.append(p)
+    merged_urls, merged_hashes, merged_phashes = (
+        deduped_urls, deduped_hashes, deduped_phashes)
+
+    # 4. Perceptual-hash dedupe. Collapse existing entries that are visual
+    #    near-duplicates first (order preserved, first wins), then check
+    #    each surviving candidate against everything kept.
+    kept_dhashes: List[int] = []
+    vis_urls: List[str] = []
+    vis_hashes: List[str] = []
+    vis_phashes: List[str] = []
+    for url, h, p in zip(merged_urls, merged_hashes, merged_phashes):
+        ph = _parse_dhash(p)
+        if (ph is not None and any(
+                _hamming_distance(ph, k) <= _PHASH_DUP_THRESHOLD
+                for k in kept_dhashes)):
+            stats["removed_existing_dupes"] += 1
+            continue
+        vis_urls.append(url)
+        vis_hashes.append(h)
+        vis_phashes.append(p)
+        if ph is not None:
+            kept_dhashes.append(ph)
+    merged_urls, merged_hashes, merged_phashes = vis_urls, vis_hashes, vis_phashes
+    seen_hashes = set(merged_hashes)
+
+    if not fresh:
+        # No fresh candidates — but the existing-entries backfill and
+        # collapse above already ran, so stored duplicates are cleaned
+        # and missing hashes are backfilled (issue #57).
+        return merged_urls, merged_hashes, merged_phashes, stats
+
+    for url in fresh:
+        h, ph = _image_fingerprints(url)
+        if h in seen_hashes:
+            stats["dup_content"] += 1
+            continue
+        if any(_hamming_distance(ph, k) <= _PHASH_DUP_THRESHOLD
+               for k in kept_dhashes):
+            stats["dup_visual"] += 1
+            continue
+        seen_hashes.add(h)
+        kept_dhashes.append(ph)
+        merged_urls.append(url)
+        merged_hashes.append(h)
+        merged_phashes.append(_dhash_to_hex(ph))
+        stats["added"] += 1
+    return merged_urls, merged_hashes, merged_phashes, stats
 
 
 def _search_web_images(topic: str, limit: int = 4) -> List[str]:
@@ -907,19 +1550,22 @@ def _grab_og_images(urls: List[str], tries: int = 3) -> List[str]:
 
 
 def _grab_article_images(urls: List[str], tries: int = 3,
-                         per_page: int = 3) -> List[str]:
+                         per_page: int = 3) -> List[Tuple[str, Optional[str]]]:
     """Parallel article-page image extraction from a list of page URLs.
 
     Each article's HTML is fetched (httpx, timeout, retries) and passed to
-    ``tools.story_link.extract_story_images``, which pulls og:image →
-    twitter:image → JSON-LD → in-article <img>/<figure> photos. News pages
-    carry their real photos in body <img> tags, so this finds images that
-    an og:image-only grab misses. Relative and lazy-load URLs are
-    absolutized; logos, sprites, SVGs and tracking pixels are filtered.
+    ``tools.story_link.extract_story_images_with_alt``, which pulls
+    og:image → twitter:image → JSON-LD → in-article <img>/<figure> photos
+    as ``(url, alt_text)`` pairs. News pages carry their real photos in
+    body <img> tags, so this finds images that an og:image-only grab
+    misses. Relative and lazy-load URLs are absolutized; logos, sprites,
+    SVGs, tracking pixels and alt-text-flagged unwanted assets are
+    filtered. Batch results are deduplicated by normalized URL.
     """
-    from tools.story_link import extract_story_images
+    from tools.story_link import extract_story_images_with_alt
 
-    found: List[str] = []
+    found: List[Tuple[str, Optional[str]]] = []
+    seen: set = set()
     found_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
@@ -951,13 +1597,15 @@ def _grab_article_images(urls: List[str], tries: int = 3,
         if not html:
             return
         try:
-            imgs = extract_story_images(html, url, limit=per_page)
+            imgs = extract_story_images_with_alt(html, url, limit=per_page)
         except Exception:
             return
         with found_lock:
-            for img in imgs:
-                if img not in found:
-                    found.append(img)
+            for img_url, alt in imgs:
+                key = normalize_image_url(img_url)
+                if key not in seen:
+                    seen.add(key)
+                    found.append((img_url, alt))
 
     for link in urls:
         if link:
@@ -988,7 +1636,7 @@ def _story_direct_link_urls(story: Optional[Dict[str, Any]]) -> List[str]:
 
 
 def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
-                            tries: int = 3) -> List[str]:
+                            tries: int = 3) -> List[Tuple[str, Optional[str]]]:
     """Images for a story: verified story links first, then topic search.
 
     The story's own verified news links point at the exact story's publisher
@@ -997,6 +1645,10 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
     <img> photos are extracted (news sites carry real photos in body <img>
     tags). Only when those yield nothing do we fall back to topic-search
     articles and web image search.
+
+    Returns ``(url, alt_text)`` pairs — alt text drives the relevance
+    filter in the merge step. Hero/web-search images carry no alt text
+    (``None``).
 
     Every step runs under a hard wall-clock bound (via ``_run_bounded``):
     a stuck host raises ``TimeoutError`` naming the step instead of
@@ -1015,14 +1667,15 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
         90.0, "topic image fetch")
 
 
-def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str]:
+def _fetch_article_images(articles, topic: str = "", tries: int = 3
+                          ) -> List[Tuple[str, Optional[str]]]:
     """Hero images for a topic.
 
     Tries hero-image extraction from the article pages (parallel, with
     retries). If that finds nothing at all, falls back to a web image search
     for the topic so the story still gets images. Candidate preflights run
     in parallel under a bounded join — sequential HEAD+GET checks used to
-    cost up to 16s per URL.
+    cost up to 16s per URL. Hero and web-search images have no alt text.
     """
     urls = [getattr(a, "link", "") for a in articles[:6]]
     found = _grab_og_images(urls, tries=tries)
@@ -1047,7 +1700,7 @@ def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str
         for u in good:
             if u not in found:
                 found.append(u)
-    return found[:6]
+    return [(u, None) for u in found[:6]]
 
 
 def _tag_words(tag: str) -> set:
@@ -1364,9 +2017,19 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
 
     Tries the story's verified news links first (exact-story publisher
     pages, images pulled from the article's own <img> tags), then topic
-    search. New images are merged after the existing URLs, deduplicated —
-    the user's curated list is never wiped. When the fetch finds nothing,
-    the existing list is left untouched. Returns (changed, note).
+    search. New images are merged after the existing URLs — the user's
+    curated list is never wiped. Adding an image that is already attached
+    is a no-op: duplicates are detected by normalized URL AND by
+    identical content (SHA-256 of the fetched bytes), so the same image
+    served from a different address is still recognised (issue #21).
+    Images whose alt text marks them as unwanted (logos, avatars, ads)
+    are excluded; missing alt text is not a pass by itself.
+
+    A fetch/hash failure raises ImageDedupeError — the dedupe check is
+    never silently skipped. When the fetch finds nothing new, the merge
+    still runs: stored duplicates (byte-identical or visual) are
+    collapsed and missing hashes are backfilled, and that cleanup is
+    written back and reported (issue #57). Returns (changed, note).
     Never touches hashtags, links, or story content.
     """
     story = load_story(story_id)
@@ -1376,42 +2039,67 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     if not topic:
         raise RuntimeError("No topic to search — images unchanged.")
     existing = list(story["meta"].get("image_urls") or [])
+    existing_hashes = list(story["meta"].get("image_hashes") or [])
+    existing_phashes = list(story["meta"].get("image_phashes") or [])
     try:
         found = _fetch_images_for_story(story, topic)
     except TimeoutError as e:
         # The fetch names the step that timed out; existing media survives.
+        # Hash backfill needs the network too, so it would fail as well —
+        # the honest timeout note stands and nothing is written.
         return False, f"Image refresh timed out ({e}); kept {len(existing)} existing."
-    if not found:
-        return False, f"No new images found; kept {len(existing)} existing."
-    merged = list(existing)
-    added = 0
-    for u in found:
-        if u not in merged:
-            merged.append(u)
-            added += 1
+    # The merge ALWAYS runs — even when the fetch found nothing new — so
+    # stored duplicates are collapsed and missing hashes are backfilled
+    # (issue #57). The collapse against stored hashes is pure; only the
+    # backfill touches the network.
+    merged_urls, merged_hashes, merged_phashes, stats = _merge_story_images(
+        existing, existing_hashes, existing_phashes, found)
+    added = stats["added"]
+    aligned_hashes = _align_hashes(existing, existing_hashes)
+    aligned_phashes = _align_hashes(existing, existing_phashes)
+    urls_changed = merged_urls != existing
+    hashes_changed = (merged_hashes != aligned_hashes
+                      or merged_phashes != aligned_phashes)
+    extras: List[str] = []
+    if stats["rejected_alt"]:
+        extras.append(f"Excluded {stats['rejected_alt']} unwanted image(s) "
+                      f"(logo/avatar/ad per alt text).")
+    if stats["removed_existing_dupes"]:
+        extras.append(f"Removed {stats['removed_existing_dupes']} duplicate "
+                      f"image(s) already stored.")
+    extra = (" " + " ".join(extras)) if extras else ""
+    if added or urls_changed or hashes_changed:
+        update_story_fields(story_id, image_urls=merged_urls,
+                            image_hashes=merged_hashes,
+                            image_phashes=merged_phashes)
     if not added:
-        return False, f"No new images found; kept {len(existing)} existing."
-    update_story_fields(story_id, image_urls=merged)
-    return True, f"Added {added} new image(s); kept {len(existing)} existing."
+        note = f"No new images found; kept {len(merged_urls)} existing."
+        dupes = stats["dup_url"] + stats["dup_content"] + stats["dup_visual"]
+        if dupes:
+            note += f" ({dupes} already stored.)"
+        return urls_changed or hashes_changed, (note + extra).strip()
+    return True, f"Added {added} new image(s); kept {len(existing)} existing.{extra}"
 
 
 def _refresh_worker(story_id: str, kind: str, topic: str,
                     ai_engine: Optional[str] = None) -> None:
-    """Background worker for a manual hashtag/image refresh. Never raises.
+    """Background worker for one manual refresh kind. Never raises.
 
     Runs in a daemon thread so tab switches (st.rerun) can't stop it.
-    The outcome is recorded honestly in ``enrichment_status``
-    (``succeeded`` / ``no_change`` / ``failed``) with the real detail in
-    ``refresh_note`` — a failure is never written as a success, and the
-    toggle-off AI error surfaces verbatim.
+    Per-kind locking: "hashtags" and "images" are independent and run
+    concurrently (#54) — each kind owns only its own busy flag and
+    outcome, so finishing never clears a sibling kind's state (#53).
+    The outcome is recorded honestly (``succeeded`` / ``no_change`` /
+    ``failed``) with the real detail in the note — a failure is never
+    written as a success, and the toggle-off AI error surfaces verbatim.
     """
-    lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
+    lock = _ENRICH_LOCKS.setdefault((story_id, kind), threading.Lock())
     if not lock.acquire(blocking=False):
-        # Another worker owns this story's refresh state — leave it alone.
+        # Another worker owns this kind's refresh state — leave it alone.
         # Writing anything here (even "already running") would clobber the
-        # in-flight "running" state and flip the UI back to idle while
-        # work is still running. The owning worker writes the honest
-        # terminal state when it finishes.
+        # in-flight busy state and flip the UI back to idle while work is
+        # still running. The owning worker writes the honest terminal state
+        # when it finishes.
         return
     try:
         try:
@@ -1430,8 +2118,7 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
                      "reset": "Reset"}.get(kind, kind)
             note = f"{label} refresh failed: {e}"
         try:
-            update_story_fields(story_id, enrichment_status=status,
-                                refresh_note=note or "", refresh_kind="")
+            _finish_refresh(story_id, kind, status, note or "")
         except Exception:
             traceback.print_exc()
     finally:
@@ -1453,6 +2140,11 @@ def start_refresh(story_id: str, kind: str,
     Falls back to the story title when ``source_topic`` is missing so
     older stories can still refresh.
 
+    Concurrency (#54): "hashtags" and "images" are independent and may run
+    at the same time — a second kick is refused only for the SAME kind, or
+    when an exclusive kind ("reset", or save-time "enrich") is running.
+    "reset" stays exclusive: it refuses while ANY kind runs.
+
     Returns (started, reason): ``reason`` is "" when the refresh started,
     otherwise a human-readable explanation of why it could not start.
     """
@@ -1462,18 +2154,29 @@ def start_refresh(story_id: str, kind: str,
         story = load_story(story_id)
         if not story:
             return False, "Story not found."
-        if (story["meta"].get("enrichment_status") or "") in BUSY_STATES:
-            # The buttons disable while busy, but a double-kick can still
-            # race here — refuse instead of starting a second worker that
-            # would fight the first over the story's refresh state.
-            return False, "A refresh is already running — try again shortly."
+        busy = refresh_busy_kinds(story["meta"])
+        if kind == "reset":
+            if busy:
+                # The buttons disable while busy, but a double-kick can still
+                # race here — refuse instead of starting a second worker that
+                # would fight the first over the story's refresh state.
+                return False, ("A refresh is already running — reset clears "
+                               "hashtags, images and news links, so it can't "
+                               "run alongside it. Try again when it's done.")
+        elif kind in busy:
+            return False, (f"A {kind} refresh is already running — "
+                           "try again shortly.")
+        elif busy & set(_EXCLUSIVE_KINDS):
+            blocker = "reset" if "reset" in busy else "enrichment"
+            return False, (f"A {blocker} is already running — "
+                           "try again shortly.")
         topic = (story["meta"].get("source_topic")
                  or story["meta"].get("title") or "").strip()
         if not topic:
             return False, "No topic or title to refresh."
         _check_id(story_id)
-        update_story_fields(story_id, enrichment_status="running", refresh_note="",
-                            refresh_kind=kind)
+        if not _set_refresh_busy(story_id, kind):
+            return False, "Story not found."
         t = threading.Thread(
             target=_refresh_worker, args=(story_id, kind, topic, ai_engine),
             daemon=True, name=f"refresh-{kind}-{story_id}")
@@ -1481,6 +2184,144 @@ def start_refresh(story_id: str, kind: str,
         return True, ""
     except Exception as e:
         return False, f"Could not start refresh: {type(e).__name__}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# On-device Apple FM warm-up (issue #37)
+# ---------------------------------------------------------------------------
+# Developer tool: manually trigger the #4 FM availability probe
+# (30s -> 30s -> 60s) ahead of time so the first real generation does not
+# pay the cold-start delay. Same daemon-thread + terminal-state pattern as
+# the refresh flow above: the worker always writes a terminal state, the UI
+# auto-polls while busy, and a stale "warming" state is recovered honestly.
+
+# Upper bound for one warm-up run: the #4 probe budget is 30+30+60 = 120s,
+# plus overhead. Anything still "warming" past this is orphaned (the app
+# restarted mid-run) and is recovered as interrupted, never left stuck.
+FM_WARMUP_STALE_SECONDS = 600.0
+
+
+def _warmup_state_path() -> Path:
+    """Mailbox file for the warm-up worker. Computed from LIBRARY_ROOT so
+    tests can redirect it by monkeypatching LIBRARY_ROOT."""
+    return LIBRARY_ROOT / "fm_warmup.json"
+
+
+def _write_fm_warmup_state(state: Dict[str, Any]) -> None:
+    """Write the warm-up mailbox atomically (tmp + rename). Never raises
+    to the worker: a failed write is printed, and the UI's staleness guard
+    recovers honestly on the next read."""
+    path = _warmup_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        traceback.print_exc()
+
+
+def read_fm_warmup_state() -> Dict[str, Any]:
+    """Read the warm-up mailbox. Returns {} when idle/never run.
+
+    A "warming" state older than FM_WARMUP_STALE_SECONDS is orphaned (the
+    app died mid-run): it is rewritten as a failed/interrupted terminal
+    state with an honest note, so the button never stays stuck disabled.
+    """
+    path = _warmup_state_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if data.get("state") == "warming":
+        started = data.get("started_at") or 0.0
+        try:
+            age = time.time() - float(started)
+        except (TypeError, ValueError):
+            age = FM_WARMUP_STALE_SECONDS + 1.0
+        if age > FM_WARMUP_STALE_SECONDS:
+            recovered = {
+                "state": "failed",
+                "message": ("A previous warm-up was interrupted (the app "
+                            "restarted while it was running). Nothing was "
+                            "changed — try again."),
+                "seconds": 0.0,
+                "started_at": started,
+            }
+            _write_fm_warmup_state(recovered)
+            return recovered
+    return data
+
+
+def _fm_warmup_worker() -> None:
+    """Background worker: run the #4 FM availability probe. Never raises.
+
+    Uses ``dual_engine.check_status(force=True)`` — the exact probe with
+    the 30s -> 30s -> 60s retry budget — so a real ``fm respond`` call
+    initializes the on-device model. The outcome is recorded honestly:
+    "done" only when the probe reports the model available, otherwise
+    "failed" with the probe's own message verbatim (same messaging as #4).
+    """
+    started = time.time()
+    try:
+        from core.dual_engine import dual_engine
+        status = dual_engine.check_status(force=True, check_fm=True)
+        fm = (status or {}).get("fm", {}) or {}
+        secs = time.time() - started
+        if fm.get("available"):
+            _write_fm_warmup_state({
+                "state": "done",
+                "message": fm.get("message") or "Apple Foundation Model ready (On-Device)",
+                "seconds": secs,
+                "started_at": started,
+            })
+        else:
+            _write_fm_warmup_state({
+                "state": "failed",
+                "message": fm.get("message") or "Apple Foundation Model unavailable",
+                "seconds": secs,
+                "started_at": started,
+            })
+    except Exception as e:
+        _write_fm_warmup_state({
+            "state": "failed",
+            "message": f"Warm-up failed: {type(e).__name__}: {e}",
+            "seconds": time.time() - started,
+            "started_at": started,
+        })
+
+
+def start_fm_warmup() -> Tuple[bool, str]:
+    """Kick off a background on-device Apple FM warm-up probe. Never raises.
+
+    Returns (started, reason): ``reason`` is "" when the worker started,
+    otherwise a human-readable explanation of why it could not start
+    (e.g. a warm-up is already running).
+    """
+    try:
+        state = read_fm_warmup_state()
+        if state.get("state") == "warming":
+            # The button disables while busy, but a double-kick can still
+            # race here — refuse instead of starting a second worker.
+            return False, "A warm-up is already running — try again shortly."
+        _write_fm_warmup_state({
+            "state": "warming",
+            "message": "",
+            "seconds": 0.0,
+            "started_at": time.time(),
+        })
+        t = threading.Thread(target=_fm_warmup_worker, daemon=True,
+                             name="fm-warmup")
+        t.start()
+        return True, ""
+    except Exception as e:
+        return False, f"Could not start warm-up: {type(e).__name__}: {e}"
 
 
 def _do_reset(story_id: str, topic: str,
@@ -1528,8 +2369,11 @@ def _do_reset(story_id: str, topic: str,
 
     # 2. Fetched images: discard, fresh article-image extraction.
     #    A TimeoutError propagates: the whole reset fails loudly and
-    #    nothing is written.
-    new_images = list(_fetch_images_for_story(story, topic) or [])
+    #    nothing is written. Alt-text filtering and content dedupe apply
+    #    to the fresh list (issue #21); a hash-fetch failure raises
+    #    ImageDedupeError and likewise fails loudly.
+    new_images, new_hashes, new_phashes, _ = _merge_story_images(
+        [], [], [], _fetch_images_for_story(story, topic) or [])
 
     # 3. News links: re-run the link verifier fresh for the topic.
     #    Best-effort by contract: [] on failure means an empty row.
@@ -1545,6 +2389,8 @@ def _do_reset(story_id: str, topic: str,
         story_id,
         hashtags=new_tags,
         image_urls=new_images,
+        image_hashes=new_hashes,
+        image_phashes=new_phashes,
         news_links=new_links,
     )
 
@@ -1598,21 +2444,26 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
             merged_tags.append(t)
             tags_added += 1
     # Verified Stage-1 links are sacred: they point at the exact story the
-    # reel was built from. Never replace them with topic-search results.
+    # reel was built from — the stored links from save time. Define the
+    # name before use (issue #62: it was referenced but never defined).
+    verified_links = [lk for lk in (meta.get("news_links") or [])
+                      if isinstance(lk, dict) and lk.get("url")]
+    # Never replace them with topic-search results.
     # Images merge: the story may already carry the Stage-1 curated gallery —
-    # keep those and add what enrichment found.
-    verified_links = meta.get("news_links") or []
-    merged_imgs = list(meta.get("image_urls") or [])
-    imgs_added = 0
-    for u in image_urls:
-        if u and u not in merged_imgs:
-            merged_imgs.append(u)
-            imgs_added += 1
+    # keep those and add what enrichment found, deduplicated by normalized
+    # URL and content hash (issue #21). A hash-fetch failure raises
+    # ImageDedupeError and fails the enrichment loudly.
+    merged_imgs, merged_hashes, merged_phashes, _img_stats = _merge_story_images(
+        meta.get("image_urls"), meta.get("image_hashes"),
+        meta.get("image_phashes"), image_urls)
+    imgs_added = _img_stats["added"]
     links_added = 0 if verified_links else len(news_links)
     update_story_fields(
         story_id,
         news_links=verified_links or news_links,
         image_urls=merged_imgs,
+        image_hashes=merged_hashes,
+        image_phashes=merged_phashes,
         hashtags=merged_tags,
     )
     changed = bool(tags_added or imgs_added or links_added)
@@ -1635,12 +2486,14 @@ def start_enrichment(story_id: str, topic: str) -> Tuple[bool, str]:
     try:
         _check_id(story_id)
         if not (topic or "").strip():
-            update_story_fields(story_id, enrichment_status="no_change",
-                                refresh_note="No topic — enrichment skipped.",
-                                refresh_kind="")
+            # Nothing to enrich: record the honest terminal state (and a
+            # pending outcome so the UI can toast it) without touching any
+            # other kind's state.
+            _finish_refresh(story_id, "enrich", "no_change",
+                            "No topic — enrichment skipped.")
             return False, "No topic — enrichment skipped."
-        update_story_fields(story_id, enrichment_status="running",
-                            refresh_kind="enrich", refresh_note="")
+        if not _set_refresh_busy(story_id, "enrich"):
+            return False, "Story not found."
         t = threading.Thread(
             target=_enrich_worker, args=(story_id, topic.strip(), _do_enrich),
             daemon=True, name=f"enrich-{story_id}")

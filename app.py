@@ -1977,8 +1977,8 @@ with col_settings:
                     "Sample Story / Reference Script",
                     value=st.session_state.get("chosen_sample_story", ""),
                     height=75,
-                    placeholder="Paste reference story or script snippet here. If provided, AI prioritizes it over general instructions...",
-                    help="Optional reference story or script snippet. If provided, the AI adapts and prioritizes this sample story. In case of any discrepancy with general instructions, the sample story takes highest precedence!",
+                    placeholder="Paste reference story or script snippet here. If provided, it directs characters, tone and story as the author's guide...",
+                    help="Optional reference story or script snippet. When provided, it acts as the director's guide: its characters, direction and tone override the creative settings above on conflict. Verified news facts always outrank the sample.",
                     key=f"sample_story_textarea_{st.session_state.sample_story_rev}",
                 )
                 if sample_story_val != st.session_state.get("chosen_sample_story", ""):
@@ -1986,7 +1986,7 @@ with col_settings:
 
                 c_info, c_clear = st.columns([4, 1.2])
                 with c_info:
-                    st.caption("Adapts narrative, characters, and tone with highest precedence.")
+                    st.caption("Directs characters, narrative and tone — overrides creative settings on conflict (verified facts always win).")
                 with c_clear:
                     if st.button("🗑️ Clear", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
                         st.session_state.chosen_sample_story = ""
@@ -4103,8 +4103,8 @@ with col_output:
                         st.caption(f"Suggestion: {_iss_fix}")
 
         if getattr(res, "sample_story", None):
-            with st.expander("⭐ Sample Story Reference (Applied with Highest Precedence)"):
-                st.info(f"The screenplay was adapted from this sample story with precedence over instructions:\n\n{res.sample_story}")
+            with st.expander("⭐ Sample Story Reference (Applied as Director's Guide)"):
+                st.info(f"The screenplay was directed by this sample story — it overrides creative settings on conflict (verified news facts always win):\n\n{res.sample_story}")
 
         curr_script = res.scripts[st.session_state.selected_script_idx]
         d_budget = get_duration_budget(curr_script.target_duration_sec)
