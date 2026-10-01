@@ -264,14 +264,27 @@ def inject_library_css() -> None:
         min-width: 0 !important;
         position: relative !important;
     }
-    /* Chips inside scroll rows: single line with clearance for the ×. */
+    /* Chips inside scroll rows: single line, never clipped by the ×.
+       #25/#26: the × clearance lives in the CHIP COLUMN's own padding
+       (rule below), not in the chip — the × overlay (22px at right:4px
+       of the column) floats in padding space, 4px clear of the chip
+       edge, so tag text can never slide underneath it regardless of
+       chip width. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         [data-testid="stHorizontalBlock"] .lib-chip {
-        padding-right: 26px !important;
+        padding-right: 12px !important;
         white-space: nowrap !important;
         max-width: 340px;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+    /* #25/#26: chip columns reserve the × clearance in the column's own
+       padding. Scoped to columns holding a chip (:has(.lib-chip)) —
+       image cards keep their inset × over the image corner. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has(.lib-chip) {
+        padding-right: 30px !important;
     }
     /* Links inside news chips inherit the themed chip color (theme-safe). */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
@@ -669,6 +682,17 @@ def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     st.markdown(f'<div data-marker="{marker}" style="display:none"></div>',
                 unsafe_allow_html=True)
     return st.button(label, key=key, help=help)
+
+
+def _news_chip_label(title: str, source: str) -> str:
+    """#26: a news-link chip shows the source website name when known
+    (e.g. "The Times of India") instead of the full headline. The
+    headline remains available as the link's title tooltip. Empty or
+    missing values fall back honestly to "News link", never to an
+    empty chip."""
+    title = (title or "").strip() or "News link"
+    source = (source or "").strip()
+    return source if source else title
 
 
 def render_tab_bar() -> str:
@@ -1396,11 +1420,12 @@ def _render_story_detail(story_id: str) -> None:
             _ltitle = _lk.get("title", "News link") or "News link"
             _lsrc = _lk.get("source", "") or ""
             _lurl = (_lk.get("url") or "").strip()
-            _label = f"{_ltitle} ({_lsrc})" if _lsrc else _ltitle
+            _label = _news_chip_label(_ltitle, _lsrc)
             with _lc:
                 st.markdown(
                     f'<span class="lib-chip"><a href="{_html.escape(_lurl, quote=True)}" '
-                    f'target="_blank" rel="noopener">{_html.escape(_label)}</a></span>',
+                    f'target="_blank" rel="noopener" '
+                    f'title="{_html.escape(_ltitle, quote=True)}">{_html.escape(_label)}</a></span>',
                     unsafe_allow_html=True)
                 if _overlay_button("lib-x-r", f"lib_xlink_{story_id}_{_i}", "×",
                                    help="Remove this news link"):
