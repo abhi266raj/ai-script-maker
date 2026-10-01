@@ -11,6 +11,7 @@ import html as _html
 import re as _re
 import time as _time
 from collections.abc import Callable
+from functools import lru_cache as _lru_cache
 
 import streamlit as st
 
@@ -462,6 +463,31 @@ def inject_library_css() -> None:
        old marker-scoped 38px height rule no longer applies. The popover's
        link button uses use_container_width and Streamlit's native button
        metrics — no custom height needed. */
+    /* v1.6.2 (#95): "Send via WhatsApp" is a plain anchor with NO
+       target="_blank" (st.link_button forces a new browser tab, defeating
+       the whatsapp:// deep link). Styled to read as a popover button;
+       theme-safe via inherit + neutral gray. Vector icons keep their own
+       paint — nothing here touches them. */
+    a.lib-wa-direct {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 100%;
+        box-sizing: border-box;
+        padding: 0.4rem 1rem;
+        border: 1px solid rgba(128, 128, 128, 0.45);
+        border-radius: 0.5rem;
+        color: inherit !important;
+        text-decoration: none !important;
+        font-size: 1rem;
+        line-height: 1.6;
+        cursor: pointer;
+    }
+    a.lib-wa-direct:hover {
+        border-color: currentColor;
+        color: inherit !important;
+        text-decoration: none !important;
+    }
     /* macOS HIG: deference — toolbar rows use a hairline, not a heavy box */
     .lib-hairline {
         border-bottom: 1px solid rgba(128, 128, 128, 0.25);
@@ -1460,12 +1486,28 @@ def _whatsapp_share_url(text: str) -> str:
     browser (WhatsApp Web flow) even when the app is installed. No connection
     or connector needed.
 
-    Note: st.link_button passes the URL to the frontend unmodified (no scheme
-    validation on the Python side; it renders a plain anchor), so non-http(s)
-    schemes like whatsapp:// work the same way mailto: links already do.
+    Note (#95): this URL must be rendered as a plain anchor WITHOUT
+    target="_blank". st.link_button forces a new browser tab, which defeats
+    the deep link — the browser opens a blank tab before macOS can route the
+    scheme to the app.
     """
     import urllib.parse as _up
     return "whatsapp://send?text=" + _up.quote(text, safe="")
+
+
+@_lru_cache(maxsize=1)
+def _whatsapp_app_installed() -> bool:
+    """Detect the WhatsApp Mac app. The Streamlit server runs locally on the
+    user's Mac, so the filesystem is the source of truth. Cached for the
+    session — app installs don't change between renders, so this never runs
+    per-render. Tests clear the cache via ``cache_clear()``.
+    """
+    import os as _os
+    candidates = (
+        "/Applications/WhatsApp.app",
+        _os.path.expanduser("~/Applications/WhatsApp.app"),
+    )
+    return any(_os.path.isdir(p) for p in candidates)
 
 
 def _render_share_popover(story_id: str, share_text: str) -> None:
@@ -1478,7 +1520,8 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
     The redundant st.code(share_text) preview is gone (#27) — the dedicated
     Hashtags / News Links sections already show that content, and the text
     stays one click away via "Copy News Link + Hashtags". "Send via WhatsApp"
-    deep-links straight into the installed WhatsApp Mac app (#28).
+    deep-links straight into the installed WhatsApp Mac app (#28), with no
+    browser tab involved (#95).
     """
     with st.popover("Share", key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
@@ -1486,12 +1529,23 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
         if share_text:
             _copy_button("Copy News Link + Hashtags", share_text,
                          f"n-{story_id}")
-            st.link_button(
-                "Send via WhatsApp",
-                _whatsapp_share_url(share_text),
-                help="Open the installed WhatsApp Mac app with this text prefilled",
-                use_container_width=True,
-            )
+            if _whatsapp_app_installed():
+                # #95: plain anchor, NO target="_blank". st.link_button forces
+                # a new browser tab, which defeats the whatsapp:// deep link —
+                # macOS must receive the scheme directly to open the app.
+                url = _whatsapp_share_url(share_text)
+                st.markdown(
+                    f'<a class="lib-wa-direct"'
+                    f' href="{_html.escape(url, quote=True)}"'
+                    f' title="Open the installed WhatsApp Mac app with this'
+                    f' text prefilled">Send via WhatsApp</a>',
+                    unsafe_allow_html=True,
+                )
+            else:
+                # Fail loudly: never a dead link, never a silent browser
+                # fallback (wa.me) — the user asked for direct app handoff.
+                st.caption("WhatsApp Mac app not installed — "
+                           "install it to send via WhatsApp.")
         else:
             st.caption("No news links or hashtags to share yet.")
 
