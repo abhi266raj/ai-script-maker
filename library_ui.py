@@ -515,6 +515,26 @@ def _inject_story_list_css() -> None:
         color: #FF3B30 !important;
         border-color: rgba(255, 59, 48, 0.6) !important;
     }
+    /* v1.6 (#38): HIG-anchored destructive popover. Streamlit renders the
+       popover body inside a floating overlay portal, so the lib-danger-pop-
+       marker sitting before the trigger cannot reach the body with sibling
+       combinators. A lib-danger-pop-body marker is therefore emitted as the
+       first node *inside* the popover body (see _confirm_popover), and the
+       caret below anchors to the body itself. The 45° square inherits the
+       body's own background, so it tracks the light/dark theme with no
+       hard-coded surface color. Graceful: if the selector ever misses, the
+       popover simply renders without the caret. */
+    div[data-testid="stPopoverBody"]:has([data-marker="lib-danger-pop-body"])::before {
+        content: "" !important;
+        position: absolute !important;
+        top: -8px !important;
+        right: 32px !important;
+        width: 14px !important;
+        height: 14px !important;
+        background: inherit !important;
+        transform: rotate(45deg) !important;
+        pointer-events: none !important;
+    }
 </style>
         """,
         unsafe_allow_html=True,
@@ -595,6 +615,13 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
                     help=trigger_help or None,
                     use_container_width=use_container_width,
                     disabled=disabled):
+        # v1.6 (#38): anchor marker for the HIG popover caret. The popover
+        # body lives in a floating overlay portal, unreachable from the
+        # trigger marker, so this marker rides inside the body itself. It is
+        # emitted first so the red-button `+` sibling rules (which match on
+        # DOM order) never see a button-bearing container after it.
+        st.markdown('<div data-marker="lib-danger-pop-body" style="display:none"></div>',
+                    unsafe_allow_html=True)
         _failure = st.session_state.pop(_err_key, None)
         if _failure:
             st.error(f"{fail_label} failed: {_failure}")
@@ -1184,6 +1211,16 @@ def _copy_button(label: str, text: str, key: str) -> None:
     )
 
 
+# v1.6 (#38): story-detail toolbar column weights. Streamlit ellipsizes
+# ("…") any button/popover label wider than its column, so every action
+# column is weighted to fit its longest label state — "Updating Hashtags…",
+# "Updating Images…", "Resetting…", "Delete" + chevron. Delete stays
+# trailing; each total is unchanged (10.0) so the overall layout is
+# preserved and the #24 baseline alignment is untouched.
+_DETAIL_TOOLBAR_WEIGHTS = [2.2, 2.0, 1.4, 2.7, 1.7]
+_TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.0, 6.6, 1.4]
+
+
 def _render_story_detail(story_id: str) -> None:
     story = lib.load_story(story_id)
     if not story:
@@ -1224,7 +1261,7 @@ def _render_story_detail(story_id: str) -> None:
 
     if _editing:
         # Title edit mode: Save/Cancel lead, Delete stays trailing.
-        ec1, ec2, _esp, ec3 = st.columns([1.0, 1.0, 7.0, 1.0])
+        ec1, ec2, _esp, ec3 = st.columns(_TITLE_EDIT_TOOLBAR_WEIGHTS)
         with ec1:
             if st.button("Save", key=f"lib_title_save_{story_id}", type="primary"):
                 _new = (st.session_state.get(f"lib_title_{story_id}") or "").strip()
@@ -1239,7 +1276,7 @@ def _render_story_detail(story_id: str) -> None:
         with ec3:
             _story_delete_popover()
     else:
-        tc2, tc3, tc4, _tsp, tc5 = st.columns([1.7, 1.6, 1.3, 4.4, 1.0])
+        tc2, tc3, tc4, _tsp, tc5 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
         with tc2:
             _loading = _refresh_kind == "hashtags"
             if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
