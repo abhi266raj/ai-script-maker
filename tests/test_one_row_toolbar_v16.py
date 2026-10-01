@@ -175,7 +175,7 @@ def test_share_copy_labels_have_no_baked_chevron(monkeypatch):
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: None)
-    lui._render_share_popover("sid1", "https://example.com/a\n\n#X")
+    lui._render_share_popover("sid1", "https://example.com/a\n\n#X", {})
     lui._render_copy_popover("sid1", {"hashtags": []}, "script")
     labels = [p["label"] for p in fake.popovers]
     icons = [p.get("icon") for p in fake.popovers]
