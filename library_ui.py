@@ -723,27 +723,93 @@ def _news_chip_label(title: str, source: str) -> str:
     return source if source else title
 
 
+def _fm_warmup_button_props(state: dict) -> tuple:
+    """Pure helper: (label, disabled) for the warm-up button given the
+    mailbox state. Kept pure so the HIG loading/disabled contract is
+    unit-testable without a Streamlit runtime."""
+    if (state or {}).get("state") == "warming":
+        return "Warming up…", True
+    return "Cold start", False
+
+
+def _render_fm_warmup_button() -> None:
+    """Developer warm-up control (issue #37): subtle, compact, sits next to
+    the Studio/Library tab bar. Tapping it kicks off the #4 FM probe in a
+    daemon thread so the first real generation skips the cold-start delay.
+
+    HIG: the button owns its progress — while warming it paints
+    "Warming up…" and stays disabled (no second tap), and the page
+    auto-polls until the worker writes its terminal state.
+    """
+    _state = lib.read_fm_warmup_state()
+    _label, _disabled = _fm_warmup_button_props(_state)
+    if _disabled:
+        st.button(_label, key="fm_warmup_btn", disabled=True,
+                  help="Warming up the on-device Apple FM model…",
+                  use_container_width=True)
+        # Auto-poll while the probe is in flight: the daemon worker cannot
+        # trigger st.rerun() itself. Same pattern as the library refresh
+        # flow — the loop always terminates because the worker always
+        # writes a terminal state and stale states are recovered.
+        _time.sleep(1.0)
+        st.rerun()
+        return
+    if st.button(_label, key="fm_warmup_btn", disabled=False,
+                 help=("Developer: warm up the on-device Apple FM model now "
+                       "so the first generation doesn't pay the cold-start "
+                       "delay. Runs the FM availability probe (up to ~2 min "
+                       "on first run)."),
+                 use_container_width=True):
+        _ok, _reason = lib.start_fm_warmup()
+        if not _ok:
+            st.error(f"Could not start warm-up: {_reason}")
+        st.rerun()
+
+
+def _render_fm_warmup_result() -> None:
+    """Honest terminal result under the tab bar: success carries the real
+    timing, failure carries the probe's own message verbatim (#4
+    messaging) — never a fake 'ready' state."""
+    _state = lib.read_fm_warmup_state()
+    _stt = (_state or {}).get("state")
+    if _stt == "done":
+        _secs = _state.get("seconds") or 0.0
+        _msg = (_state.get("message") or "").strip()
+        st.success(f"Apple FM warmed up in {_secs:.1f}s"
+                   + (f" — {_msg}" if _msg else ""))
+    elif _stt == "failed":
+        _msg = (_state.get("message") or "unknown error").strip()
+        st.error(f"Warm-up failed: {_msg}")
+
+
 def render_tab_bar() -> str:
     """Render the macOS-style tab bar. Returns 'studio' or 'library'."""
     inject_library_css()
-    seg = getattr(st, "segmented_control", None)
-    if seg is not None:
-        choice = seg(
-            "View",
-            options=[TAB_STUDIO, TAB_LIBRARY],
-            default=TAB_STUDIO,
-            key="lib_view",
-            label_visibility="collapsed",
-        )
-    else:  # older Streamlit: horizontal radio dressed as a segmented control
-        choice = st.radio(
-            "View",
-            options=[TAB_STUDIO, TAB_LIBRARY],
-            index=0 if st.session_state.get("lib_view", TAB_STUDIO) == TAB_STUDIO else 1,
-            key="lib_view",
-            label_visibility="collapsed",
-            horizontal=True,
-        )
+    # Developer warm-up (issue #37) rides in a compact trailing column so
+    # the normal author flow keeps its centered tab strip untouched.
+    _tab_col, _warm_col = st.columns([6.0, 1.0], vertical_alignment="center")
+    with _tab_col:
+        seg = getattr(st, "segmented_control", None)
+        if seg is not None:
+            choice = seg(
+                "View",
+                options=[TAB_STUDIO, TAB_LIBRARY],
+                default=TAB_STUDIO,
+                key="lib_view",
+                label_visibility="collapsed",
+            )
+        else:  # older Streamlit: horizontal radio dressed as a segmented control
+            choice = st.radio(
+                "View",
+                options=[TAB_STUDIO, TAB_LIBRARY],
+                index=0 if st.session_state.get("lib_view", TAB_STUDIO) == TAB_STUDIO else 1,
+                key="lib_view",
+                label_visibility="collapsed",
+                horizontal=True,
+            )
+    with _warm_col:
+        _render_fm_warmup_button()
+    _render_fm_warmup_result()
     return "library" if choice == TAB_LIBRARY else "studio"
 
 
