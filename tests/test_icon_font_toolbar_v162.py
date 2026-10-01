@@ -237,16 +237,24 @@ def test_no_global_fill_stroke_forcing():
 def test_delete_all_trigger_stays_text():
     """Out of scope: the master-section "Delete All" trigger keeps its
     text label — only the toolbar Delete becomes icon-only. #119: it is
-    now a direct button (no popover, no chevron), still text-labeled."""
+    now a direct button (no popover, no chevron), still text-labeled.
+    #130: the trigger records pending state; the shared dialog opens via
+    _maybe_open_delete_dialog()."""
     lui, fake = _ui_with_fake_st(clicks=("dp-all-trigger",))
     lui._delete_popover(trigger_label="Delete All", popover_key="dp-all",
                         title="T", message="M", on_yes=lambda: None,
-                        destructive_label="Delete all stories")
+                        destructive_label="Delete all stories",
+                        _pending_delete_kind="all")
     assert fake.popovers == []
     _trig = fake.button_kwargs[0]
     assert _trig["label"] == "Delete All"
     assert _trig.get("icon") is None
-    assert fake.dialogs[0]["title"] == "T"
+    # #130: trigger sets pending (no dialog yet); the shared dialog opens
+    # once via _maybe_open_delete_dialog().
+    assert fake.dialogs == []
+    assert fake.session_state[lui._PENDING_DELETE_KEY]["kind"] == "all"
+    lui._maybe_open_delete_dialog()
+    assert fake.dialogs == ["Delete"]
     # And the real call site never opts into an icon.
     src = (Path(__file__).resolve().parent.parent / "library_ui.py").read_text()
     seg = src[src.index('popover_key="lib_delpop_all"'):]

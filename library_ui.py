@@ -814,6 +814,91 @@ def _confirm_delete_all() -> None:
     st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
 
 
+# ---------------------------------------------------------------------------
+# Single shared delete-confirmation dialog (#130)
+# ---------------------------------------------------------------------------
+# Streamlit allows only ONE dialog per script run. PR #123 gave each delete
+# button its own dialog, crashing pages with multiple delete buttons
+# (Delete All + story delete) with StreamlitInvalidLayoutContextError.
+#
+# Pattern: each delete trigger writes its target into
+# ``st.session_state[_PENDING_DELETE_KEY]`` and reruns. ONE module-level
+# dialog function (defined once, not per-button) is invoked at most once
+# per script run from a single call site at the end of
+# ``render_library_page()``. It reads the pending target and renders the
+# confirmation for it. No pending target → the dialog is never invoked.
+
+_PENDING_DELETE_KEY = "_pending_delete"
+
+
+# The dialog decorator is applied defensively: test fakes for streamlit may
+# not define ``dialog`` (they only stub what they exercise). In production
+# ``st.dialog`` always exists.
+try:
+    _dialog_decorator = st.dialog("Delete")
+except (AttributeError, TypeError):  # pragma: no cover — test fakes only
+    _dialog_decorator = None
+if not callable(_dialog_decorator):  # pragma: no cover — test fakes only
+    def _dialog_decorator(fn):
+        return fn
+
+
+@_dialog_decorator
+def _delete_confirm_dialog() -> None:
+    """Single shared delete confirmation dialog (#130).
+
+    Reads the pending delete target from session state. Renders nothing
+    and returns immediately if there is no pending delete (the caller
+    guards this too — belt and suspenders). On "Delete", executes the
+    action for the target kind; on failure the error is shown loudly and
+    the dialog stays open for retry. On "Cancel" or success, the pending
+    target is cleared.
+    """
+    _pending = st.session_state.get(_PENDING_DELETE_KEY)
+    if not isinstance(_pending, dict):
+        return
+    _kind = _pending.get("kind")
+    _title = _pending.get("title", "Delete?")
+    _message = _pending.get("message", "This can't be undone.")
+    _destructive_label = _pending.get("destructive_label", "Delete")
+
+    st.markdown(f"**{_md_escape(_title)}**")
+    st.caption(_message)
+    _bc, _bd = st.columns(2)
+    with _bc:
+        if st.button("Cancel", key="_pending_delete_no",
+                     use_container_width=True):
+            st.session_state.pop(_PENDING_DELETE_KEY, None)
+            st.rerun()
+    with _bd:
+        if _danger_button(_destructive_label, key="_pending_delete_yes",
+                          use_container_width=True):
+            try:
+                if _kind == "story":
+                    _confirm_delete_story(_pending.get("story_id", ""))
+                elif _kind == "all":
+                    _confirm_delete_all()
+                else:
+                    raise RuntimeError(f"unknown delete target: {_kind!r}")
+            except Exception as e:
+                # Fail loudly — the dialog stays open with the error.
+                st.error(f"Delete failed: {e}")
+            else:
+                st.session_state.pop(_PENDING_DELETE_KEY, None)
+                st.rerun()
+
+
+def _maybe_open_delete_dialog() -> None:
+    """Invoke the shared delete dialog once if a delete is pending (#130).
+
+    Single call site — called once per script run at the end of
+    ``render_library_page()``. If no delete is pending, the dialog is
+    never invoked, so pages with N delete buttons render clean.
+    """
+    if st.session_state.get(_PENDING_DELETE_KEY):
+        _delete_confirm_dialog()
+
+
 def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
                      popover_key: str, title: str,
                      message: str, on_yes: Callable[[], None],
@@ -823,7 +908,9 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
                      destructive_label: str,
                      disabled: bool = False,
                      spin_marker: str = "",
-                     as_dialog: bool = False) -> None:
+                     as_dialog: bool = False,
+                     _pending_delete_kind: str = "",
+                     _pending_delete_story_id: str = "") -> None:
     """Apple-style confirmation: native popover, explicit red destructive
     verb, standard Cancel. (#58)
 
@@ -915,18 +1002,26 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
             )
 
     if as_dialog:
-        # #119: a destructive action is a direct control — no dropdown
+        # #119/#130: a destructive action is a direct control — no dropdown
         # chevron (Apple HIG). The trigger is a plain button; tapping it
-        # opens the same confirmation in a native modal dialog.
+        # records the delete target in session state and reruns. The SINGLE
+        # shared dialog (``_delete_confirm_dialog``, #130) is invoked once
+        # per script run from ``_maybe_open_delete_dialog()`` — never here —
+        # because Streamlit allows only one dialog per run.
         if st.button(trigger_label,
                      icon=trigger_icon or None,
                      key=f"{popover_key}-trigger",
                      help=trigger_help or None,
                      use_container_width=use_container_width,
                      disabled=disabled):
-            st.session_state[popover_key] = True
-        if st.session_state.get(popover_key):
-            st.dialog(title)(_confirmation_body)()
+            st.session_state[_PENDING_DELETE_KEY] = {
+                "kind": _pending_delete_kind,
+                "story_id": _pending_delete_story_id,
+                "title": title,
+                "message": message,
+                "destructive_label": destructive_label,
+            }
+            st.rerun()
         return
 
     with st.popover(trigger_label,
@@ -943,7 +1038,9 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
                     trigger_help: str = "",
                     use_container_width: bool = False,
                     destructive_label: str,
-                    trigger_icon: str = "") -> None:
+                    trigger_icon: str = "",
+                    _pending_delete_kind: str = "",
+                    _pending_delete_story_id: str = "") -> None:
     """Apple-style delete confirmation: neutral trigger, red explicit
     destructive verb + Cancel inside (#58).
 
@@ -955,6 +1052,10 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
     shortcode for an icon-only trigger (rendered via ``icon=`` with an
     empty text label); when empty the text ``trigger_label`` is used
     instead.
+
+    #130: the dialog is shared — ``_pending_delete_kind`` ("story"/"all")
+    and ``_pending_delete_story_id`` identify the target recorded in
+    session state when the trigger is tapped.
     """
     _confirm_popover(
         as_dialog=True,
@@ -968,6 +1069,8 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
         use_container_width=use_container_width,
         fail_label="Delete",
         destructive_label=destructive_label,
+        _pending_delete_kind=_pending_delete_kind,
+        _pending_delete_story_id=_pending_delete_story_id,
     )
 
 
@@ -1565,9 +1668,15 @@ def render_library_page() -> None:
             trigger_help="Delete every saved story",
             use_container_width=True,
             destructive_label="Delete all stories",
+            _pending_delete_kind="all",
         )
     with detail:
         _render_story_detail(sel)
+
+    # #130: single shared delete dialog — invoked at most once per script
+    # run, after all delete triggers have rendered. If no delete is pending,
+    # this is a no-op.
+    _maybe_open_delete_dialog()
 
 
 def _render_full_script(script_md: str) -> None:
@@ -1937,6 +2046,8 @@ def _render_story_detail(story_id: str) -> None:
             trigger_help="Delete this story",
             destructive_label="Delete story",
             use_container_width=True,
+            _pending_delete_kind="story",
+            _pending_delete_story_id=story_id,
         )
 
     if _editing:
