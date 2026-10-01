@@ -27,6 +27,7 @@ import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+import urllib.parse
 from urllib.parse import urljoin
 
 # ---------------------------------------------------------------------------
@@ -2290,6 +2291,16 @@ def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
         raise RuntimeError("No topic to search — news links unchanged.")
+    # #143: repair any stored redirect URLs to their final destinations
+    # before topping up — stories saved before universal resolution may
+    # still hold aggregator/shortener links.
+    try:
+        _repaired, _repair_note = repair_news_link_urls(story_id)
+    except Exception:
+        _repaired, _repair_note = False, ""
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
     existing = [lk for lk in (story["meta"].get("news_links") or [])
                 if isinstance(lk, dict) and lk.get("url")]
     room = NEWS_LINKS_TARGET - len(existing)
@@ -2309,6 +2320,61 @@ def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
         return True, note
     return False, (f"No new news links found; kept {len(existing)} "
                    "existing.")
+
+
+def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
+    """Re-resolve stored news-link URLs to their final destinations (#143).
+
+    Repairs stories saved before universal redirect resolution: every
+    stored news-link URL is followed through its full redirect chain
+    and updated when the final URL differs. Unresolvable redirect URLs
+    (known aggregator hosts) are dropped loudly; other unresolvable
+    URLs are kept (fail-open — likely direct links blocking bots).
+
+    Runs in background threads (called from refresh paths), never on
+    the render path. Returns (changed, note).
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news link URLs unchanged.")
+    existing = [lk for lk in (story["meta"].get("news_links") or [])
+                if isinstance(lk, dict) and lk.get("url")]
+    if not existing:
+        return False, "No stored news links to repair."
+    from tools.news_fetcher import news_fetcher
+    repaired = 0
+    dropped = 0
+    kept: List[Dict[str, str]] = []
+    for lk in existing:
+        url = (lk.get("url") or "").strip()
+        if not url:
+            dropped += 1
+            continue
+        final = news_fetcher.resolve_final_url(url)
+        if final:
+            if final != url:
+                lk = dict(lk, url=final)
+                repaired += 1
+            kept.append(lk)
+            continue
+        # Unresolvable: drop loudly only known redirect hosts (#143).
+        try:
+            host = urllib.parse.urlparse(url).netloc.lower()
+        except Exception:
+            host = ""
+        if host in news_fetcher._AGGREGATOR_REDIRECT_HOSTS:
+            dropped += 1
+        else:
+            kept.append(lk)
+    if repaired or dropped:
+        update_story_fields(story_id, news_links=kept)
+    parts = []
+    if repaired:
+        parts.append(f"re-resolved {repaired} redirect URL(s) to final destinations")
+    if dropped:
+        parts.append(f"dropped {dropped} unresolvable redirect URL(s)")
+    note = "; ".join(parts) if parts else "All stored news link URLs already final."
+    return bool(parts), note
 
 
 def _fetch_more_images(topic: str, existing_norm_urls: Set[str],
@@ -2421,6 +2487,15 @@ def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
         raise RuntimeError("No topic to search — news links unchanged.")
+    # #143: repair any stored redirect URLs to their final destinations
+    # (stories saved before universal resolution).
+    try:
+        repair_news_link_urls(story_id)
+    except Exception:
+        pass
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
     existing = [lk for lk in (story["meta"].get("news_links") or [])
                 if isinstance(lk, dict) and lk.get("url")]
     added = _fetch_news_link_candidates(
