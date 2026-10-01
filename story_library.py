@@ -2572,10 +2572,13 @@ def start_refresh(story_id: str, kind: str,
 # the refresh flow above: the worker always writes a terminal state, the UI
 # auto-polls while busy, and a stale "warming" state is recovered honestly.
 
-# Upper bound for one warm-up run: the #4 probe budget is 30+30+60 = 120s,
-# plus overhead. Anything still "warming" past this is orphaned (the app
-# restarted mid-run) and is recovered as interrupted, never left stuck.
-FM_WARMUP_STALE_SECONDS = 600.0
+# Hard cap for one warm-up run (#122): the worker enforces FM_WARMUP_TIMEOUT_SECONDS
+# on the #4 probe (whose internal retry budget is 30+30+60 = 120s), so the
+# mailbox always reaches a terminal state within ~60s of kick-off. Anything
+# still "warming" past FM_WARMUP_STALE_SECONDS is orphaned (the app died
+# mid-run) and is recovered as interrupted — never left stuck.
+FM_WARMUP_TIMEOUT_SECONDS = 60.0
+FM_WARMUP_STALE_SECONDS = 90.0
 
 
 def _warmup_state_path() -> Path:
@@ -2636,19 +2639,51 @@ def read_fm_warmup_state() -> Dict[str, Any]:
     return data
 
 
+def _probe_fm_bounded(dual_engine, timeout_s: float) -> Dict[str, Any]:
+    """Run the #4 FM availability probe with a hard timeout (#122).
+
+    The probe itself has a 30s -> 30s -> 60s retry budget and no timeout
+    parameter, so it runs in a daemon thread while the caller waits at
+    most ``timeout_s``. On timeout the orphaned daemon probe thread is
+    abandoned (it dies with the process and never writes the mailbox —
+    only the worker below does) and TimeoutError is raised so the worker
+    records an honest failed state. Never hangs the caller past the
+    timeout. Probe exceptions are re-raised for the worker to record.
+    """
+    box: Dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            box["status"] = dual_engine.check_status(force=True, check_fm=True)
+        except Exception as e:  # noqa: BLE001 -- re-raised below
+            box["error"] = e
+
+    t = threading.Thread(target=_target, daemon=True, name="fm-warmup-probe")
+    t.start()
+    t.join(timeout=timeout_s)
+    if t.is_alive():
+        raise TimeoutError(
+            f"warm-up probe timed out after {timeout_s:.0f}s "
+            "(the on-device model may still be initializing)")
+    if "error" in box:
+        raise box["error"]
+    return box.get("status") or {}
+
+
 def _fm_warmup_worker() -> None:
     """Background worker: run the #4 FM availability probe. Never raises.
 
-    Uses ``dual_engine.check_status(force=True)`` — the exact probe with
-    the 30s -> 30s -> 60s retry budget — so a real ``fm respond`` call
-    initializes the on-device model. The outcome is recorded honestly:
+    Uses ``dual_engine.check_status(force=True)`` — the exact probe — but
+    bounded by FM_WARMUP_TIMEOUT_SECONDS (#122), so a hung probe can never
+    leave the mailbox "warming" forever. The outcome is recorded honestly:
     "done" only when the probe reports the model available, otherwise
-    "failed" with the probe's own message verbatim (same messaging as #4).
+    "failed" with the probe's own message verbatim (same messaging as #4),
+    or a timeout message when the probe exceeds its budget.
     """
     started = time.time()
     try:
         from core.dual_engine import dual_engine
-        status = dual_engine.check_status(force=True, check_fm=True)
+        status = _probe_fm_bounded(dual_engine, FM_WARMUP_TIMEOUT_SECONDS)
         fm = (status or {}).get("fm", {}) or {}
         secs = time.time() - started
         if fm.get("available"):
@@ -2674,12 +2709,16 @@ def _fm_warmup_worker() -> None:
         })
 
 
-def start_fm_warmup() -> Tuple[bool, str]:
+def start_fm_warmup(*, auto: bool = False) -> Tuple[bool, str]:
     """Kick off a background on-device Apple FM warm-up probe. Never raises.
 
     Returns (started, reason): ``reason`` is "" when the worker started,
     otherwise a human-readable explanation of why it could not start
     (e.g. a warm-up is already running).
+
+    ``auto`` marks a launch-time automatic kick-off (#115/#122): it is
+    recorded in the mailbox so the UI can treat it as purely informational
+    (no poll loop) instead of user-initiated work.
     """
     try:
         state = read_fm_warmup_state()
@@ -2692,6 +2731,7 @@ def start_fm_warmup() -> Tuple[bool, str]:
             "message": "",
             "seconds": 0.0,
             "started_at": time.time(),
+            "auto": bool(auto),
         })
         t = threading.Thread(target=_fm_warmup_worker, daemon=True,
                              name="fm-warmup")
@@ -2730,7 +2770,7 @@ def maybe_auto_cold_start() -> None:
             return
         _auto_cold_start_fired = True
     try:
-        start_fm_warmup()
+        start_fm_warmup(auto=True)
     except Exception:
         # Never break the render for a background kick-off failure.
         pass

@@ -1146,8 +1146,10 @@ def _render_fm_warmup_button() -> None:
     daemon thread so the first real generation skips the cold-start delay.
 
     HIG: the button owns its progress — while warming it paints
-    "Warming up…" and stays disabled (no second tap), and the page
-    auto-polls until the worker writes its terminal state.
+    "Warming up…" and stays disabled (no second tap). A *manual* warm-up
+    auto-polls until the worker writes its terminal state; an *automatic*
+    launch-time warm-up (#122) is purely informational — no poll loop, so
+    the page renders once and stays interactive while the probe runs.
     """
     _state = lib.read_fm_warmup_state()
     _label, _disabled = _fm_warmup_button_props(_state)
@@ -1155,12 +1157,15 @@ def _render_fm_warmup_button() -> None:
         st.button(_label, key="fm_warmup_btn", disabled=True,
                   help="Warming up the on-device Apple FM model…",
                   use_container_width=True)
-        # Auto-poll while the probe is in flight: the daemon worker cannot
-        # trigger st.rerun() itself. Same pattern as the library refresh
-        # flow — the loop always terminates because the worker always
-        # writes a terminal state and stale states are recovered.
-        _time.sleep(1.0)
-        st.rerun()
+        if not (_state or {}).get("auto"):
+            # Manual warm-up: the initiating control owns its loading state.
+            # Auto-poll while the probe is in flight: the daemon worker
+            # cannot trigger st.rerun() itself. Same pattern as the library
+            # refresh flow — the loop always terminates because the worker
+            # always writes a terminal state within 60s (#122) and stale
+            # states are recovered.
+            _time.sleep(1.0)
+            st.rerun()
         return
     if st.button(_label, key="fm_warmup_btn", disabled=False,
                  help=("Developer: warm up the on-device Apple FM model now "
@@ -1188,6 +1193,13 @@ def _render_fm_warmup_result() -> None:
     elif _stt == "failed":
         _msg = (_state.get("message") or "unknown error").strip()
         st.error(f"Warm-up failed: {_msg}")
+        # Loud failure gets an explicit retry — never a silent stuck state.
+        if st.button("Retry warm-up", key="fm_warmup_retry",
+                     help="Run the FM warm-up probe again"):
+            _ok, _reason = lib.start_fm_warmup()
+            if not _ok:
+                st.error(f"Could not start warm-up: {_reason}")
+            st.rerun()
 
 
 def render_tab_bar() -> str:

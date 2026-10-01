@@ -87,7 +87,7 @@ def test_auto_cold_start_fires_thread_not_caller(libdir, monkeypatch):
 def test_auto_cold_start_fires_once(libdir, monkeypatch):
     calls = []
     monkeypatch.setattr(lib, "start_fm_warmup",
-                        lambda: (calls.append(1), (True, ""))[1])
+                        lambda *a, **k: (calls.append(1), (True, ""))[1])
     lib.maybe_auto_cold_start()
     lib.maybe_auto_cold_start()
     lib.maybe_auto_cold_start()
@@ -98,7 +98,7 @@ def test_auto_cold_start_concurrent_calls_fire_once(libdir, monkeypatch):
     calls = []
     lock = threading.Lock()
 
-    def counting_start():
+    def counting_start(*a, **k):
         with lock:
             calls.append(1)
         return True, ""
@@ -118,7 +118,7 @@ def test_auto_cold_start_concurrent_calls_fire_once(libdir, monkeypatch):
 def test_auto_cold_start_resets_for_tests(libdir, monkeypatch):
     calls = []
     monkeypatch.setattr(lib, "start_fm_warmup",
-                        lambda: (calls.append(1), (True, ""))[1])
+                        lambda *a, **k: (calls.append(1), (True, ""))[1])
     lib.maybe_auto_cold_start()
     assert len(calls) == 1
     lib._reset_auto_cold_start_for_tests()
