@@ -92,8 +92,22 @@ def inject_library_css() -> None:
        Real DOM (Streamlit 1.64): div[data-testid="stButtonGroup"] >
        div[role="radiogroup"] > button[data-variant="segmented_control"],
        with the active segment marked data-selected="true".
-       Labels are plain 13px text (macOS HIG: no emoji in tab titles). */
-    .lib-tabbar { display: flex; justify-content: center; margin: 6px 0 14px 0; }
+       Labels are plain 13px text (macOS HIG: no emoji in tab titles).
+       Centering: the strip is centered via its widget element container
+       (div.st-key-lib_view), NOT via .lib-tabbar or margin:auto on the
+       widget itself. Two real-DOM reasons, verified against Streamlit 1.64:
+       (a) a <div> opened in one st.markdown call and closed in a later one
+       is auto-closed by the browser inside its own block, so the widget is
+       never actually inside .lib-tabbar; (b) Streamlit 1.64 shrink-wraps
+       element containers (width: fit-content), so margin:auto on the inner
+       widget has no free space to center in (it computes to 0). */
+    /* Center the tab bar: full-width flex row on the widget's own container. */
+    div.st-key-lib_view[data-testid="stElementContainer"] {
+        width: 100% !important;
+        max-width: 100% !important;
+        display: flex !important;
+        justify-content: center !important;
+    }
     /* Hide the "View" widget label Streamlit puts above the strip. */
     [data-testid="stButtonGroup"] > label[data-testid="stWidgetLabel"] {
         display: none !important;
@@ -146,24 +160,25 @@ def inject_library_css() -> None:
     [data-theme="dark"] [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"] {
         color: #FAF7F0 !important;
     }
-    /* Fallback: horizontal radio styled as segmented control (scoped to tabbar) */
-    .lib-tabbar [data-testid="stRadio"] > div[role="radiogroup"] {
+    /* Fallback: horizontal radio styled as segmented control
+       (scoped to the tab bar's widget container) */
+    div.st-key-lib_view [data-testid="stRadio"] > div[role="radiogroup"] {
         flex-direction: row !important;
         gap: 2px !important;
         background: var(--lib-seg-bg) !important;
         border-radius: 12px !important;
         padding: 3px !important;
     }
-    .lib-tabbar [data-testid="stRadio"] label {
+    div.st-key-lib_view [data-testid="stRadio"] label {
         border-radius: 9px !important;
         padding: 6px 18px !important;
         margin: 0 !important;
     }
-    .lib-tabbar [data-testid="stRadio"] label:has(input:checked) {
+    div.st-key-lib_view [data-testid="stRadio"] label:has(input:checked) {
         background: var(--lib-seg-active-bg) !important;
         box-shadow: var(--lib-seg-active-shadow) !important;
     }
-    .lib-tabbar [data-testid="stRadio"] label > div:first-child { display: none !important; }
+    div.st-key-lib_view [data-testid="stRadio"] label > div:first-child { display: none !important; }
     /* Detail view: color-coded sections */
     .lib-dialogue {
         background: var(--lib-dialogue-bg);
@@ -319,7 +334,6 @@ def _danger_button(label: str, key: str, **kwargs) -> bool:
 def render_tab_bar() -> str:
     """Render the macOS-style tab bar. Returns 'studio' or 'library'."""
     inject_library_css()
-    st.markdown('<div class="lib-tabbar">', unsafe_allow_html=True)
     seg = getattr(st, "segmented_control", None)
     if seg is not None:
         choice = seg(
@@ -338,7 +352,6 @@ def render_tab_bar() -> str:
             label_visibility="collapsed",
             horizontal=True,
         )
-    st.markdown("</div>", unsafe_allow_html=True)
     return "library" if choice == TAB_LIBRARY else "studio"
 
 
