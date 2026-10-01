@@ -2464,7 +2464,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                      use_container_width=True):
         if share_text:
             _copy_button("Copy News Link + Hashtags", share_text,
-                         f"n-{story_id}")
+                         f"n-{story_id}", _COPY_ROW_ICON_COPY)
             # #78: the copy action is separated from the share destinations
             # by a divider — the menu reads as two groups, not one stack.
             st.divider()
@@ -2582,32 +2582,34 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
 
 def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
     """Copy menu (native popover, macOS HIG): Script / Script + Tags /
-    Script + Media / All — the same one-click copy texts as before, now
-    presented as menu rows.
+    Script + Media — divider — All. The same one-click copy texts as
+    before, now presented as menu rows.
 
-    #78: redesigned from a plain button stack into a real menu — each
-    sub-action is an icon-led row (leading copy icon + label, no button
-    chrome, hover highlight). #90/#111: the trigger is icon-only (native
-    material content_copy icon via ``icon=`` with an empty text label);
-    the tooltip keeps the "Copy" label. Streamlit's native chevron is the
-    only indicator (#46). Each copy row owns its loading state
-    ("Copied ✓") via _copy_button — no second click.
+    #78 (Claude-approved design): the toolbar's single copy icon opens
+    this menu directly (no separate dropdown button); each row carries
+    its OWN meaningful leading icon (document / # / image / layers),
+    with a divider before "All". #90/#111: the trigger is icon-only
+    (native material content_copy icon via ``icon=`` with an empty text
+    label); the tooltip keeps the "Copy" label. Each copy row owns its
+    loading state ("Copied ✓") via _copy_button — no second click.
     """
     with st.popover("", icon=_TB_ICON_COPY, key=f"lib_copypop_{story_id}",
                      help="Copy the screenplay in different formats",
                      use_container_width=True):
         if script_md:
             _copy_button("Script", _script_plain_text(script_md),
-                         f"s-{story_id}")
+                         f"s-{story_id}", _COPY_ROW_ICON_DOC)
             _copy_button("Script + Tags",
                          _compose_share_text(meta, script_md, False, True),
-                         f"h-{story_id}")
+                         f"h-{story_id}", _COPY_ROW_ICON_HASH)
             _copy_button("Script + Media",
                          _compose_share_text(meta, script_md, True, False),
-                         f"m-{story_id}")
+                         f"m-{story_id}", _COPY_ROW_ICON_IMAGE)
+            # The menu reads as two groups: the format rows, then "All".
+            st.divider()
             _copy_button("All",
                          _compose_share_text(meta, script_md, True, True),
-                         f"a-{story_id}")
+                         f"a-{story_id}", _COPY_ROW_ICON_LAYERS)
         else:
             st.caption("No script to copy yet.")
 
@@ -2620,31 +2622,59 @@ def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
 _LIB_ACTION_BTN_H_PX = 38
 
 
-def _copy_button_html(label: str, text: str, key: str) -> str:
+# #78 (Claude-approved design): the Copy menu rows each carry their OWN
+# meaningful leading icon — never the same glyph on every row. All icons
+# are inline SVG drawn with currentColor so they follow the theme text
+# color; no hardcoded fills (theme-safe, #129).
+_COPY_ROW_ICON_DOC = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"'
+    ' aria-hidden="true"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12'
+    'c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/>'
+    "</svg>"
+)
+_COPY_ROW_ICON_HASH = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">'
+    '<text x="12" y="17.5" text-anchor="middle" font-size="15"'
+    ' fill="currentColor" font-family="-apple-system,BlinkMacSystemFont,'
+    "'SF Pro Text',sans-serif\">#</text></svg>"
+)
+_COPY_ROW_ICON_IMAGE = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"'
+    ' aria-hidden="true"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14'
+    'c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/>'
+    "</svg>"
+)
+_COPY_ROW_ICON_LAYERS = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"'
+    ' aria-hidden="true"><path d="M11.99 18.54l-7.37-5.73L3 14.07l9 7 9-7-1.63'
+    '-1.27-7.38 5.74zM12 16l7.36-5.73L21 9l-9-7-9 7 1.63 1.27L12 16z"/></svg>'
+)
+_COPY_ROW_ICON_COPY = (
+    '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"'
+    ' aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4'
+    'H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2-'
+    'zm0 16H8V7h11v14z"/></svg>'
+)
+
+
+def _copy_button_html(label: str, text: str, key: str, icon: str) -> str:
     """Pure HTML for the _copy_button menu row (no Streamlit dependency).
 
     Split out so tests can assert the menu-row markup without importing
-    streamlit.components.v1.
+    streamlit.components.v1. ``icon`` is the row's leading SVG icon —
+    #78 (Claude design): each row carries its own meaningful icon.
     """
     import html as _html
     import json as _json
     payload = _json.dumps(text)
     btn_id = f"libcp-{key}"
-    # Material Symbols "content_copy" outline, drawn with currentColor so
-    # the glyph follows the theme text color — never a hardcoded fill.
-    _COPY_SVG = (
-        '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"'
-        ' aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4'
-        'H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2'
-        'zm0 16H8V7h11v14z"/></svg>'
-    )
     return (
         f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;box-sizing:border-box;
         display:flex;align-items:center;gap:10px;padding:7px 10px;margin:0;
         background:transparent;border:none;border-radius:8px;cursor:pointer;
         font-size:13px;text-align:left;
         font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;"
-        >{_COPY_SVG}<span id="{btn_id}-lbl">{_html.escape(label)}</span></button>
+        >{icon}<span id="{btn_id}-lbl">{_html.escape(label)}</span></button>
         <style>#{btn_id}:hover{{background:rgba(0,0,0,0.05);}}
         #{btn_id}[data-dark="1"]:hover{{background:rgba(255,255,255,0.10);}}
         #{btn_id}:focus-visible{{outline:2px solid currentColor;outline-offset:-2px;}}</style>
@@ -2683,16 +2713,15 @@ def _copy_button_html(label: str, text: str, key: str) -> str:
     )
 
 
-def _copy_button(label: str, text: str, key: str) -> None:
+def _copy_button(label: str, text: str, key: str, icon: str) -> None:
     """One-click copy-to-clipboard menu row (clipboard API with execCommand fallback).
 
-    #78: redesigned from a plain button into an Apple-HIG menu row —
-    leading copy icon + label, no button chrome, hover highlight, so the
-    Share/Copy popovers read as menus instead of button stacks. #129:
-    theme-aware — detects Streamlit's rendered theme (light/dark) from
-    the parent document and applies matching styles. Falls back to the
-    light appearance if theme detection fails (e.g. cross-origin). Never
-    hardcodes a single-theme color; the icon uses ``currentColor``.
+    #78 (Claude-approved design): an Apple-HIG menu row — the row's OWN
+    leading icon (``icon``) + label, no button chrome, hover highlight.
+    #129: theme-aware — detects Streamlit's rendered theme (light/dark)
+    from the parent document and applies matching styles. Falls back to
+    the light appearance if theme detection fails (e.g. cross-origin).
+    Never hardcodes a single-theme color; the icon uses ``currentColor``.
 
     The click still copies one-click and morphs the row label to
     "Copied ✓" for 1.5s (#30) — the initiating row owns its feedback, no
@@ -2700,7 +2729,7 @@ def _copy_button(label: str, text: str, key: str) -> None:
     """
     import streamlit.components.v1 as components
     components.html(
-        _copy_button_html(label, text, key),
+        _copy_button_html(label, text, key, icon),
         height=_LIB_ACTION_BTN_H_PX,
     )
 # v1.6 (#38, #46, #53, #80) / v1.6.2 (#90): story-detail toolbar column
