@@ -91,6 +91,19 @@ def inject_library_css() -> None:
         --lib-said: #6EE7B7;
         --lib-key: #67E8F9;
     }
+    /* ONE alignment system for the detail action buttons and the three
+       horizontal rows (hashtags / images / news links). Theme-neutral
+       layout tokens — single source of truth for chip height, card gap,
+       × size/position and row spacing. --lib-act-h is mirrored in Python
+       as _LIB_ACTION_BTN_H_PX for the copy-button iframe, which cannot
+       read page CSS. */
+    :root {
+        --lib-chip-h: 30px;     /* every chip, every row: one height */
+        --lib-chip-gap: 10px;   /* gap between cards in a scroll row */
+        --lib-x-size: 22px;     /* × overlay button diameter */
+        --lib-act-h: 38px;      /* Share/Copy action button height */
+        --lib-row-space: 22px;  /* vertical rhythm between sections */
+    }
     /* macOS segmented tab bar — latest macOS: a floating glass tab strip.
        Real DOM (Streamlit 1.64): div[data-testid="stButtonGroup"] >
        div[role="radiogroup"] > button[data-variant="segmented_control"],
@@ -213,7 +226,9 @@ def inject_library_css() -> None:
     .lib-said { color: var(--lib-said); }
     .lib-key { color: var(--lib-key); font-weight: 600; font-style: normal; }
     .lib-chip {
-        display: inline-block;
+        display: inline-flex;
+        align-items: center;
+        min-height: var(--lib-chip-h);
         background: var(--lib-chip-bg);
         color: var(--lib-chip-text);
         border-radius: 999px;
@@ -221,6 +236,104 @@ def inject_library_css() -> None:
         margin: 2px 4px 2px 0;
         font-size: 13px;
         font-weight: 600;
+    }
+    /* Horizontal scroll rows (hashtags / images / news links). Marker-scoped:
+       a hidden [data-marker="lib-hscroll"] div sits directly before the
+       st.columns() call, so these rules NEVER touch any other horizontal
+       block. Columns become non-wrapping flex items that scroll on overflow. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"] {
+        flex-wrap: nowrap !important;
+        overflow-x: auto !important;
+        gap: var(--lib-chip-gap) !important;
+        padding: 2px 2px 10px 2px !important;
+        align-items: start !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"] > div[data-testid="column"] {
+        flex: 0 0 auto !important;
+        width: auto !important;
+        min-width: 0 !important;
+        position: relative !important;
+    }
+    /* Chips inside scroll rows: single line with clearance for the ×. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        [data-testid="stHorizontalBlock"] .lib-chip {
+        padding-right: 26px !important;
+        white-space: nowrap !important;
+        max-width: 340px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+    /* Links inside news chips inherit the themed chip color (theme-safe). */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        [data-testid="stHorizontalBlock"] .lib-chip a {
+        color: inherit !important;
+        text-decoration: underline;
+    }
+    /* × / ✎ overlay buttons at the card's top corners: absolute, quiet,
+       theme-safe (translucent neutral, inherits text color). */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
+        > div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
+        + div[data-testid="stElementContainer"] {
+        position: absolute !important;
+        top: 0 !important;
+        right: 0 !important;
+        width: auto !important;
+        z-index: 2;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
+        > div[data-testid="stElementContainer"]:has([data-marker="lib-x-l"])
+        + div[data-testid="stElementContainer"] {
+        position: absolute !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: auto !important;
+        z-index: 2;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
+        > div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
+        width: var(--lib-x-size) !important;
+        height: var(--lib-x-size) !important;
+        min-width: var(--lib-x-size) !important;
+        min-height: var(--lib-x-size) !important;
+        padding: 0 !important;
+        border-radius: 999px !important;
+        font-size: 13px !important;
+        line-height: 1 !important;
+        background: rgba(128, 128, 128, 0.25) !important;
+        color: inherit !important;
+        border: 1px solid rgba(128, 128, 128, 0.4) !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
+        > div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
+        background: rgba(128, 128, 128, 0.45) !important;
+        color: inherit !important;
+        border-color: rgba(128, 128, 128, 0.65) !important;
+    }
+    /* Detail action buttons (Share/Copy) share the same system: one
+       button height (--lib-act-h), one gap, top-aligned in their columns.
+       Marker-scoped: a hidden [data-marker="lib-actions"] div sits
+       directly before the actions st.columns() call. The copy buttons
+       render inside an iframe (components.html) and get their height from
+       _LIB_ACTION_BTN_H_PX in Python — same value, same system. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-actions"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"] {
+        gap: var(--lib-chip-gap) !important;
+        align-items: start !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-actions"])
+        [data-testid="stLinkButton"] > a {
+        min-height: var(--lib-act-h) !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
     }
     /* macOS HIG: deference — toolbar rows use a hairline, not a heavy box */
     .lib-hairline {
@@ -231,7 +344,7 @@ def inject_library_css() -> None:
     .lib-section {
         font-size: 15px;
         font-weight: 600;
-        margin: 22px 0 8px 0;
+        margin: var(--lib-row-space) 0 8px 0;
     }
     /* Quiet inline status line (replaces loud banners for background work) */
     .lib-quiet {
@@ -364,11 +477,13 @@ def _confirm_delete_all() -> None:
     st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
 
 
-def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
-                    message: str, on_yes: Callable[[], None],
-                    trigger_help: str = "",
-                    use_container_width: bool = False) -> None:
-    """Apple-style delete confirmation: native popover, red Yes, normal No.
+def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
+                     message: str, on_yes: Callable[[], None],
+                     trigger_help: str = "",
+                     use_container_width: bool = False,
+                     fail_label: str = "Confirm",
+                     disabled: bool = False) -> None:
+    """Apple-style confirmation: native popover, red Yes, normal No.
 
     The trigger is a red destructive button (marker-scoped CSS, graceful if
     the selector misses). Inside the popover: a bold title, a secondary
@@ -384,6 +499,10 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
     popover stays open. "No" only closes the popover. The native popover
     follows the light/dark theme; the only custom color is macOS system red,
     which reads on both themes.
+
+    ``fail_label`` prefixes the loud error (e.g. "Delete", "Reset").
+    ``disabled`` disables the trigger (e.g. while its work is running) —
+    the trigger label can then carry the loading state ("Resetting…").
     """
     _go_key = f"{popover_key}-go"
     _err_key = f"{popover_key}-err"
@@ -401,10 +520,11 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
             st.session_state[popover_key] = True  # reopen so the error is seen
     with st.popover(trigger_label, key=popover_key, on_change="rerun",
                     help=trigger_help or None,
-                    use_container_width=use_container_width):
+                    use_container_width=use_container_width,
+                    disabled=disabled):
         _failure = st.session_state.pop(_err_key, None)
         if _failure:
-            st.error(f"Delete failed: {_failure}")
+            st.error(f"{fail_label} failed: {_failure}")
         st.markdown(f"**{title}**")
         st.caption(message)
         _by, _bn = st.columns(2)
@@ -419,6 +539,73 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
                 "No", key=f"{popover_key}-no", use_container_width=True,
                 on_click=lambda: st.session_state.update({popover_key: False}),
             )
+
+
+def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
+                    message: str, on_yes: Callable[[], None],
+                    trigger_help: str = "",
+                    use_container_width: bool = False) -> None:
+    """Apple-style delete confirmation: native popover, red Yes, normal No.
+
+    Thin wrapper over :func:`_confirm_popover` with the failure label set
+    to "Delete" (kept for the existing delete flows and their tests).
+    """
+    _confirm_popover(
+        trigger_label=trigger_label,
+        popover_key=popover_key,
+        title=title,
+        message=message,
+        on_yes=on_yes,
+        trigger_help=trigger_help,
+        use_container_width=use_container_width,
+        fail_label="Delete",
+    )
+
+
+def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
+                          ai_engine) -> None:
+    """Toolbar Reset: destructive confirm popover (red Yes / normal No).
+
+    The trigger owns its loading state ("Resetting…") and stays disabled
+    while any refresh is busy. Confirming kicks a "reset" refresh —
+    hashtags, fetched images and news links are discarded and re-fetched
+    fresh (uploads and the screenplay are never touched).
+    """
+    resetting = refresh_kind == "reset"
+
+    def _on_reset_yes() -> None:
+        # Raises loudly on failure: the popover shows it and stays open.
+        # No st.rerun() here — the Yes click already reruns via the
+        # popover's on_change, and the busy state + auto-poll take over.
+        ok, reason = lib.start_refresh(story_id, "reset", ai_engine=ai_engine)
+        if not ok:
+            raise RuntimeError(
+                f"Could not start the reset: {reason}" if reason
+                else "Could not start the reset.")
+
+    _confirm_popover(
+        trigger_label="Resetting…" if resetting else "Reset",
+        popover_key=f"lib_resetpop_{story_id}",
+        title="Reset media rows?",
+        message=("Clears all hashtags, fetched images and news links, "
+                 "then re-fetches them fresh. Uploads and the screenplay "
+                 "are never touched."),
+        on_yes=_on_reset_yes,
+        trigger_help="Clear and re-fetch hashtags, images and news links",
+        fail_label="Reset",
+        disabled=busy,
+    )
+def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
+    """Tiny ×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).
+
+    ``marker`` is "lib-x-r" (top-right) or "lib-x-l" (top-left); the marker
+    div sits directly before the button so the CSS can position exactly this
+    button. If the selector ever misses, it degrades to a normal small
+    button — never broken.
+    """
+    st.markdown(f'<div data-marker="{marker}" style="display:none"></div>',
+                unsafe_allow_html=True)
+    return st.button(label, key=key, help=help)
 
 
 def render_tab_bar() -> str:
@@ -839,6 +1026,47 @@ def _compose_news_tags_text(meta: dict) -> str:
     return "\n\n".join(parts)
 
 
+def _whatsapp_share_url(text: str) -> str:
+    """wa.me share link carrying the EXACT share text (URL-encoded for
+    transport only — the text itself is never reformatted). Opens
+    WhatsApp with the text prefilled; no connection or connector needed.
+    """
+    import urllib.parse as _up
+    return "https://wa.me/?text=" + _up.quote(text, safe="")
+
+
+def _render_share_column(story_id: str, share_text: str) -> None:
+    """Share column: "Copy News Link + Hashtags" and "Send via WhatsApp"
+    side by side, then the share-text preview.
+
+    The WhatsApp button is a native ``st.link_button`` (theme-safe) to a
+    wa.me deep link carrying the EXACT share text — no reformatting, no
+    WhatsApp connection needed.
+    """
+    st.markdown('<div class="lib-quiet" style="text-align:left;margin:0 0 4px 0">Share</div>',
+                unsafe_allow_html=True)
+    if share_text:
+        _sh1, _sh2 = st.columns(2)
+        with _sh1:
+            _copy_button("Copy News Link + Hashtags", share_text, f"n-{story_id}")
+        with _sh2:
+            st.link_button(
+                "Send via WhatsApp",
+                _whatsapp_share_url(share_text),
+                help="Open WhatsApp with this text prefilled",
+                use_container_width=True,
+            )
+        st.code(share_text)
+    else:
+        st.caption("No news links or hashtags to share yet.")
+
+
+# Shared with --lib-act-h in inject_library_css: the copy button renders
+# inside an isolated iframe (components.html) so page CSS cannot reach it —
+# the value is mirrored here to keep ONE alignment system.
+_LIB_ACTION_BTN_H_PX = 38
+
+
 def _copy_button(label: str, text: str, key: str) -> None:
     """One-click copy-to-clipboard button (clipboard API with execCommand fallback)."""
     import html as _html
@@ -847,7 +1075,7 @@ def _copy_button(label: str, text: str, key: str) -> None:
     payload = _json.dumps(text)
     btn_id = f"libcp-{key}"
     components.html(
-        f"""<button id="{btn_id}" style="width:100%;padding:7px 4px;border:1px solid rgba(0,0,0,0.12);
+        f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;padding:7px 4px;border:1px solid rgba(0,0,0,0.12);
         border-radius:8px;background:rgba(255,255,255,0.72);color:#1d1d1f;cursor:pointer;font-size:13px;
         font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;">{_html.escape(label)}</button>
         <script>
@@ -878,7 +1106,7 @@ def _render_story_detail(story_id: str) -> None:
     meta = story["meta"]
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
-    # toolbar — Update Hashtags, Update Images, Retry Media — with Delete
+    # toolbar — Update Hashtags, Update Images, Reset — with Delete
     # trailing. The title carries its own inline ✏️ edit icon next to the
     # centered title text. Progress lives inside the initiating button
     # (in-button loader); there are no detached progress messages.
@@ -940,20 +1168,43 @@ def _render_story_detail(story_id: str) -> None:
                          disabled=_busy):
                 _kick_refresh("images", "image")
         with tc4:
-            _loading = _refresh_kind == "all"
-            if st.button("Retrying…" if _loading else "Retry Media",
-                         key=f"lib_retry_{story_id}",
-                         help="Re-run the hashtag + image fetch for this story",
-                         disabled=_busy):
-                ok, reason = lib.retry_enrichment(story_id, ai_engine=_ai_engine)
-                if ok:
-                    st.rerun()
-                else:
-                    st.error(f"Could not start the retry: {reason}" if reason
-                             else "Could not start the retry.")
+            # Reset is destructive: it confirms via the same native popover
+            # pattern as Delete (red Yes / normal No). The trigger owns its
+            # loading state ("Resetting…") and stays disabled while busy.
+            _render_reset_popover(story_id, _busy, _refresh_kind, _ai_engine)
         with tc5:
             _story_delete_popover()
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
+    script_md = story["script"].strip()
+
+    # Actions at top (compact): Share + Copy live here so the user can grab
+    # anything without scrolling past the script. Copied texts are identical
+    # to before — only the position changed.
+    st.markdown('<div class="lib-section">Actions</div>', unsafe_allow_html=True)
+    _share_text = _compose_news_tags_text(meta)
+    st.markdown('<div data-marker="lib-actions" style="display:none"></div>',
+                unsafe_allow_html=True)
+    _aa1, _aa2 = st.columns([3, 2])
+    with _aa1:
+        _render_share_column(story_id, _share_text)
+    with _aa2:
+        st.markdown('<div class="lib-quiet" style="text-align:left;margin:0 0 4px 0">Copy</div>',
+                    unsafe_allow_html=True)
+        if script_md:
+            _ac1, _ac2 = st.columns(2)
+            with _ac1:
+                _copy_button("Script", _script_plain_text(script_md), f"s-{story_id}")
+                _copy_button("Script + Tags",
+                             _compose_share_text(meta, script_md, False, True),
+                             f"h-{story_id}")
+            with _ac2:
+                _copy_button("Script + Media",
+                             _compose_share_text(meta, script_md, True, False),
+                             f"m-{story_id}")
+                _copy_button("All", _compose_share_text(meta, script_md, True, True),
+                             f"a-{story_id}")
+        else:
+            st.caption("No script to copy yet.")
 
     # Title at top: big, multiline, centered, with a small inline edit icon.
     # While editing, a borderless editor takes its place (Save/Cancel live
@@ -983,9 +1234,124 @@ def _render_story_detail(story_id: str) -> None:
     if _note:
         st.caption(f"Last refresh: {_note}")
 
+    # Hashtags: ONE horizontal scroll row. Every tag is a chip with a ×
+    # that removes exactly that tag (fail loudly, rerun after).
+    tags = [t for t in (meta.get("hashtags") or []) if t]
+    if tags:
+        st.markdown('<div class="lib-section">Hashtags</div>', unsafe_allow_html=True)
+        st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        _tcols = st.columns(len(tags))
+        for _i, (_tc, _tag) in enumerate(zip(_tcols, tags)):
+            with _tc:
+                st.markdown(f'<span class="lib-chip">{_html.escape(_tag)}</span>',
+                            unsafe_allow_html=True)
+                if _overlay_button("lib-x-r", f"lib_xtag_{story_id}_{_i}", "×",
+                                   help=f"Remove {_tag}"):
+                    try:
+                        lib.remove_hashtag(story_id, _tag)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        st.rerun()
+
+    # Images: ONE horizontal scroll row of cards (fetched + uploaded). Each
+    # card shows the image with a × at its top; fetched cards keep a discreet
+    # ✎ at the top-left for the address editor.
+    img_urls = [u for u in (meta.get("image_urls") or []) if u]
+    uploaded = [f for f in (meta.get("uploaded_images") or [])
+                if lib.media_path(story_id, f)]
+    _edit_idx = next(
+        (i for i in range(len(img_urls))
+         if st.session_state.get(f"lib_editimg_{story_id}_{i}")), None)
+    if _edit_idx is not None:
+        st.markdown('<div class="lib-section">Edit image address</div>',
+                    unsafe_allow_html=True)
+        st.text_input("Image address", value=img_urls[_edit_idx],
+                      key=f"lib_edimg_url_{story_id}_{_edit_idx}")
+        _eb1, _eb2, _ebs = st.columns([1, 1, 6])
+        with _eb1:
+            if st.button("Save", key=f"lib_edimg_save_{story_id}_{_edit_idx}"):
+                try:
+                    lib.update_fetched_image_url(
+                        story_id, _edit_idx,
+                        st.session_state.get(f"lib_edimg_url_{story_id}_{_edit_idx}", ""))
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    st.session_state.pop(f"lib_editimg_{story_id}_{_edit_idx}", None)
+                    st.rerun()
+        with _eb2:
+            if st.button("Cancel", key=f"lib_edimg_cancel_{story_id}_{_edit_idx}"):
+                st.session_state.pop(f"lib_editimg_{story_id}_{_edit_idx}", None)
+                st.rerun()
+    if img_urls or uploaded:
+        st.markdown('<div class="lib-section">Images</div>', unsafe_allow_html=True)
+        st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        _cards = [("fetched", i, u) for i, u in enumerate(img_urls)]
+        _cards += [("uploaded", i, f) for i, f in enumerate(uploaded)]
+        _icols = st.columns(len(_cards))
+        for _ci, (_icol, (_kind, _ki, _ref)) in enumerate(zip(_icols, _cards)):
+            with _icol:
+                if _kind == "fetched":
+                    st.image(_ref, width=200)
+                    if _overlay_button("lib-x-l", f"lib_xedit_{story_id}_{_ci}", "✎",
+                                       help="Edit this image's address"):
+                        st.session_state[f"lib_editimg_{story_id}_{_ki}"] = True
+                        st.rerun()
+                    if _overlay_button("lib-x-r", f"lib_ximg_{story_id}_{_ci}", "×",
+                                       help="Remove this fetched image"):
+                        if lib.remove_fetched_image(story_id, _ref):
+                            st.rerun()
+                        else:
+                            st.error("Could not remove the image — "
+                                     "the story may have been deleted.")
+                else:
+                    st.image(str(lib.media_path(story_id, _ref)), width=200)
+                    if _overlay_button("lib-x-r", f"lib_xup_{story_id}_{_ci}", "×",
+                                       help="Remove this uploaded image"):
+                        if lib.remove_uploaded_image(story_id, _ref):
+                            st.rerun()
+                        else:
+                            st.error("Could not remove the image — "
+                                     "the story may have been deleted.")
+    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
+        st.caption("No images yet — try Reset or upload manually below.")
+
+    # News links: ONE horizontal scroll row. Each verified link is a chip
+    # (title + source, opens the article) with a × that removes it.
+    # Update Hashtags/Images never touch these — individual removal is
+    # manual only (×). Reset re-runs the link verifier fresh for the topic.
+    links = [lk for lk in (meta.get("news_links") or []) if isinstance(lk, dict)]
+    if links:
+        st.markdown('<div class="lib-section">News Links</div>', unsafe_allow_html=True)
+        st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        _lcols = st.columns(len(links))
+        for _i, (_lc, _lk) in enumerate(zip(_lcols, links)):
+            _ltitle = _lk.get("title", "News link") or "News link"
+            _lsrc = _lk.get("source", "") or ""
+            _lurl = (_lk.get("url") or "").strip()
+            _label = f"{_ltitle} ({_lsrc})" if _lsrc else _ltitle
+            with _lc:
+                st.markdown(
+                    f'<span class="lib-chip"><a href="{_html.escape(_lurl, quote=True)}" '
+                    f'target="_blank" rel="noopener">{_html.escape(_label)}</a></span>',
+                    unsafe_allow_html=True)
+                if _overlay_button("lib-x-r", f"lib_xlink_{story_id}_{_i}", "×",
+                                   help="Remove this news link"):
+                    try:
+                        lib.remove_news_link(story_id, _lurl)
+                    except ValueError as e:
+                        st.error(str(e))
+                    else:
+                        st.rerun()
+    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
+        st.caption("No news links yet.")
+
     # Whole script — always through the color-coded renderer so dialogue
     # never falls back to plain markdown.
-    script_md = story["script"].strip()
     if script_md:
         st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
         _render_full_script(script_md)
@@ -993,101 +1359,6 @@ def _render_story_detail(story_id: str) -> None:
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
                     unsafe_allow_html=True)
-
-    # Hashtags sit below the story (macOS HIG: centered, quiet chips).
-    tags = meta.get("hashtags") or []
-    if tags:
-        st.markdown('<div class="lib-section">Hashtags</div>', unsafe_allow_html=True)
-        st.markdown('<div style="text-align:center">' +
-                    "".join(f'<span class="lib-chip">{t}</span>' for t in tags) +
-                    '</div>', unsafe_allow_html=True)
-
-    # Share: verified news link(s) + hashtags, ready to paste into a post.
-    st.markdown('<div class="lib-section">Share</div>', unsafe_allow_html=True)
-    _share_text = _compose_news_tags_text(meta)
-    if _share_text:
-        _copy_button("Copy News Link + Hashtags", _share_text, f"n-{story_id}")
-        st.code(_share_text)
-    else:
-        st.caption("No news links or hashtags to copy yet.")
-
-    # Copy options: the full final-stage script, pure — nothing added.
-    if script_md:
-        st.markdown('<div class="lib-section">Copy</div>', unsafe_allow_html=True)
-        cc1, cc2, cc3, cc4 = st.columns(4)
-        with cc1:
-            _copy_button("Script", _script_plain_text(script_md), f"s-{story_id}")
-        with cc2:
-            _copy_button("Script + Media", _compose_share_text(meta, script_md, True, False), f"m-{story_id}")
-        with cc3:
-            _copy_button("Script + Tags", _compose_share_text(meta, script_md, False, True), f"h-{story_id}")
-        with cc4:
-            _copy_button("All", _compose_share_text(meta, script_md, True, True), f"a-{story_id}")
-
-    # Images + news links at the bottom
-    st.markdown('<div class="lib-section">Media &amp; Links</div>', unsafe_allow_html=True)
-    img_urls = meta.get("image_urls") or []
-    uploaded = meta.get("uploaded_images") or []
-    if img_urls:
-        st.caption("Auto-fetched from news — remove any to overwrite, edit an address, or upload your own below.")
-        for i, url in enumerate(img_urls):
-            edit_key = f"lib_editimg_{story_id}_{i}"
-            if st.session_state.get(edit_key):
-                st.text_input("Image address", value=url,
-                              key=f"lib_edimg_url_{story_id}_{i}")
-                ec1, ec2 = st.columns(2)
-                with ec1:
-                    if st.button("Save", key=f"lib_edimg_save_{story_id}_{i}"):
-                        try:
-                            new_url = st.session_state.get(
-                                f"lib_edimg_url_{story_id}_{i}", "")
-                            lib.update_fetched_image_url(story_id, i, new_url)
-                        except ValueError as e:
-                            st.error(str(e))
-                        else:
-                            st.session_state.pop(edit_key, None)
-                            st.rerun()
-                with ec2:
-                    if st.button("Cancel", key=f"lib_edimg_cancel_{story_id}_{i}"):
-                        st.session_state.pop(edit_key, None)
-                        st.rerun()
-                continue
-            ic1, ic2 = st.columns([5, 1])
-            with ic1:
-                st.image(url, width=220)
-            with ic2:
-                if st.button("Edit", key=f"lib_edimg_{story_id}_{i}",
-                             help="Edit this image's address"):
-                    st.session_state[edit_key] = True
-                    st.rerun()
-                if st.button("✕", key=f"lib_rmimg_{story_id}_{i}",
-                             help="Remove this fetched image"):
-                    lib.remove_fetched_image(story_id, url)
-                    st.rerun()
-    for i, f in enumerate(uploaded):
-        p = lib.media_path(story_id, f)
-        if not p:
-            continue
-        uc1, uc2 = st.columns([5, 1])
-        with uc1:
-            st.image(str(p), width=220)
-        with uc2:
-            if st.button("✕", key=f"lib_rmup_{story_id}_{i}",
-                         help="Remove this uploaded image"):
-                lib.remove_uploaded_image(story_id, f)
-                st.rerun()
-    if not img_urls and not uploaded and meta.get("enrichment_status") not in lib.BUSY_STATES:
-        st.caption("No images yet — try ↻ Retry or upload manually below.")
-    links = meta.get("news_links") or []
-    if links:
-        for lk in links:
-            title = lk.get("title", "News link")
-            url = lk.get("url", "")
-            src = lk.get("source", "")
-            label = f"{title} ({src})" if src else title
-            st.markdown(f"[{label}]({url})" if url else label)
-    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
-        st.caption("No news links yet.")
 
     # Video upload + playback
     st.markdown('<div class="lib-section">Video</div>', unsafe_allow_html=True)
@@ -1117,8 +1388,8 @@ def _render_story_detail(story_id: str) -> None:
         st.success(f"Attached {len(up_imgs)} image(s).")
         st.rerun()
 
-    # (All primary actions — Edit, Update Hashtags, Update Images, Retry
-    # Media, Delete — live in the detail toolbar at the top.)
+    # (Refresh actions live in the detail toolbar at the top; Share/Copy
+    # actions sit in the Actions row just below it.)
 
     # Auto-poll while a refresh is in flight. The daemon worker thread
     # cannot trigger st.rerun() itself, so without this the page would

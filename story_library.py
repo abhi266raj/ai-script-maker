@@ -479,6 +479,43 @@ def remove_uploaded_image(story_id: str, filename: str) -> bool:
     return True
 
 
+def remove_hashtag(story_id: str, tag: str) -> bool:
+    """Remove one hashtag from a story's tag list (manual user removal).
+
+    Fails loudly with ValueError when the story is unknown or the tag is
+    not on it — the caller surfaces the error instead of silently
+    pretending the tag is gone.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise ValueError(f"Unknown story: {story_id!r}")
+    tags = [t for t in (story["meta"].get("hashtags") or []) if t]
+    if tag not in tags:
+        raise ValueError(f"Hashtag {tag!r} is not on this story.")
+    tags = [t for t in tags if t != tag]
+    update_story_fields(story_id, hashtags=tags)
+    return True
+
+
+def remove_news_link(story_id: str, url: str) -> bool:
+    """Remove one verified news link (manual user removal ONLY).
+
+    Refresh/reset workers must NEVER call this — individual news links are
+    only ever removed by the user. Fails loudly with ValueError when the
+    story is unknown or the URL is not among its links.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise ValueError(f"Unknown story: {story_id!r}")
+    links = [lk for lk in (story["meta"].get("news_links") or [])
+             if isinstance(lk, dict)]
+    if not any((lk.get("url") or "") == url for lk in links):
+        raise ValueError("That news link is not on this story.")
+    links = [lk for lk in links if (lk.get("url") or "") != url]
+    update_story_fields(story_id, news_links=links)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Post-save enrichment (background threads; best-effort; never blocks save)
 # ---------------------------------------------------------------------------
@@ -1382,12 +1419,15 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
                 changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
             elif kind == "images":
                 changed, note = refresh_images(story_id, topic)
+            elif kind == "reset":
+                changed, note = _do_reset(story_id, topic, ai_engine=ai_engine)
             else:
                 changed, note = False, f"Unknown refresh kind: {kind!r}."
             status = "succeeded" if changed else "no_change"
         except Exception as e:
             status = "failed"
-            label = "Hashtag" if kind == "hashtags" else "Image"
+            label = {"hashtags": "Hashtag", "images": "Image",
+                     "reset": "Reset"}.get(kind, kind)
             note = f"{label} refresh failed: {e}"
         try:
             update_story_fields(story_id, enrichment_status=status,
@@ -1400,20 +1440,23 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
 
 def start_refresh(story_id: str, kind: str,
                   ai_engine: Optional[str] = None) -> Tuple[bool, str]:
-    """Kick off a background hashtag/image refresh. Never raises.
+    """Kick off a background hashtag/image/reset refresh. Never raises.
 
-    ``kind`` is "hashtags" or "images". ``ai_engine`` (an engine mode string
-    or None) enables AI-assisted hashtag suggestions for the hashtags kind —
-    None means the "Enable AI processing" toggle is off, in which case the
-    worker fails loudly with a clear message instead of silently falling
-    back. The fetch runs in a daemon thread, so changing tabs mid-refresh
-    won't stop it. Falls back to the story title when ``source_topic`` is
-    missing so older stories can still refresh.
+    ``kind`` is "hashtags", "images" or "reset". ``ai_engine`` (an engine
+    mode string or None) enables AI-assisted hashtag suggestions for the
+    hashtags and reset kinds — None means the "Enable AI processing"
+    toggle is off, in which case the worker fails loudly with a clear
+    message instead of silently falling back. The "reset" kind
+    destructively clears all hashtags, fetched images and news links and
+    re-fetches them fresh (manual uploads are never touched). The fetch
+    runs in a daemon thread, so changing tabs mid-refresh won't stop it.
+    Falls back to the story title when ``source_topic`` is missing so
+    older stories can still refresh.
 
     Returns (started, reason): ``reason`` is "" when the refresh started,
     otherwise a human-readable explanation of why it could not start.
     """
-    if kind not in ("hashtags", "images"):
+    if kind not in ("hashtags", "images", "reset"):
         return False, f"Unknown refresh kind: {kind!r}."
     try:
         story = load_story(story_id)
@@ -1440,63 +1483,86 @@ def start_refresh(story_id: str, kind: str,
         return False, f"Could not start refresh: {type(e).__name__}: {e}"
 
 
-def _do_media_refresh(story_id: str, topic: str,
-                      ai_engine: Optional[str] = None) -> Tuple[bool, str]:
-    """Retry path: refresh hashtags + images ONLY.
+def _do_reset(story_id: str, topic: str,
+              ai_engine: Optional[str] = None) -> Tuple[bool, str]:
+    """Destructive reset: discard ALL hashtags, fetched images and news
+    links, then re-fetch all three rows fresh.
 
-    Never touches news_links and never touches the story content.
-    Returns (changed, note) describing the outcome (fail loudly).
+    - Hashtags: every stored tag is discarded; fresh AI discovery runs.
+    - Fetched images: ``image_urls`` is discarded and re-extracted fresh.
+      Manually uploaded images live in the separate ``uploaded_images``
+      field and are NEVER touched.
+    - News links: the link verifier re-runs fresh for the topic.
 
-    Raises RuntimeError when no AI engine is configured: the retry
-    refreshes hashtags through AI discovery, and with AI processing off
-    there is nothing honest to do — so it fails loudly and changes
-    nothing instead of silently serving deterministic tags.
+    The screenplay, story content and ``uploaded_images`` are never
+    written. The three rows are written in ONE ``update_story_fields``
+    call, so a failure partway leaves the story untouched (fail loudly).
+
+    Returns (changed, note). ``changed`` compares the new rows against
+    the old ones — identical re-fetch results report ``no_change``.
+
+    Raises RuntimeError when no AI engine is configured (the "Enable AI
+    processing" toggle is off): discovering trending hashtags without
+    the AI is impossible, so this fails loudly with the same message as
+    Update Hashtags instead of silently serving deterministic tags.
+    Nothing is changed in that case.
     """
     story = load_story(story_id)
     if not story:
-        raise RuntimeError("Retry failed: story not found.")
+        raise RuntimeError("Reset failed: story not found.")
     if ai_engine is None:
         raise RuntimeError(_AI_DISABLED_MSG)
     meta = story["meta"]
-    image_note = ""
-    try:
-        image_urls = _fetch_images_for_story(story, topic)
-    except TimeoutError as e:
-        image_urls = []
-        image_note = f"Image fetch timed out ({e}); kept the existing ones."
+    topic = (topic or meta.get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("Reset failed: no topic to re-fetch media for.")
+
+    old_tags = [t for t in (meta.get("hashtags") or []) if t]
+    old_images = list(meta.get("image_urls") or [])
+    old_urls = [lk.get("url") for lk in (meta.get("news_links") or [])
+                if isinstance(lk, dict)]
+
+    # 1. Hashtags: discard all, fresh AI discovery.
     new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
-    merged_tags = list(meta.get("hashtags") or [])
-    tags_added = 0
-    for t in new_tags:
-        if t not in merged_tags:
-            merged_tags.append(t)
-            tags_added += 1
-    merged_images = list(meta.get("image_urls") or [])
-    images_added = 0
-    for u in image_urls:
-        if u not in merged_images:
-            merged_images.append(u)
-            images_added += 1
+    new_tags = [t for t in dict.fromkeys(new_tags) if t]
+
+    # 2. Fetched images: discard, fresh article-image extraction.
+    #    A TimeoutError propagates: the whole reset fails loudly and
+    #    nothing is written.
+    new_images = list(_fetch_images_for_story(story, topic) or [])
+
+    # 3. News links: re-run the link verifier fresh for the topic.
+    #    Best-effort by contract: [] on failure means an empty row.
+    articles = _fetch_news_articles(topic, limit=6)
+    new_links = [{
+        "title": getattr(a, "title", "") or "",
+        "url": getattr(a, "link", "") or "",
+        "source": getattr(a, "source", "") or "",
+    } for a in articles[:6]]
+    new_urls = [lk["url"] for lk in new_links]
+
     update_story_fields(
         story_id,
-        image_urls=merged_images,
-        hashtags=merged_tags,
+        hashtags=new_tags,
+        image_urls=new_images,
+        news_links=new_links,
     )
-    parts = []
-    if image_note:
-        parts.append(image_note)
-    elif images_added:
-        parts.append(f"Added {images_added} new image(s); kept "
-                     f"{len(merged_images) - images_added} existing.")
-    else:
-        parts.append("No new images found — kept the existing ones.")
-    parts.append(f"{tags_added} new hashtag(s) added."
-                 if tags_added else "No new hashtags found — kept the existing ones.")
+
+    changed = (new_tags != old_tags or new_images != old_images
+               or new_urls != old_urls)
+    parts = [f"Reset re-fetched {len(new_tags)} hashtag(s), "
+             f"{len(new_images)} image(s) and {len(new_links)} news link(s)."]
+    if not new_tags:
+        parts.append("No hashtags found — row cleared.")
+    if not new_images:
+        parts.append("No images found — fetched row cleared (uploads kept).")
+    if not new_links:
+        parts.append("No news links found — row cleared.")
+    if not changed:
+        parts.append("Everything already fresh — nothing changed.")
     if ai_note:
         parts.append(ai_note)
-    changed = bool(images_added or tags_added)
     return changed, " ".join(parts)
-
 
 def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     """Post-save enrichment body: news links + images + hashtags.
@@ -1583,38 +1649,3 @@ def start_enrichment(story_id: str, topic: str) -> Tuple[bool, str]:
         return True, ""
     except Exception as e:
         return False, f"Could not start enrichment: {type(e).__name__}: {e}"
-
-
-def retry_enrichment(story_id: str, ai_engine: Optional[str] = None) -> Tuple[bool, str]:
-    """Re-run the hashtag + image fetch for a story — and nothing else.
-
-    News links and the story content are never touched by a retry.
-    ``ai_engine`` (an engine mode string or None) enables AI-assisted
-    hashtag suggestions — None means the "Enable AI processing" toggle is
-    off, in which case the retry fails loudly instead of silently falling
-    back. The outcome is recorded in the story's ``refresh_note`` so a
-    retry never finishes silently.
-
-    Returns (started, reason): ``reason`` is "" when the retry started,
-    otherwise a human-readable explanation.
-    """
-    story = load_story(story_id)
-    if not story:
-        return False, "Story not found."
-    if (story["meta"].get("enrichment_status") or "") in BUSY_STATES:
-        return False, "A refresh is already running — try again shortly."
-    topic = (story["meta"].get("source_topic") or story["meta"].get("title") or "").strip()
-    if not topic:
-        return False, "No topic or title to retry."
-    try:
-        from functools import partial
-        _check_id(story_id)
-        update_story_fields(story_id, enrichment_status="running", refresh_kind="all")
-        t = threading.Thread(
-            target=_enrich_worker,
-            args=(story_id, topic, partial(_do_media_refresh, ai_engine=ai_engine)),
-            daemon=True, name=f"retry-{story_id}")
-        t.start()
-        return True, ""
-    except Exception as e:
-        return False, f"Could not start retry: {type(e).__name__}: {e}"

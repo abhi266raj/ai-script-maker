@@ -285,33 +285,7 @@ def test_refresh_worker_busy_lock_leaves_state_untouched(libdir):
 
 
 # ---------------------------------------------------------------------------
-# retry path: notes recorded, links/content untouched
-# ---------------------------------------------------------------------------
-
-def test_do_media_refresh_returns_note_and_preserves_links(libdir, monkeypatch):
-    links = [{"title": "Exact story", "url": "https://example.com/exact",
-              "source": "Example"}]
-    sid = _make_story(news_links=links, hashtags=["#DogShowdown"])
-    monkeypatch.setattr(lib, "_fetch_images_for_story", lambda story, topic, **k: [])
-    monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: (["#NewTag"], ""))
-    changed, note = lib._do_media_refresh(sid, "chubby dogs voting contest",
-                                          ai_engine="agy_only")
-    assert changed is True
-    assert isinstance(note, str) and note
-    meta = lib.load_story(sid)["meta"]
-    assert meta["news_links"] == links, "retry must never touch verified links"
-    assert "#NewTag" in meta["hashtags"]
-    assert "#DogShowdown" in meta["hashtags"]
-
-
-def test_do_media_refresh_ai_off_fails_loudly(libdir):
-    sid = _make_story()
-    with pytest.raises(RuntimeError, match="AI processing is disabled"):
-        lib._do_media_refresh(sid, "chubby dogs voting contest", ai_engine=None)
-
-
-def test_enrich_worker_records_retry_note(libdir):
+def test_enrich_worker_records_work_note(libdir):
     sid = _make_story()
     lib._enrich_worker(sid, "chubby dogs voting contest",
                        lambda s, t: (True, "Images updated (2 found)."))
@@ -477,26 +451,6 @@ def test_refresh_images_no_change_when_nothing_new(libdir, monkeypatch):
     assert changed is False
     assert lib.load_story(sid)["meta"]["image_urls"] == [
         "https://img.example/old.jpg"]
-
-
-def test_do_media_refresh_merges_images(libdir, monkeypatch):
-    sid = _make_story(image_urls=["https://img.example/old.jpg"],
-                      news_links=[{"title": "T", "url": "https://example.com/x",
-                                   "source": "E"}])
-    monkeypatch.setattr(lib, "_fetch_images_for_story",
-                        lambda story, topic, **k: ["https://img.example/new.jpg"])
-    monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: ([], ""))
-    changed, note = lib._do_media_refresh(sid, "chubby dogs voting contest",
-                                          ai_engine="agy_only")
-    assert changed is True
-    meta = lib.load_story(sid)["meta"]
-    assert meta["image_urls"] == ["https://img.example/old.jpg",
-                                 "https://img.example/new.jpg"]
-    assert "Added 1 new image(s)" in note
-    # Retry never touches verified links or the script.
-    assert meta["news_links"][0]["url"] == "https://example.com/x"
-    assert "AARAV" in lib.load_story(sid)["script"]
 
 
 # ---------------------------------------------------------------------------
@@ -1019,6 +973,8 @@ class _FakeSt:
         self.reran = False
         self.popover_kwargs = None
         self.buttons = []  # (label, key) in render order
+        self.link_buttons = []  # (label, url) in render order
+        self.codes = []
 
     def markdown(self, *a, **k):
         pass
@@ -1051,6 +1007,13 @@ class _FakeSt:
         self.popover_kwargs = {"label": label, **k}
         return _FakeCtx()
 
+    def link_button(self, label, url, **k):
+        self.link_buttons.append((label, url))
+        return False
+
+    def code(self, body, **k):
+        self.codes.append(body)
+
 
 def _ui_with_fake_st(clicks=()):
     """Import library_ui bound to a fake streamlit; restores sys.modules."""
@@ -1060,7 +1023,7 @@ def _ui_with_fake_st(clicks=()):
     try:
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
-                     "button", "columns", "popover"):
+                     "button", "columns", "popover", "link_button", "code"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -1151,3 +1114,297 @@ def test_confirm_delete_all_removes_everything(libdir):
     lui._confirm_delete_all()
     assert list((libdir / "stories").glob("*.md")) == []
     assert fake.successes == ["Deleted 2 stories."]
+# remove_hashtag / remove_news_link: manual per-item removal (fail loudly)
+# ---------------------------------------------------------------------------
+
+def test_remove_hashtag_removes_only_that_tag(libdir):
+    sid = _make_story(hashtags=["#DogShowdown", "#ChubbyDogs", "#Funny"])
+    assert lib.remove_hashtag(sid, "#ChubbyDogs") is True
+    assert lib.load_story(sid)["meta"]["hashtags"] == ["#DogShowdown", "#Funny"]
+
+
+def test_remove_hashtag_unknown_story_raises(libdir):
+    with pytest.raises(ValueError):
+        lib.remove_hashtag("nope-not-a-story", "#DogShowdown")
+
+
+def test_remove_hashtag_missing_tag_raises(libdir):
+    sid = _make_story(hashtags=["#DogShowdown"])
+    with pytest.raises(ValueError):
+        lib.remove_hashtag(sid, "#Nope")
+
+
+def test_remove_hashtag_leaves_everything_else_untouched(libdir):
+    sid = _make_story(hashtags=["#A", "#B"],
+                      news_links=[{"title": "T", "url": "https://example.com/t"}],
+                      script_md="AARAV: hello")
+    lib.remove_hashtag(sid, "#A")
+    meta = lib.load_story(sid)["meta"]
+    assert meta["hashtags"] == ["#B"]
+    assert meta["news_links"] == [{"title": "T", "url": "https://example.com/t"}]
+    assert meta["title"] == "Dog Showdown Reel"
+
+
+def test_remove_news_link_removes_only_that_link(libdir):
+    sid = _make_story(news_links=[
+        {"title": "A", "url": "https://example.com/a", "source": "Ex"},
+        {"title": "B", "url": "https://example.com/b", "source": "Ex"},
+    ])
+    assert lib.remove_news_link(sid, "https://example.com/a") is True
+    remaining = lib.load_story(sid)["meta"]["news_links"]
+    assert [lk["url"] for lk in remaining] == ["https://example.com/b"]
+
+
+def test_remove_news_link_unknown_story_raises(libdir):
+    with pytest.raises(ValueError):
+        lib.remove_news_link("nope-not-a-story", "https://example.com/a")
+
+
+def test_remove_news_link_missing_url_raises(libdir):
+    sid = _make_story(news_links=[{"title": "A", "url": "https://example.com/a"}])
+    with pytest.raises(ValueError):
+        lib.remove_news_link(sid, "https://example.com/zzz")
+
+
+def test_remove_news_link_last_link_allowed(libdir):
+    sid = _make_story(news_links=[{"title": "A", "url": "https://example.com/a"}],
+                      hashtags=["#DogShowdown"])
+    assert lib.remove_news_link(sid, "https://example.com/a") is True
+    assert lib.load_story(sid)["meta"]["news_links"] == []
+
+
+# ---------------------------------------------------------------------------
+# reset: destructive clear + fresh re-fetch of all three rows
+# ---------------------------------------------------------------------------
+
+class _FakeArticle:
+    def __init__(self, title, link, source):
+        self.title = title
+        self.link = link
+        self.source = source
+
+
+def _reset_mocks(monkeypatch, tags, images, articles):
+    monkeypatch.setattr(lib, "_suggest_hashtags",
+                        lambda story, topic, ai_engine=None: (tags, "AI tags."))
+    monkeypatch.setattr(lib, "_fetch_images_for_story",
+                        lambda story, topic, **k: images)
+    monkeypatch.setattr(lib, "_fetch_news_articles",
+                        lambda topic, limit=6: articles)
+
+
+def test_do_reset_clears_and_refetches_all_rows(libdir, monkeypatch):
+    sid = _make_story(
+        hashtags=["#StaleTag"],
+        image_urls=["https://img.example/stale.jpg"],
+        news_links=[{"title": "Old", "url": "https://example.com/old",
+                     "source": "Ex"}],
+        script_md="AARAV: hello",
+    )
+    lib.update_story_fields(sid, uploaded_images=["upload1.png"])
+    _reset_mocks(monkeypatch,
+                 tags=["#FreshOne", "#FreshTwo"],
+                 images=["https://img.example/fresh.jpg"],
+                 articles=[_FakeArticle("New story", "https://example.com/new",
+                                        "Ex")])
+    changed, note = lib._do_reset(sid, "chubby dogs voting contest",
+                                  ai_engine="agy_only")
+    assert changed is True
+    assert "2 hashtag(s), 1 image(s) and 1 news link(s)" in note
+    story = lib.load_story(sid)
+    meta = story["meta"]
+    # Stale rows discarded, fresh rows in place.
+    assert meta["hashtags"] == ["#FreshOne", "#FreshTwo"]
+    assert meta["image_urls"] == ["https://img.example/fresh.jpg"]
+    assert meta["news_links"] == [{"title": "New story",
+                                   "url": "https://example.com/new",
+                                   "source": "Ex"}]
+    # Never touched: manual uploads, screenplay, story content.
+    assert meta["uploaded_images"] == ["upload1.png"]
+    assert "AARAV: hello" in story["script"]
+
+
+def test_do_reset_ai_off_fails_loudly_and_changes_nothing(libdir):
+    sid = _make_story(hashtags=["#KeepMe"],
+                      image_urls=["https://img.example/k.jpg"])
+    with pytest.raises(RuntimeError, match="AI processing is disabled"):
+        lib._do_reset(sid, "chubby dogs voting contest", ai_engine=None)
+    meta = lib.load_story(sid)["meta"]
+    assert meta["hashtags"] == ["#KeepMe"]
+    assert meta["image_urls"] == ["https://img.example/k.jpg"]
+
+
+def test_do_reset_unknown_story_raises(libdir):
+    with pytest.raises(RuntimeError, match="story not found"):
+        lib._do_reset("nope-not-a-story", "topic", ai_engine="agy_only")
+
+
+def test_do_reset_no_change_when_refetch_identical(libdir, monkeypatch):
+    sid = _make_story(hashtags=["#Same"],
+                      image_urls=["https://img.example/s.jpg"],
+                      news_links=[{"title": "T", "url": "https://example.com/t",
+                                   "source": "Ex"}])
+    _reset_mocks(monkeypatch, tags=["#Same"],
+                 images=["https://img.example/s.jpg"],
+                 articles=[_FakeArticle("T", "https://example.com/t", "Ex")])
+    changed, note = lib._do_reset(sid, "chubby dogs voting contest",
+                                  ai_engine="agy_only")
+    assert changed is False
+    assert "nothing changed" in note
+
+
+def test_do_reset_empty_results_clear_rows(libdir, monkeypatch):
+    sid = _make_story(hashtags=["#Old"],
+                      image_urls=["https://img.example/o.jpg"],
+                      news_links=[{"title": "T", "url": "https://example.com/t"}])
+    _reset_mocks(monkeypatch, tags=[], images=[], articles=[])
+    changed, note = lib._do_reset(sid, "chubby dogs voting contest",
+                                  ai_engine="agy_only")
+    assert changed is True
+    meta = lib.load_story(sid)["meta"]
+    assert meta["hashtags"] == []
+    assert meta["image_urls"] == []
+    assert meta["news_links"] == []
+    assert "row cleared" in note
+
+
+def test_start_refresh_reset_runs_to_honest_state(libdir, monkeypatch):
+    import time
+    sid = _make_story(hashtags=["#Old"])
+    lib.update_story_fields(sid, enrichment_status="succeeded")  # idle, not busy
+    _reset_mocks(monkeypatch, tags=["#New"], images=[], articles=[])
+    ok, reason = lib.start_refresh(sid, "reset", ai_engine="agy_only")
+    assert ok, reason
+    for _ in range(200):
+        meta = lib.load_story(sid)["meta"]
+        if meta.get("enrichment_status") not in lib.BUSY_STATES:
+            break
+        time.sleep(0.05)
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "succeeded"
+    assert meta["refresh_kind"] == ""
+    assert meta["hashtags"] == ["#New"]
+    assert "Reset re-fetched" in meta["refresh_note"]
+
+
+def test_refresh_worker_reset_failure_is_failed_not_done(libdir):
+    # AI off -> _do_reset raises the disabled message -> failed, and the
+    # stored rows are untouched (the write never happened).
+    sid = _make_story(hashtags=["#KeepMe"])
+    lib._refresh_worker(sid, "reset", "chubby dogs voting contest",
+                        ai_engine=None)
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "failed"
+    assert meta["refresh_kind"] == ""
+    assert "Reset refresh failed" in meta["refresh_note"]
+    assert "AI processing is disabled" in meta["refresh_note"]
+    assert meta["hashtags"] == ["#KeepMe"]
+
+
+# ---------------------------------------------------------------------------
+# whatsapp share link + confirm popover (fail_label)
+# ---------------------------------------------------------------------------
+
+def test_whatsapp_share_url_carries_exact_text():
+    lui, _fake = _ui_with_fake_st()
+    text = ("https://example.com/a\nhttps://example.com/b\n\n"
+            "#DogShowdown #Funny")
+    url = lui._whatsapp_share_url(text)
+    assert url.startswith("https://wa.me/?text=")
+    import urllib.parse as up
+    assert up.unquote(url.split("?text=", 1)[1]) == text
+
+
+def test_confirm_popover_fail_label_is_used():
+    lui, fake = _ui_with_fake_st(clicks=("rp-yes",))
+
+    def _boom():
+        raise RuntimeError("nope")
+
+    kw = dict(trigger_label="Reset", popover_key="rp", title="T", message="M",
+              on_yes=_boom, fail_label="Reset")
+    lui._confirm_popover(**kw)  # run 1: arm the confirmation
+    fake._clicks.clear()
+    lui._confirm_popover(**kw)  # run 2: on_yes raises -> loud error, reopened
+    assert fake.errors == ["Reset failed: nope"]
+    assert fake.session_state.get("rp") is True
+
+
+# ---------------------------------------------------------------------------
+# share column + reset popover widget wiring (fake streamlit)
+# ---------------------------------------------------------------------------
+
+def test_share_column_renders_copy_and_whatsapp(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    copies = []
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: copies.append((label, text, key)))
+    share_text = "https://example.com/a\n\n#DogShowdown #Funny"
+    lui._render_share_column("sid1", share_text)
+    # Copy button gets the exact share text…
+    assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
+    # …and the WhatsApp link carries the exact same text, URL-encoded.
+    assert fake.link_buttons == [("Send via WhatsApp",
+                                  lui._whatsapp_share_url(share_text))]
+    import urllib.parse as up
+    sent = up.unquote(fake.link_buttons[0][1].split("?text=", 1)[1])
+    assert sent == share_text
+    # Preview shows the same text.
+    assert fake.codes == [share_text]
+
+
+def test_share_column_empty_state(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: (_ for _ in ()).throw(
+                            AssertionError("copy must not render")))
+    lui._render_share_column("sid1", "")
+    assert fake.link_buttons == []
+    assert fake.codes == []
+
+
+def test_reset_popover_idle_wiring():
+    lui, fake = _ui_with_fake_st()
+    lui._render_reset_popover("sid1", busy=False, refresh_kind="",
+                              ai_engine=None)
+    assert fake.popover_kwargs["label"] == "Reset"
+    assert fake.popover_kwargs["key"] == "lib_resetpop_sid1"
+    assert fake.popover_kwargs["disabled"] is False
+    assert fake.popover_kwargs["on_change"] == "rerun"
+    assert ("Yes", "lib_resetpop_sid1-yes") in fake.buttons
+    assert ("No", "lib_resetpop_sid1-no") in fake.buttons
+
+
+def test_reset_popover_busy_shows_resetting_and_disabled():
+    lui, fake = _ui_with_fake_st()
+    lui._render_reset_popover("sid1", busy=True, refresh_kind="reset",
+                              ai_engine=None)
+    assert fake.popover_kwargs["label"] == "Resetting…"
+    assert fake.popover_kwargs["disabled"] is True
+
+
+def test_reset_popover_yes_kicks_reset_refresh(monkeypatch):
+    lui, fake = _ui_with_fake_st(clicks=("lib_resetpop_sid1-yes",))
+    calls = []
+    monkeypatch.setattr(lui.lib, "start_refresh",
+                        lambda sid, kind, ai_engine=None: (
+                            calls.append((sid, kind, ai_engine)) or (True, "")))
+    kw = dict(story_id="sid1", busy=False, refresh_kind="", ai_engine="eng1")
+    lui._render_reset_popover(**kw)  # run 1: Yes clicked -> flags armed
+    fake._clicks.clear()
+    lui._render_reset_popover(**kw)  # run 2: confirmation consumed
+    assert calls == [("sid1", "reset", "eng1")]
+    assert fake.errors == []
+    assert fake.session_state.get("lib_resetpop_sid1") is not True
+
+
+def test_reset_popover_yes_failure_is_loud(monkeypatch):
+    lui, fake = _ui_with_fake_st(clicks=("lib_resetpop_sid1-yes",))
+    monkeypatch.setattr(lui.lib, "start_refresh",
+                        lambda sid, kind, ai_engine=None: (False, "boom"))
+    kw = dict(story_id="sid1", busy=False, refresh_kind="", ai_engine=None)
+    lui._render_reset_popover(**kw)  # run 1: arm the confirmation
+    fake._clicks.clear()
+    lui._render_reset_popover(**kw)  # run 2: start fails -> loud, reopened
+    assert fake.errors == ["Reset failed: Could not start the reset: boom"]
+    assert fake.session_state.get("lib_resetpop_sid1") is True
