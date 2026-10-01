@@ -364,9 +364,15 @@ def _render_story_detail(story_id: str) -> None:
     if tags:
         st.markdown("".join(f'<span class="lib-chip">{t}</span>' for t in tags), unsafe_allow_html=True)
 
-    # Enrichment pending state
-    if meta.get("enrichment_status") == "pending":
+    # Enrichment / refresh state
+    _status = meta.get("enrichment_status")
+    if _status == "pending":
         st.info("⏳ Fetching images & news links in the background…")
+    elif _status == "refreshing":
+        st.info("🔄 Refreshing in the background — feel free to switch tabs, it won't stop.")
+    _note = (meta.get("refresh_note") or "").strip()
+    if _note:
+        st.caption(f"🔄 Last refresh: {_note}")
 
     # Whole script; dialogue lines highlighted in a distinct color.
     script_md = story["script"].strip()
@@ -452,28 +458,24 @@ def _render_story_detail(story_id: str) -> None:
         st.success(f"Attached {len(up_imgs)} image(s).")
         st.rerun()
 
-    # Refresh / retry controls
+    # Refresh / retry controls (all background — safe to switch tabs mid-fetch)
     r1, r2, r3 = st.columns(3)
     with r1:
         if st.button("#️⃣ Update hashtags", key=f"lib_tags_{story_id}",
                      help="Find trending hashtags for this story's topic and add them"):
-            with st.spinner("Finding trending hashtags…"):
-                added = lib.refresh_hashtags(story_id)
-            if added:
-                st.toast("Hashtags updated.")
+            if lib.start_refresh(story_id, "hashtags"):
+                st.toast("Looking for trending hashtags in the background…")
                 st.rerun()
             else:
-                st.warning("No new trending hashtags found — kept the existing ones.")
+                st.error("Could not start the hashtag refresh.")
     with r2:
         if st.button("🖼️ Update images", key=f"lib_imgs_{story_id}",
                      help="Re-fetch news images for this story's topic"):
-            with st.spinner("Fetching images…"):
-                updated = lib.refresh_images(story_id)
-            if updated:
-                st.toast("Images updated.")
+            if lib.start_refresh(story_id, "images"):
+                st.toast("Fetching images in the background…")
                 st.rerun()
             else:
-                st.warning("No images found — kept the existing ones.")
+                st.error("Could not start the image refresh.")
     with r3:
         if st.button("↻ Retry media fetch", key=f"lib_retry_{story_id}",
                      help="Re-run the hashtag + image fetch for this story"):

@@ -550,6 +550,63 @@ def refresh_images(story_id: str, topic: str = "") -> bool:
     return True
 
 
+def _refresh_worker(story_id: str, kind: str, topic: str) -> None:
+    """Background worker for a manual hashtag/image refresh. Never raises.
+
+    Runs in a daemon thread so tab switches (st.rerun) can't stop it.
+    The outcome is recorded in the story's ``refresh_note`` frontmatter field.
+    """
+    lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
+    if not lock.acquire(blocking=False):
+        try:
+            update_story_fields(story_id, enrichment_status="done",
+                                refresh_note="A refresh is already running — try again shortly.")
+        except Exception:
+            pass
+        return
+    try:
+        if kind == "hashtags":
+            ok = refresh_hashtags(story_id, topic)
+            note = "Hashtags updated." if ok else "No new trending hashtags found — kept the existing ones."
+        else:
+            ok = refresh_images(story_id, topic)
+            note = "Images updated." if ok else "No images found — kept the existing ones."
+    except Exception as e:
+        note = f"Refresh failed: {e}"
+    finally:
+        lock.release()
+    try:
+        update_story_fields(story_id, enrichment_status="done", refresh_note=note)
+    except Exception:
+        pass
+
+
+def start_refresh(story_id: str, kind: str) -> bool:
+    """Kick off a background hashtag/image refresh. Never raises.
+
+    ``kind`` is "hashtags" or "images". The fetch runs in a daemon thread,
+    so changing tabs mid-refresh won't stop it.
+    """
+    if kind not in ("hashtags", "images"):
+        return False
+    try:
+        story = load_story(story_id)
+        if not story:
+            return False
+        topic = (story["meta"].get("source_topic") or "").strip()
+        if not topic:
+            return False
+        _check_id(story_id)
+        update_story_fields(story_id, enrichment_status="refreshing", refresh_note="")
+        t = threading.Thread(
+            target=_refresh_worker, args=(story_id, kind, topic),
+            daemon=True, name=f"refresh-{kind}-{story_id}")
+        t.start()
+        return True
+    except Exception:
+        return False
+
+
 def _do_media_refresh(story_id: str, topic: str) -> None:
     """Retry path: refresh hashtags + images ONLY.
 
