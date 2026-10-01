@@ -615,7 +615,7 @@ def inject_library_css() -> None:
        marker, so no other button is touched — never a global rule.
        Glyphs inherit currentColor, so they follow the light/dark theme
        with no hard-coded color. The native popover chevron is Streamlit's
-       own SVG and is untouched (never force SVG fill/stroke). */
+       own and is untouched. */
     div[data-testid="stElementContainer"]:has([data-tbicon]) {
         display: none !important;
     }
