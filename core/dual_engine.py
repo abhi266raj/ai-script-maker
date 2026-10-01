@@ -74,6 +74,11 @@ CODEX_RATE_LIMIT_MARKERS = (
 )
 LOCAL_MODEL_TIMEOUT_SECONDS = 240
 REMOTE_MODEL_TIMEOUT_SECONDS = 120
+# On-device Apple Foundation Model availability probe budget. Cold-start /
+# first-run model init (which can include a model download) is far slower
+# than a warm generation, so this must not be a small value. The probe
+# retries exactly once on timeout before the model is declared unavailable.
+FM_PROBE_TIMEOUT_SECONDS = 30.0
 LOCAL_CONTEXT_CHAR_LIMIT = 12000
 LOCAL_GROUNDING_CHAR_LIMIT = 3500
 GROK_MODES = {
@@ -441,6 +446,25 @@ class DualEngine:
         self._codex_min_interval = float(os.environ.get("CODEX_MIN_INTERVAL_SECONDS", "1.0"))
         self._codex_max_retries = int(os.environ.get("CODEX_RATE_LIMIT_RETRIES", "5"))
 
+    def _run_fm_probe(self) -> subprocess.CompletedProcess:
+        """Run one on-device Apple Foundation Model availability probe.
+
+        Uses a harmless real generation because `fm ping` is rejected by
+        Apple's safety layer even when the model is healthy.
+
+        Raises:
+            subprocess.TimeoutExpired: the probe exceeded FM_PROBE_TIMEOUT_SECONDS.
+            OSError: the `fm` binary could not be launched.
+        """
+        return subprocess.run(
+            [self.fm_bin, "respond", "--no-stream", "Reply with exactly OK."],
+            capture_output=True,
+            text=True,
+            timeout=FM_PROBE_TIMEOUT_SECONDS,
+            stdin=subprocess.DEVNULL,
+            env=_get_subprocess_env(),
+        )
+
     def check_status(self, force: bool = False, check_fm: bool = True) -> Dict[str, Any]:
         """Check availability and active operational status of Local FM, Antigravity AGY, Grok, and Codex."""
         if force:
@@ -494,16 +518,13 @@ class DualEngine:
                 status["fm"]["message"] = "Restricted / non-responsive on this Mac"
             else:
                 try:
-                    # `ping` is rejected by Apple's safety layer even when the
-                    # model is healthy. Use a harmless real generation probe.
-                    probe = subprocess.run(
-                        [self.fm_bin, "respond", "--no-stream", "Reply with exactly OK."],
-                        capture_output=True,
-                        text=True,
-                        timeout=8.0,
-                        stdin=subprocess.DEVNULL,
-                        env=_get_subprocess_env(),
-                    )
+                    # First-run on-device model init (which can include a
+                    # model download) is slower than one probe budget, so
+                    # allow exactly one retry on timeout before giving up.
+                    try:
+                        probe = self._run_fm_probe()
+                    except subprocess.TimeoutExpired:
+                        probe = self._run_fm_probe()
                     output = probe.stdout.strip()
                     err_msg = probe.stderr.strip()
                     probe_details = err_msg or output or "No probe details returned"
@@ -521,6 +542,18 @@ class DualEngine:
                         status["fm"]["available"] = False
                         status["fm"]["message"] = f"Unavailable on this Mac: {probe_details}"
                         self._fm_restricted = True
+                except subprocess.TimeoutExpired as e:
+                    # A timeout means the model was too slow to initialize —
+                    # not proof it is missing or restricted. Say so honestly
+                    # instead of blaming the user's settings.
+                    status["fm"]["available"] = False
+                    status["fm"]["message"] = (
+                        "Probe timed out: the on-device model may still be initializing "
+                        "(first launch can download the model). Check that Apple Intelligence "
+                        "is enabled (Settings > Apple Intelligence & Siri) and try again. "
+                        f"Details: {e}"
+                    )
+                    self._fm_restricted = True
                 except Exception as e:
                     status["fm"]["available"] = False
                     status["fm"]["message"] = f"Probe failed: {e}"
@@ -987,7 +1020,7 @@ class DualEngine:
         Returns:
             (response_text, engine_used_description)
         """
-        # Ensure status is checked so _fm_restricted is set without wasting 8s on every call
+        # Ensure status is checked so _fm_restricted is set without re-running the FM availability probe on every call
         if mode not in {"agy_only", *GROK_MODES, *CODEX_MODES} and self._fm_restricted is None:
             self.check_status()
 
