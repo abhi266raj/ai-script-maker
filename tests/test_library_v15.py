@@ -985,12 +985,14 @@ class _FakeSt:
         self.successes = []
         self.reran = False
         self.popover_kwargs = None
+        self.popovers = []  # every popover's kwargs, in render order
         self.buttons = []  # (label, key) in render order
         self.link_buttons = []  # (label, url) in render order
         self.codes = []
+        self.markup = []  # raw markdown html, in render order
 
     def markdown(self, *a, **k):
-        pass
+        self.markup.append(a[0] if a else "")
 
     def caption(self, *a, **k):
         pass
@@ -1018,6 +1020,7 @@ class _FakeSt:
 
     def popover(self, label, **k):
         self.popover_kwargs = {"label": label, **k}
+        self.popovers.append(self.popover_kwargs)
         return _FakeCtx()
 
     def link_button(self, label, url, **k):
@@ -1326,7 +1329,9 @@ def test_whatsapp_share_url_carries_exact_text():
     text = ("https://example.com/a\nhttps://example.com/b\n\n"
             "#DogShowdown #Funny")
     url = lui._whatsapp_share_url(text)
-    assert url.startswith("https://wa.me/?text=")
+    # #28: deep-link into the installed Mac app, not the browser (wa.me).
+    assert url.startswith("whatsapp://send?text=")
+    assert "wa.me" not in url
     import urllib.parse as up
     assert up.unquote(url.split("?text=", 1)[1]) == text
 
@@ -1347,36 +1352,93 @@ def test_confirm_popover_fail_label_is_used():
 
 
 # ---------------------------------------------------------------------------
-# share column + reset popover widget wiring (fake streamlit)
+# share / copy dropdowns (fake streamlit) — #27/#28/#29/#30
 # ---------------------------------------------------------------------------
 
-def test_share_column_renders_copy_and_whatsapp(monkeypatch):
+def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     lui, fake = _ui_with_fake_st()
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: copies.append((label, text, key)))
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
-    lui._render_share_column("sid1", share_text)
+    lui._render_share_popover("sid1", share_text)
+    # Popover trigger is the self-describing dropdown (#30).
+    assert fake.popover_kwargs["label"] == "Share ⌄"
+    assert fake.popover_kwargs["key"] == "lib_sharepop_sid1"
     # Copy button gets the exact share text…
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
-    # …and the WhatsApp link carries the exact same text, URL-encoded.
+    # …and the WhatsApp link carries the exact same text, URL-encoded,
+    # deep-linking into the installed Mac app (#28).
     assert fake.link_buttons == [("Send via WhatsApp",
                                   lui._whatsapp_share_url(share_text))]
+    assert fake.link_buttons[0][1].startswith("whatsapp://send?text=")
     import urllib.parse as up
     sent = up.unquote(fake.link_buttons[0][1].split("?text=", 1)[1])
     assert sent == share_text
-    # Preview shows the same text.
-    assert fake.codes == [share_text]
+    # No share-text preview block anymore (#27).
+    assert fake.codes == []
 
 
-def test_share_column_empty_state(monkeypatch):
+def test_share_popover_empty_state(monkeypatch):
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
-    lui._render_share_column("sid1", "")
+    lui._render_share_popover("sid1", "")
+    assert fake.popover_kwargs["label"] == "Share ⌄"
     assert fake.link_buttons == []
     assert fake.codes == []
+
+
+def test_copy_popover_renders_four_actions(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    copies = []
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: copies.append((label, text, key)))
+    meta = {"hashtags": ["#DogShowdown", "#Funny"],
+            "image_urls": ["https://example.com/pic.jpg"],
+            "uploaded_images": []}
+    script_md = "**Hook:** hello"
+    lui._render_copy_popover("sid1", meta, script_md)
+    assert fake.popover_kwargs["label"] == "Copy ⌄"
+    assert fake.popover_kwargs["key"] == "lib_copypop_sid1"
+    labels = [c[0] for c in copies]
+    assert labels == ["Script", "Script + Tags", "Script + Media", "All"]
+    keys = [c[2] for c in copies]
+    assert keys == ["s-sid1", "h-sid1", "m-sid1", "a-sid1"]
+    # Copied texts are identical to the old flat buttons (#30).
+    plain = lui._script_plain_text(script_md)
+    assert copies[0][1] == plain
+    assert copies[1][1] == lui._compose_share_text(meta, script_md, False, True)
+    assert copies[2][1] == lui._compose_share_text(meta, script_md, True, False)
+    assert copies[3][1] == lui._compose_share_text(meta, script_md, True, True)
+    assert "#DogShowdown #Funny" in copies[1][1]
+    assert "https://example.com/pic.jpg" in copies[2][1]
+
+
+def test_copy_popover_empty_state(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: (_ for _ in ()).throw(
+                            AssertionError("copy must not render")))
+    lui._render_copy_popover("sid1", {}, "")
+    assert fake.popover_kwargs["label"] == "Copy ⌄"
+    assert fake.codes == []
+
+
+def test_action_dropdowns_have_no_actions_header(monkeypatch):
+    # #29: the vague "Actions" lib-section header is gone — the Share ⌄ /
+    # Copy ⌄ triggers are self-describing.
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: None)
+    meta = {"news_links": [{"url": "https://example.com/a"}],
+            "hashtags": ["#X"]}
+    lui._render_action_dropdowns("sid1", meta, "some script")
+    section_headers = [m for m in fake.markup if "lib-section" in m]
+    assert section_headers == []
+    popover_labels = [p["label"] for p in fake.popovers]
+    assert popover_labels == ["Share ⌄", "Copy ⌄"]
 
 
 def test_reset_popover_idle_wiring():
@@ -1497,17 +1559,18 @@ def test_image_cards_share_one_baseline(monkeypatch):
 
 
 def test_actions_row_buttons_share_38px_height(monkeypatch):
-    """The WhatsApp link button selector must include the sibling step
-    (it was missing, so the rule never matched), and the copy-button
-    iframe height must equal the 38px action system."""
+    """v1.6 (#27/#28/#30): the WhatsApp link button moved inside the Share
+    popover (portal — unreachable by the marker selector), so the old
+    marker-scoped 38px link-button rule is gone. The actions row still gets
+    its gap via the marker, and the copy-button iframe height still equals
+    the 38px action system."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_library_css(lui, monkeypatch)
-    # Per Streamlit's real DOM, the sibling after the marker's element
-    # container is stLayoutWrapper (not stElementContainer), and the
-    # WhatsApp link renders its <a> inside the link-button container.
+    # Gap rule for the Share ⌄ / Copy ⌄ trigger row survives…
     assert ('[data-marker="lib-actions"])\n'
-            '        + div[data-testid="stLayoutWrapper"] [data-testid="stLinkButton"] a') in css
-    assert "min-height: var(--lib-act-h)" in css
+            '        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]') in css
+    # …but the flat-layout link-button height rule is gone (dead selector).
+    assert '[data-testid="stLinkButton"] a' not in css
     assert lui._LIB_ACTION_BTN_H_PX == 38
 
 
