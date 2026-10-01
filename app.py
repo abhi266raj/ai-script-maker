@@ -27,6 +27,9 @@ from core.metrics import get_duration_budget
 from core.prompt_matrix import build_tailored_instruction
 from core.config import load_config, save_config, reset_to_defaults
 from tools.news_fetcher import news_fetcher
+# v1.5: Saved Stories Library (tab bar + storage + auto-save)
+import story_library  # noqa: F401
+from library_ui import render_tab_bar, render_library_page, maybe_autosave_story
 from core.workflow import reel_workflow
 from agents.dialogue_writer import strip_commenting_and_cta
 from core.screenplay_formatter import (
@@ -1521,6 +1524,14 @@ elif server_action == "restart":
         """,
         height=0,
     )
+    st.stop()
+
+# v1.5: macOS-style tab bar (Studio | Library). Library renders here and stops
+# the script so the Studio flow below runs untouched when Studio is selected.
+# (Placed after the server-action handlers so stop/restart pages take precedence.)
+_v15_view = render_tab_bar()
+if _v15_view == "library":
+    render_library_page()
     st.stop()
 
 srv_info = get_server_info()
@@ -3934,6 +3945,9 @@ with col_output:
         w_cnt = curr_script.word_count
         pacing_ok = w_cnt <= max_w
 
+
+        # v1.5: auto-save the finished story to the Library (once per result).
+        maybe_autosave_story(res, curr_script)
 
         st.markdown("### 🎬 Final Screenplay")
         st.caption("Your chosen format — 9:16 vertical reel · SCENE DETAIL · CHARACTERS & CLOTHING · sequential beats.")
