@@ -1426,12 +1426,13 @@ def _compose_share_text(meta: dict, script_md: str, with_media: bool, with_tags:
     return "\n\n".join(p for p in parts if p).strip()
 
 
-def _compose_news_tags_text(meta: dict) -> str:
-    """Share text: verified news link(s), one per line, then hashtags space-separated.
+def _compose_news_tags_text(meta: dict, title: str = "") -> str:
+    """Share text: title, then hashtags, then verified news link(s).
 
-    Formatted for pasting straight into a social-media post — links first,
-    hashtags after. Returns "" when the story has neither news links nor
-    hashtags, so the caller can say so plainly instead of copying nothing.
+    Formatted for pasting straight into a social-media post — title first,
+    hashtags space-separated on the next line, then one link per line.
+    Returns "" when the story has neither title, news links nor hashtags,
+    so the caller can say so plainly instead of copying nothing.
     """
     links = [
         (lk.get("url") or "").strip()
@@ -1441,10 +1442,13 @@ def _compose_news_tags_text(meta: dict) -> str:
     links = [u for u in dict.fromkeys(links) if u]
     tags = [t for t in (meta.get("hashtags") or []) if t]
     parts = []
-    if links:
-        parts.append("\n".join(links))
+    title = (title or "").strip()
+    if title:
+        parts.append(title)
     if tags:
         parts.append(" ".join(tags))
+    if links:
+        parts.append("\n".join(links))
     return "\n\n".join(parts)
 
 
@@ -1578,7 +1582,8 @@ def _render_story_detail(story_id: str) -> None:
         return
     meta = story["meta"]
     script_md = story["script"].strip()
-    _share_text = _compose_news_tags_text(meta)
+    _share_text = _compose_news_tags_text(
+        meta, meta.get("title", "Untitled Story") or "Untitled Story")
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
     # toolbar — hashtag/image/news refresh icons (#71, #80), Reset, Share,
