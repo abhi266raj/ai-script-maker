@@ -245,41 +245,48 @@ def _make_story_with_video(libdir, with_video=True):
     return sid
 
 
-def test_share_bot_sends_video_then_links(libdir, monkeypatch):
+def test_share_bot_sends_video_then_links(libdir, monkeypatch, tmp_path):
     lui = _library_ui_module()
     store = _prefs_double(monkeypatch, {"telegram_bot_token": "TOK",
                                         "telegram_chat_id": 99})
+    monkeypatch.setattr(tg, "DEFAULT_GROUPS_PATH", tmp_path / "groups.json")
     sid = _make_story_with_video(libdir, with_video=True)
     story = lib.load_story(sid)
     post = _ok_transport()
     monkeypatch.setattr(tg, "_httpx_post", post)
     msg = lui._share_via_telegram_bot(sid, story["meta"])
-    assert msg == ("Sent to Telegram: video + caption, then 1 news link.")
-    assert len(post.calls) == 2
+    assert msg == ("Sent to Telegram: video + caption, then 1 news link, "
+                   "then no groups to broadcast to (add the bot to a group).")
+    assert len(post.calls) == 3  # 2 DM sends + 1 group-discovery getUpdates
     assert post.calls[0]["url"].endswith("/sendVideo")
     assert post.calls[0]["data"]["caption"] == "Vid Story\n#Vid"
     assert post.calls[1]["url"].endswith("/sendMessage")
     assert "News1: https://n.example/1" in post.calls[1]["data"]["text"]
 
 
-def test_share_bot_without_video_sends_caption_as_text(libdir, monkeypatch):
+def test_share_bot_without_video_sends_caption_as_text(libdir, monkeypatch,
+                                                     tmp_path):
     lui = _library_ui_module()
     _prefs_double(monkeypatch, {"telegram_bot_token": "TOK",
                                 "telegram_chat_id": 99})
+    monkeypatch.setattr(tg, "DEFAULT_GROUPS_PATH", tmp_path / "groups.json")
     sid = _make_story_with_video(libdir, with_video=False)
     story = lib.load_story(sid)
     post = _ok_transport()
     monkeypatch.setattr(tg, "_httpx_post", post)
     msg = lui._share_via_telegram_bot(sid, story["meta"])
     assert "no video attached" in msg
-    assert len(post.calls) == 2
-    assert all(c["url"].endswith("/sendMessage") for c in post.calls)
+    assert len(post.calls) == 3  # 2 DM sends + 1 group-discovery getUpdates
+    assert all(c["url"].endswith("/sendMessage") for c in post.calls[:2])
+    assert post.calls[2]["url"].endswith("/getUpdates")
     assert post.calls[0]["data"]["text"] == "Vid Story\n#Vid"
 
 
-def test_share_bot_discovers_and_remembers_chat_id(libdir, monkeypatch):
+def test_share_bot_discovers_and_remembers_chat_id(libdir, monkeypatch,
+                                                    tmp_path):
     lui = _library_ui_module()
     store = _prefs_double(monkeypatch, {"telegram_bot_token": "TOK"})
+    monkeypatch.setattr(tg, "DEFAULT_GROUPS_PATH", tmp_path / "groups.json")
     sid = _make_story_with_video(libdir, with_video=False)
     story = lib.load_story(sid)
 
@@ -315,3 +322,206 @@ def test_share_bot_without_token_raises_with_setup_hint(libdir, monkeypatch):
     story = lib.load_story(sid)
     with pytest.raises(tg.TelegramShareError, match="@BotFather"):
         lui._share_via_telegram_bot(sid, story["meta"])
+
+
+# ---------------------------------------------------------------------------
+# Token resolution precedence: default file -> prefs custom -> loud error
+# ---------------------------------------------------------------------------
+
+def test_resolve_token_file_wins_over_prefs(tmp_path):
+    tok = tmp_path / "bot_token.txt"
+    tok.write_text("FILETOK\n")
+    assert tg.resolve_token("PREFSTOK", token_path=tok) == "FILETOK"
+
+
+def test_resolve_token_strips_whitespace_and_newlines(tmp_path):
+    tok = tmp_path / "bot_token.txt"
+    tok.write_text("  FILETOK  \n\n")
+    assert tg.resolve_token(token_path=tok) == "FILETOK"
+
+
+def test_resolve_token_missing_file_falls_back_to_prefs(tmp_path):
+    assert tg.resolve_token("PREFSTOK",
+                            token_path=tmp_path / "nope.txt") == "PREFSTOK"
+
+
+def test_resolve_token_blank_file_falls_back_to_prefs(tmp_path):
+    tok = tmp_path / "bot_token.txt"
+    tok.write_text("   \n  \n")
+    assert tg.resolve_token("PREFSTOK", token_path=tok) == "PREFSTOK"
+
+
+def test_resolve_token_unreadable_path_falls_back_to_prefs(tmp_path):
+    # a directory at the token path raises on read -> treated as missing
+    assert tg.resolve_token("PREFSTOK", token_path=tmp_path) == "PREFSTOK"
+
+
+def test_resolve_token_nothing_configured_raises_loudly(tmp_path):
+    with pytest.raises(tg.TelegramShareError, match="bot_token.txt"):
+        tg.resolve_token(None, token_path=tmp_path / "nope.txt")
+    with pytest.raises(tg.TelegramShareError, match="@BotFather"):
+        tg.resolve_token("   ", token_path=tmp_path / "nope.txt")
+
+
+def test_resolve_token_default_path_constant():
+    assert str(tg.DEFAULT_TOKEN_PATH).endswith(
+        "Documents/telegrambot/bot_token.txt")
+
+
+def test_share_bot_uses_default_token_file_when_prefs_empty(
+        libdir, monkeypatch, tmp_path):
+    lui = _library_ui_module()
+    tok = tmp_path / "bot_token.txt"
+    tok.write_text("FILETOK\n")
+    monkeypatch.setattr(tg, "DEFAULT_TOKEN_PATH", tok)
+    monkeypatch.setattr(tg, "DEFAULT_GROUPS_PATH", tmp_path / "groups.json")
+    _prefs_double(monkeypatch, {"telegram_chat_id": 99})
+    sid = _make_story_with_video(libdir, with_video=False)
+    story = lib.load_story(sid)
+    post = _ok_transport()
+    monkeypatch.setattr(tg, "_httpx_post", post)
+    lui._share_via_telegram_bot(sid, story["meta"])
+    assert post.calls[0]["url"].startswith(
+        "https://api.telegram.org/botFILETOK/")
+
+
+# ---------------------------------------------------------------------------
+# #179: broadcast to every group the bot is in
+# ---------------------------------------------------------------------------
+
+def _updates_transport(updates):
+    def post(url, *, data=None, files=None, timeout=None):
+        return _FakeResp({"ok": True, "result": updates})
+    return post
+
+
+def test_discover_group_ids_harvests_groups_and_supergroups(tmp_path):
+    updates = [
+        {"update_id": 1,
+         "message": {"chat": {"id": 111, "type": "private"}}},
+        {"update_id": 2,
+         "message": {"chat": {"id": -222, "type": "group"}}},
+        {"update_id": 3,
+         "message": {"chat": {"id": -333, "type": "supergroup"}}},
+        {"update_id": 4,
+         "channel_post": {"chat": {"id": -444, "type": "channel"}}},
+    ]
+    path = tmp_path / "groups.json"
+    got = tg.discover_group_ids(
+        "TOK", transport=_updates_transport(updates), groups_path=path)
+    assert got == [-333, -222]  # private chat and channel excluded
+    # persisted: a later call with no new updates still knows them
+    assert tg.discover_group_ids(
+        "TOK", transport=_updates_transport([]), groups_path=path) == got
+
+
+def test_discover_group_ids_my_chat_member_removal_drops_group(tmp_path):
+    path = tmp_path / "groups.json"
+    path.write_text("[-555, -666]")
+    updates = [
+        {"update_id": 9, "my_chat_member": {
+            "chat": {"id": -555, "type": "supergroup"},
+            "new_chat_member": {"status": "kicked"}}},
+        {"update_id": 10, "my_chat_member": {
+            "chat": {"id": -777, "type": "group"},
+            "new_chat_member": {"status": "member"}}},
+    ]
+    got = tg.discover_group_ids(
+        "TOK", transport=_updates_transport(updates), groups_path=path)
+    assert got == [-777, -666]  # -555 dropped: the bot was kicked
+
+
+def test_discover_group_ids_corrupt_cache_starts_empty(tmp_path):
+    path = tmp_path / "groups.json"
+    path.write_text("not json{{{")
+    updates = [{"update_id": 1,
+                "message": {"chat": {"id": -222, "type": "group"}}}]
+    assert tg.discover_group_ids(
+        "TOK", transport=_updates_transport(updates),
+        groups_path=path) == [-222]
+
+
+def test_broadcast_sends_two_messages_to_each_group_once(tmp_path):
+    vid = tmp_path / "clip.mp4"
+    vid.write_bytes(b"v")
+    post = _ok_transport()
+    msg = tg.broadcast_story("TOK", [-222, -333, -222], video_path=vid,
+                             caption="Cap", links_text="L1", transport=post)
+    assert msg == "Broadcast to 2 Telegram groups."
+    by_chat = {}
+    for call in post.calls:
+        by_chat.setdefault(call["data"]["chat_id"], []).append(call["url"])
+    assert sorted(by_chat) == ["-222", "-333"]  # deduped
+    for calls in by_chat.values():
+        assert [u.rsplit("/", 1)[-1] for u in calls] == [
+            "sendVideo", "sendMessage"]
+
+
+def test_broadcast_no_video_sends_caption_as_text():
+    post = _ok_transport()
+    msg = tg.broadcast_story("TOK", [-222], caption="Cap", links_text="",
+                             transport=post)
+    assert msg == "Broadcast to 1 Telegram group."
+    assert len(post.calls) == 1
+    assert post.calls[0]["url"].endswith("/sendMessage")
+    assert post.calls[0]["data"]["text"] == "Cap"
+
+
+def test_broadcast_failure_names_group_and_still_attempts_rest(tmp_path):
+    vid = tmp_path / "clip.mp4"
+    vid.write_bytes(b"v")
+    attempted = []
+
+    def post(url, *, data=None, files=None, timeout=None):
+        attempted.append(data["chat_id"])
+        if data["chat_id"] == "-333":
+            return _FakeResp({"ok": False, "description": "bot was kicked"})
+        return _FakeResp({"ok": True, "result": {"message_id": 1}})
+
+    msg = tg.broadcast_story("TOK", [-222, -333], video_path=vid,
+                             caption="C", links_text="L", transport=post)
+    assert "-222" in attempted and "-333" in attempted  # all attempted
+    assert "sent to 1 group" in msg
+    assert "-333" in msg and "bot was kicked" in msg  # failure named loudly
+
+
+def test_broadcast_empty_group_list_is_not_an_error():
+    assert "No Telegram groups" in tg.broadcast_story("TOK", [])
+
+
+def test_broadcast_rejects_non_numeric_group_id():
+    with pytest.raises(tg.TelegramShareError, match="not a number"):
+        tg.broadcast_story("TOK", ["nope"], caption="C",
+                           transport=_ok_transport())
+
+
+def test_share_bot_broadcasts_to_groups_skipping_own_chat(
+        libdir, monkeypatch, tmp_path):
+    lui = _library_ui_module()
+    _prefs_double(monkeypatch, {"telegram_bot_token": "TOK",
+                                "telegram_chat_id": 99})
+    monkeypatch.setattr(tg, "DEFAULT_GROUPS_PATH", tmp_path / "groups.json")
+    sid = _make_story_with_video(libdir, with_video=True)
+    story = lib.load_story(sid)
+
+    def post(url, *, data=None, files=None, timeout=None):
+        post.calls.append({"url": url, "data": dict(data or {})})
+        if url.endswith("/getUpdates"):
+            return _FakeResp({"ok": True, "result": [
+                {"update_id": 1,
+                 "message": {"chat": {"id": -222, "type": "group"}}},
+                {"update_id": 2,
+                 "message": {"chat": {"id": 99, "type": "private"}}},
+            ]})
+        return _FakeResp({"ok": True, "result": {"message_id": 1}})
+
+    post.calls = []
+
+    monkeypatch.setattr(tg, "_httpx_post", post)
+    msg = lui._share_via_telegram_bot(sid, story["meta"])
+    assert "Broadcast to 1 Telegram group." in msg
+    chat_ids = [c["data"]["chat_id"] for c in post.calls
+                if "chat_id" in c["data"]]
+    # own chat got the DM only; the group got the broadcast — same 2 msgs
+    assert chat_ids.count("99") == 2
+    assert chat_ids.count("-222") == 2

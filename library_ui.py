@@ -2370,9 +2370,17 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
 
     #159: two messages — (1) the video with the caption (title + hashtags),
     or the caption as a plain text message when the story has no video
-    attached; (2) the news links. The bot token comes from prefs
-    (``telegram_bot_token``); the chat id is discovered once from the
-    bot's updates and remembered (``telegram_chat_id``).
+    attached; (2) the news links. The bot token resolves by precedence —
+    ``~/Documents/telegrambot/bot_token.txt`` (default), then the custom
+    ``telegram_bot_token`` in prefs; the chat id is discovered once from
+    the bot's updates and remembered (``telegram_chat_id``).
+
+    #179: after the DM share, the same two messages are broadcast to every
+    group/supergroup the bot is in (the user's own chat id is skipped —
+    it already got them). Discovery runs on every share so newly joined
+    groups are picked up; a discovery failure must not fail the DM share
+    that already went through — it is reported loudly in the summary
+    instead.
 
     Raises TelegramShareError (or RuntimeError for a metadata-referenced
     video file missing from disk) with an actionable message on any
@@ -2380,7 +2388,7 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
     """
     from tools import telegram_share as _tg
     prefs = lib.load_prefs()
-    token = (prefs.get("telegram_bot_token") or "").strip()
+    token = _tg.resolve_token(prefs.get("telegram_bot_token"))
     chat_id = prefs.get("telegram_chat_id")
     if not chat_id:
         # Raises loudly (including when no token is configured yet).
@@ -2399,6 +2407,20 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
         _tg.send_text(token, chat_id, links_text)
         n_links = len(links_text.splitlines())
         sent.append(f"{n_links} news link{'s' if n_links != 1 else ''}")
+    # #179: broadcast the same two messages to every group the bot is in.
+    try:
+        _group_ids = _tg.discover_group_ids(token)
+    except Exception as e:  # auxiliary step — never fail the DM share above
+        sent.append(f"group broadcast skipped (couldn't list groups: {e})")
+    else:
+        _own = str(chat_id)
+        _targets = sorted(g for g in set(_group_ids) if str(g) != _own)
+        if _targets:
+            sent.append(_tg.broadcast_story(
+                token, _targets, video_path=video_path, caption=caption,
+                links_text=links_text))
+        else:
+            sent.append("no groups to broadcast to (add the bot to a group)")
     return "Sent to Telegram: " + ", then ".join(sent) + "."
 
 
@@ -2484,14 +2506,22 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
             # #159: Telegram via the user's bot — video + caption, then
             # news links (two messages). Server-side, like WhatsApp above:
             # the Streamlit server runs on the user's Mac and POSTs the
-            # local video file to the Bot API directly.
-            _tg_token = (lib.load_prefs().get("telegram_bot_token") or "").strip()
+            # local video file to the Bot API directly. The token resolves
+            # by precedence: ~/Documents/telegrambot/bot_token.txt
+            # (default), then the custom token in prefs.
+            from tools import telegram_share as _tg
+            try:
+                _tg_token = _tg.resolve_token(
+                    lib.load_prefs().get("telegram_bot_token"))
+            except _tg.TelegramShareError:
+                _tg_token = ""
             if _tg_token:
                 if st.button(
                     "Share via Telegram",
                     key=f"lib_tg_{story_id}",
                     help="Send the video + caption, then the news links, "
-                         "to Telegram via your bot",
+                         "to Telegram via your bot — also broadcast to "
+                         "every group the bot is in",
                     use_container_width=True,
                 ):
                     try:
@@ -2511,7 +2541,11 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                         "copy the token.\n"
                         "2. Open your new bot and tap **Start** (send it a "
                         "first message).\n"
-                        "3. Paste the token below and save.")
+                        "3. Save the token as "
+                        "`~/Documents/telegrambot/bot_token.txt` (picked up "
+                        "automatically), or paste a custom token below.\\n"
+                        "4. To broadcast to groups as well, add the bot to "
+                        "each group.")
                     _tok_in = st.text_input(
                         "Bot token", type="password",
                         key=f"lib_tg_tok_{story_id}")
