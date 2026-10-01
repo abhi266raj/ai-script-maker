@@ -3599,9 +3599,22 @@ with col_output:
                         st.session_state._stage_outputs[step_num] = _sdata
                     if st.session_state._stage_outputs:
                         stage_output_box.empty()
+                        # CRITICAL: .empty() does NOT unregister widget keys
+                        # within the same script run (verified on Streamlit
+                        # 1.64 — re-rendering the same keyed widgets in a
+                        # loop raises StreamlitDuplicateElementKey). Every
+                        # re-render of the live preview therefore gets a
+                        # unique key prefix. This loses nothing: the script
+                        # is blocked inside the pipeline generator while the
+                        # loop runs, so no widget interaction can occur
+                        # mid-run; after completion the final rerun renders
+                        # the separate "done_" preview.
+                        _live_seq = st.session_state.get("_live_preview_seq", 0) + 1
+                        st.session_state._live_preview_seq = _live_seq
                         with stage_output_box.container():
                             _render_cumulative_preview(
-                                st.session_state._stage_outputs, key_prefix="live_")
+                                st.session_state._stage_outputs,
+                                key_prefix=f"live_r{_live_seq}_")
                     if step.get("completed"):
                         st.session_state.batch_result = step["data"]["batch_result"]
                         st.session_state.generation_error = None
