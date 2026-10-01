@@ -54,8 +54,8 @@ jobs:
         with:
           name: Hindi-Reel-Studio-${{ matrix.variant }}-macOS
           path: |
-            dist/*.dmg
-            dist/*.app
+            dist/**/*.dmg
+            dist/**/*.app
 
       # ── Uncomment for automated GitHub Release uploads (v2.0) ──
       # - name: Create Release
