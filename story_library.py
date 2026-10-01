@@ -682,7 +682,13 @@ def record_fine_tune_turn(story_id: str, instruction: str,
     refined_text = (refined_script or "").strip()
     if not refined_text:
         raise ValueError("Refined script must not be empty.")
-    update_story_script(story_id, refined_text)
+    # #104: route the replacement through versioning so the default
+    # version's text and the ## Script mirror stay in sync — a raw
+    # update_story_script here would leave the versions sidecar stale,
+    # and a later version switch would silently clobber the refined text.
+    with _meta_write_lock(story_id):
+        _versions, _default_n, _next_n = _ensure_versions(story_id)
+    update_script_version_text(story_id, _default_n, refined_text)
     history = get_fine_tune_history(story_id)
     history.append({"instruction": instruction_text, "script": refined_text})
     del history[:-_FINE_TUNE_HISTORY_MAX_TURNS]
@@ -713,6 +719,250 @@ def delete_story(story_id: str) -> bool:
         except OSError:
             pass
     return removed
+
+
+# ---------------------------------------------------------------------------
+# Script versioning (#104)
+# ---------------------------------------------------------------------------
+# Each story keeps multiple script versions. Versions live in a sidecar
+# ``<story-id>.versions.json`` next to the story file; the ``## Script``
+# section of ``<story-id>.md`` ALWAYS mirrors the *default* version's text,
+# so every existing reader (the native macOS app, Copy / Share / export)
+# keeps working unchanged — the default version IS the story's script.
+#
+# Sidecar schema::
+#
+#     {"default": 1, "next_n": 2,
+#      "versions": [{"n": 1, "text": "...", "created_at": "..."}, ...]}
+#
+# ``next_n`` is a monotonic counter: deleted version numbers are never
+# reused, so "Version 3" always means the same text.
+#
+# Migration: stories saved before versioning have no sidecar; the first
+# version access seeds v1 from the current ``## Script`` text and persists
+# it, so nothing is ever lost. Corrupt sidecar JSON raises loudly — it is
+# never silently rebuilt or dropped.
+#
+# Invariants (enforced by every mutator below):
+#   * v1 (the original) can never be deleted.
+#   * Exactly one version is the default at all times.
+#   * Deleting the default version falls back to v1 as the default.
+#   * The ``## Script`` section always equals the default version's text.
+
+_VERSIONS_SUFFIX = ".versions.json"
+
+
+def _versions_path(story_id: str) -> Path:
+    return stories_dir() / f"{_check_id(story_id)}{_VERSIONS_SUFFIX}"
+
+
+def _validate_versions_doc(doc: Any, story_id: str) -> tuple[List[Dict[str, Any]], int, int]:
+    """Validate a parsed sidecar doc → (versions ascending by n, default_n, next_n).
+
+    Raises ValueError with a loud, actionable message on any corruption —
+    the caller must surface it, never silently rebuild the history.
+    """
+    if not isinstance(doc, dict):
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            f"top-level JSON must be an object, got {type(doc).__name__}.")
+    versions = doc.get("versions")
+    default_n = doc.get("default")
+    next_n = doc.get("next_n")
+    if not isinstance(versions, list) or not versions:
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            "'versions' must be a non-empty list.")
+    seen: Set[int] = set()
+    clean: List[Dict[str, Any]] = []
+    for i, v in enumerate(versions):
+        if not isinstance(v, dict):
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"version entry #{i} is not an object.")
+        n = v.get("n")
+        text = v.get("text")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"version entry #{i} has invalid 'n': {n!r}.")
+        if n in seen:
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"duplicate version number {n}.")
+        if not isinstance(text, str):
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"version {n} has non-string 'text'.")
+        seen.add(n)
+        clean.append({"n": n, "text": text,
+                      "created_at": str(v.get("created_at") or "")})
+    if (not isinstance(default_n, int) or isinstance(default_n, bool)
+            or default_n not in seen):
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            f"'default' ({default_n!r}) does not match any version.")
+    if (not isinstance(next_n, int) or isinstance(next_n, bool)
+            or next_n <= max(seen)):
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            f"'next_n' ({next_n!r}) must exceed every existing version number.")
+    clean.sort(key=lambda v: v["n"])
+    return clean, default_n, next_n
+
+
+def _read_versions_doc(story_id: str) -> Optional[Dict[str, Any]]:
+    """Read the raw sidecar JSON, or None when the story has no sidecar yet.
+
+    Raises FileNotFoundError for an unknown story, ValueError on corrupt JSON.
+    """
+    path = story_path(story_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Story not found: {story_id}")
+    vpath = _versions_path(story_id)
+    if not vpath.exists():
+        return None
+    try:
+        return json.loads(vpath.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: {e}. "
+            f"Delete {vpath.name} only if you are sure the history is expendable.") from e
+
+
+def _write_versions_doc(story_id: str, versions: List[Dict[str, Any]],
+                        default_n: int, next_n: int) -> None:
+    """Persist the sidecar. Caller must hold _meta_write_lock(story_id)."""
+    doc = {"default": default_n, "next_n": next_n,
+           "versions": [{"n": v["n"], "text": v["text"],
+                         "created_at": v.get("created_at", "")}
+                        for v in sorted(versions, key=lambda v: v["n"])]}
+    _versions_path(story_id).write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _ensure_versions(story_id: str) -> tuple[List[Dict[str, Any]], int, int]:
+    """Return (versions ascending, default_n, next_n), migrating legacy stories.
+
+    Stories saved before versioning get v1 seeded from the current
+    ``## Script`` text and persisted — the original is never lost.
+    Caller must hold _meta_write_lock(story_id).
+    """
+    doc = _read_versions_doc(story_id)
+    if doc is not None:
+        return _validate_versions_doc(doc, story_id)
+    # Legacy story: seed v1 from the current script section.
+    _meta, body = _parse_frontmatter(story_path(story_id).read_text(encoding="utf-8"))
+    _dialogue, script = _split_sections(body)
+    created = _meta.get("created_at") or datetime.datetime.now().isoformat(timespec="seconds")
+    versions = [{"n": 1, "text": script.strip(), "created_at": str(created)}]
+    _write_versions_doc(story_id, versions, 1, 2)
+    return versions, 1, 2
+
+
+def _version_text(versions: List[Dict[str, Any]], n: int) -> str:
+    for v in versions:
+        if v["n"] == n:
+            return v["text"]
+    raise ValueError(f"Story has no script version {n}.")
+
+
+def get_script_versions(story_id: str) -> tuple[List[Dict[str, Any]], int]:
+    """Return (versions latest-first, default_n) for a story (#104).
+
+    Each version is ``{"n": int, "text": str, "created_at": str}``.
+    Migrates legacy stories on first access. Raises FileNotFoundError for
+    an unknown story and ValueError on corrupt version data — both loud,
+    never silent.
+    """
+    _check_id(story_id)
+    with _meta_write_lock(story_id):
+        versions, default_n, _ = _ensure_versions(story_id)
+    versions = [dict(v) for v in reversed(versions)]
+    return versions, default_n
+
+
+def create_script_version(story_id: str) -> int:
+    """Create a new version seeded from the current default text (#104).
+
+    The new version is NOT made the default — the default only changes via
+    an explicit ``set_default_script_version``. Returns the new version
+    number (monotonic: deleted numbers are never reused).
+    """
+    _check_id(story_id)
+    with _meta_write_lock(story_id):
+        versions, default_n, next_n = _ensure_versions(story_id)
+        new_n = next_n
+        versions.append({
+            "n": new_n,
+            "text": _version_text(versions, default_n),
+            "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        })
+        _write_versions_doc(story_id, versions, default_n, next_n + 1)
+    return new_n
+
+
+def update_script_version_text(story_id: str, n: int, text: str) -> None:
+    """Replace a version's text (#104, per-version edit).
+
+    When the edited version is the default, the story's ``## Script``
+    section is rewritten too, so Copy / Share / export keep using it.
+    Raises ValueError for blank text or an unknown version number.
+    """
+    _check_id(story_id)
+    if not (text or "").strip():
+        raise ValueError("Script version text must not be empty.")
+    with _meta_write_lock(story_id):
+        versions, default_n, next_n = _ensure_versions(story_id)
+        found = False
+        for v in versions:
+            if v["n"] == n:
+                v["text"] = text.strip()
+                found = True
+        if not found:
+            raise ValueError(f"Story has no script version {n}.")
+        _write_versions_doc(story_id, versions, default_n, next_n)
+        if n == default_n:
+            # Keep the .md mirror in sync: the default version IS the story's script.
+            update_story_script(story_id, text.strip())
+
+
+def delete_script_version(story_id: str, n: int) -> None:
+    """Delete a version (#104).
+
+    v1 (the original) is protected and can never be deleted. Deleting the
+    default version falls the default back to v1 and rewrites the story's
+    ``## Script`` section with v1's text. Raises ValueError otherwise.
+    """
+    _check_id(story_id)
+    if n == 1:
+        raise ValueError("The original version (v1) cannot be deleted.")
+    with _meta_write_lock(story_id):
+        versions, default_n, next_n = _ensure_versions(story_id)
+        remaining = [v for v in versions if v["n"] != n]
+        if len(remaining) == len(versions):
+            raise ValueError(f"Story has no script version {n}.")
+        new_default = default_n
+        if n == default_n:
+            new_default = 1  # Delete-default fallback: the original becomes default.
+        _write_versions_doc(story_id, remaining, new_default, next_n)
+        if n == default_n:
+            update_story_script(story_id, _version_text(remaining, 1))
+
+
+def set_default_script_version(story_id: str, n: int) -> None:
+    """Make version ``n`` the default (#104): exactly one default at a time.
+
+    The story's ``## Script`` section is rewritten with the version's text,
+    so Copy / Share / export immediately use it. Raises ValueError for an
+    unknown version number.
+    """
+    _check_id(story_id)
+    with _meta_write_lock(story_id):
+        versions, _old_default, next_n = _ensure_versions(story_id)
+        text = _version_text(versions, n)  # raises ValueError when unknown
+        _write_versions_doc(story_id, versions, n, next_n)
+        update_story_script(story_id, text)
 
 
 def delete_all_stories() -> int:

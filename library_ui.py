@@ -65,6 +65,8 @@ _TB_ICON_DELETE = ":material/delete:"        # Delete
 _TB_ICON_UPLOAD = ":material/upload:"        # Upload (#114)
 _TB_ICON_EDIT = ":material/edit:"            # Edit title/script (no emoji)
 _TB_ICON_TUNE = ":material/tune:"            # Fine tune script (#105)
+_TB_ICON_ADD = ":material/add:"              # New script version (#104)
+_TB_ICON_DEFAULT = ":material/star:"         # Make default version (#104)
 _TB_ICON_SPINNER = "spinner"                 # native animated spinner
 
 
@@ -908,6 +910,10 @@ def _delete_confirm_dialog() -> None:
                     _confirm_delete_story(_pending.get("story_id", ""))
                 elif _kind == "all":
                     _confirm_delete_all()
+                elif _kind == "version":
+                    # #104: delete one script version (v1 is protected inside).
+                    lib.delete_script_version(_pending.get("story_id", ""),
+                                              _pending.get("version", 0))
                 else:
                     raise RuntimeError(f"unknown delete target: {_kind!r}")
             except Exception as e:
@@ -2792,6 +2798,157 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
         else:
             st.session_state.pop(_ft_input_key, None)
             st.rerun()
+def _render_script_version_body(story_id: str, version: dict, is_default: bool,
+                                busy: bool) -> None:
+    """Body of one script-version expander: actions + view/edit (#104).
+
+    Actions are direct icon buttons (repo rule: delete is a direct icon,
+    not a dropdown). Delete on v1 is never rendered — the original is
+    protected. "Make default" is hidden on the version that already is.
+    """
+    _n = version["n"]
+    _edit_key = f"lib_edit_script_v{_n}_{story_id}"
+    _save_key = f"lib_saving_script_v{_n}_{story_id}"
+    _text_key = f"lib_script_v{_n}_{story_id}"
+    _editing = bool(st.session_state.get(_edit_key))
+    _saving = bool(st.session_state.get(_save_key))
+
+    if _saving:
+        # HIG save, phase 2: the Save button already painted "Saving…" and
+        # disabled on the rerun; now perform the write. Errors surface
+        # loudly and edit mode is kept — the save is never pretended.
+        st.session_state.pop(_save_key, None)
+        _new_text = (st.session_state.get(_text_key) or "").strip()
+        if not _new_text:
+            st.error("The script can't be saved empty — keep editing or Cancel.")
+        else:
+            try:
+                lib.update_script_version_text(story_id, _n, _new_text)
+            except Exception as e:
+                st.error(f"Could not save Version {_n}: {e}")
+            else:
+                st.session_state.pop(_edit_key, None)
+                st.rerun()
+
+    # Per-version action row: created date + icon-only controls.
+    _ac1, _ac2, _ac3, _ac4 = st.columns([8, 1, 1, 1], vertical_alignment="center")
+    with _ac1:
+        _created = (version.get("created_at") or "").replace("T", " ")[:16]
+        st.caption(f"Created {_created}" if _created else " ")
+    with _ac2:
+        if st.button("", icon=_TB_ICON_EDIT, key=f"lib_script_vedit_{story_id}_{_n}",
+                     help=f"Edit Version {_n}",
+                     disabled=busy or _editing or _saving):
+            st.session_state[_edit_key] = True
+            st.rerun()
+    with _ac3:
+        if not is_default:
+            if st.button("", icon=_TB_ICON_DEFAULT,
+                         key=f"lib_script_vdefault_{story_id}_{_n}",
+                         help=f"Make Version {_n} the default",
+                         disabled=busy or _editing or _saving):
+                try:
+                    lib.set_default_script_version(story_id, _n)
+                except Exception as e:
+                    st.error(f"Could not make Version {_n} the default: {e}")
+                else:
+                    st.rerun()
+    with _ac4:
+        if _n != 1:
+            if st.button("", icon=_TB_ICON_DELETE,
+                         key=f"lib_script_vdel_{story_id}_{_n}",
+                         help=f"Delete Version {_n}",
+                         disabled=busy or _editing or _saving):
+                st.session_state[_PENDING_DELETE_KEY] = {
+                    "kind": "version",
+                    "story_id": story_id,
+                    "version": _n,
+                    "title": f"Delete Version {_n}?",
+                    "message": ("This can't be undone."
+                                + (" It is the default — v1 will become the default."
+                                   if is_default else "")),
+                    "destructive_label": "Delete",
+                }
+                st.rerun()
+
+    if _editing:
+        st.text_area(f"Edit Version {_n}", value=version["text"],
+                     key=_text_key, height=400,
+                     label_visibility="collapsed", disabled=_saving)
+        _vb1, _vb2, _vbs = st.columns([1, 1, 6])
+        with _vb1:
+            # HIG, phase 1: the initiating control owns the loading state.
+            if st.button("Saving…" if _saving else "Save",
+                         key=f"lib_script_vsave_{story_id}_{_n}", type="primary",
+                         disabled=_saving or busy):
+                st.session_state[_save_key] = True
+                st.rerun()
+        with _vb2:
+            if st.button("Cancel", key=f"lib_script_vcancel_{story_id}_{_n}",
+                         disabled=_saving):
+                st.session_state.pop(_edit_key, None)
+                st.rerun()
+    else:
+        _render_full_script(version["text"])
+
+
+def _render_script_versions(story_id: str, busy: bool) -> None:
+    """Full Script as a collapsible per-version list, latest on top (#104).
+
+    Only the latest version starts expanded. The story's ``## Script``
+    section always mirrors the default version, so Copy / Share / export
+    keep working unchanged. A corrupt sidecar fails loudly with an error
+    instead of a fabricated version list.
+    """
+    try:
+        _versions, _default_n = lib.get_script_versions(story_id)
+    except Exception as e:
+        st.error(f"Could not load script versions: {e}")
+        return
+    if not _versions:
+        st.caption("No script versions yet.")
+        return
+    _latest_n = _versions[0]["n"]
+
+    _vh1, _vh2 = st.columns([11, 1], vertical_alignment="center")
+    with _vh1:
+        st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
+    with _vh2:
+        if st.button("", icon=_TB_ICON_ADD, key=f"lib_script_newver_{story_id}",
+                     help="Create new version", disabled=busy):
+            try:
+                _new_n = lib.create_script_version(story_id)
+            except Exception as e:
+                st.error(f"Could not create a new version: {e}")
+            else:
+                # Open the fresh version in edit mode — it starts as a
+                # copy of the default text, ready to modify.
+                st.session_state[f"lib_edit_script_v{_new_n}_{story_id}"] = True
+                st.rerun()
+
+    for _ver in _versions:
+        _n = _ver["n"]
+        _label = f"Version {_n}" + (" · Default" if _n == _default_n else "")
+        with st.expander(_label, expanded=(_n == _latest_n)):
+            _render_script_version_body(story_id, _ver, _n == _default_n, busy)
+
+
+def _any_script_version_editing(story_id: str) -> bool:
+    """True while any script version's manual editor is open (#104).
+
+    Used by #105's fine-tune guard: there must be a stable baseline to
+    refine, so fine-tuning hides while a version is being edited.
+    """
+    try:
+        _keys = list(st.session_state.keys())
+    except Exception:
+        return False
+    _suffix = f"_{story_id}"
+    return any(
+        k.startswith("lib_edit_script_v") and k.endswith(_suffix)
+        and st.session_state.get(k)
+        for k in _keys
+    )
 
 
 def _render_story_detail(story_id: str) -> None:
@@ -2992,71 +3149,20 @@ def _render_story_detail(story_id: str) -> None:
         # #54/#80: only kinds that re-fetch links suppress the hint.
         st.caption("No news links yet.")
 
-    # Whole script — always through the color-coded renderer so dialogue
-    # never falls back to plain markdown. The ✏️ edit control mirrors the
-    # title's inline edit: it swaps the renderer for a text area and
-    # persists through lib.update_story_script, which fails loudly.
-    _script_editing = bool(st.session_state.get(f"lib_edit_script_{story_id}"))
-    _script_saving = bool(st.session_state.get(f"lib_saving_script_{story_id}"))
-    if _script_saving:
-        # HIG save, phase 2: the Save button already painted "Saving…"
-        # and disabled on the rerun; now perform the write. Errors
-        # surface loudly and edit mode is kept — the save is never
-        # pretended to have landed.
-        st.session_state.pop(f"lib_saving_script_{story_id}", None)
-        _new_script = (st.session_state.get(f"lib_script_{story_id}") or "").strip()
-        if not _new_script:
-            st.error("The script can't be saved empty — keep editing or Cancel.")
-        else:
-            try:
-                lib.update_story_script(story_id, _new_script)
-            except Exception as e:
-                st.error(f"Could not save the script: {e}")
-            else:
-                st.session_state.pop(f"lib_edit_script_{story_id}", None)
-                st.rerun()
-    if script_md or _script_editing:
-        _sh1, _sh2 = st.columns([11, 1], vertical_alignment="center")
-        with _sh1:
-            st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
-        with _sh2:
-            if st.button("", icon=_TB_ICON_EDIT, key=f"lib_script_edit_{story_id}",
-                         help="Edit script",
-                         disabled=_busy or _script_editing or _script_saving):
-                st.session_state[f"lib_edit_script_{story_id}"] = True
-                st.rerun()
-        if _script_editing:
-            st.text_area("Edit script", value=script_md,
-                         key=f"lib_script_{story_id}", height=400,
-                         label_visibility="collapsed", disabled=_script_saving)
-            _sb1, _sb2, _sbs = st.columns([1, 1, 6])
-            with _sb1:
-                # HIG, phase 1: the initiating control owns the loading
-                # state — it paints "Saving…" and stays disabled until
-                # the write lands on the rerun above.
-                if st.button("Saving…" if _script_saving else "Save",
-                             key=f"lib_script_save_{story_id}", type="primary",
-                             disabled=_script_saving or _busy):
-                    st.session_state[f"lib_saving_script_{story_id}"] = True
-                    st.rerun()
-            with _sb2:
-                if st.button("Cancel", key=f"lib_script_cancel_{story_id}",
-                             disabled=_script_saving):
-                    st.session_state.pop(f"lib_edit_script_{story_id}", None)
-                    st.rerun()
-        else:
-            _render_full_script(script_md)
-    elif story["dialogue"].strip():
+    # Whole script — versioned (#104): collapsible per-version list, latest
+    # on top, latest expanded. The story's ## Script section always mirrors
+    # the default version, so Copy / Share / export keep using it unchanged.
+    _render_script_versions(story_id, _busy)
+    if not story["script"].strip() and story["dialogue"].strip():
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
                     unsafe_allow_html=True)
 
     # #105: iterative LLM fine-tuning of the script. Only when a script
-    # exists (and not while the manual editor is open) — there must be a
-    # baseline to refine. #104's versioning will later adopt the recorded
-    # turns as versions; until then the refined script replaces the current
-    # one and the history preserves every turn.
-    if script_md.strip() and not _script_editing and not _script_saving:
+    # exists (and not while a version's manual editor is open) — there must
+    # be a stable baseline to refine. The refined script replaces the
+    # default version's text (#104); the turn history preserves every turn.
+    if script_md.strip() and not _any_script_version_editing(story_id):
         _render_fine_tune_section(story_id, meta, script_md, _busy)
 
     # Video playback — the attached video only. #94: the "Video" section
