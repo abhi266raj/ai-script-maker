@@ -498,7 +498,8 @@ def inject_library_css() -> None:
         margin-right: 7px;
         vertical-align: -2px;
         border: 2px solid currentColor;
-        border-top-color: transparent;
+        border: 2px solid color-mix(in srgb, currentColor 25%, transparent);
+        border-top-color: currentColor;
         border-radius: 50%;
         animation: lib-spin 0.9s linear infinite;
     }
