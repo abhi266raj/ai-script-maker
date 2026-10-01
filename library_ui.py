@@ -795,14 +795,18 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
 def _render_kind_button(*, story_id: str, kind: str, label: str,
                        button_key: str, help_text: str, kick_label: str,
                        busy_kinds, ai_engine) -> None:
-    """One toolbar refresh button (#53/#54).
+    """One toolbar refresh button (#53/#54, #71).
 
-    The label NEVER changes; while ``kind`` runs the button shows the CSS
-    spinner (``lib-spin-<kind>`` marker, painted via ::before) and stays
-    disabled. ``use_container_width`` keeps the width stable — the button
-    fills its fixed column slot, so nothing shoves its neighbours. Each
-    kind disables only while IT runs: hashtags and images are independent
-    and stay clickable while the other runs (#54).
+    #71: the button is ICON-ONLY — the label is a glyph ("#" / "🖼") and the
+    tooltip (``help_text``) carries the "Update Hashtags" / "Update Images"
+    label for discoverability. Tapping the icon triggers the refresh.
+
+    The glyph label NEVER changes; while ``kind`` runs the button shows the
+    CSS spinner (``lib-spin-<kind>`` marker, painted via ::before in front
+    of the glyph) and stays disabled. ``use_container_width`` keeps the
+    width stable — the button fills its fixed column slot, so nothing shoves
+    its neighbours. Each kind disables only while IT runs: hashtags and
+    images are independent and stay clickable while the other runs (#54).
     """
     running = kind in busy_kinds
     if running:
@@ -1552,12 +1556,14 @@ def _copy_button(label: str, text: str, key: str) -> None:
 # v1.6 (#38, #46, #53): story-detail toolbar column weights. Streamlit
 # ellipsizes ("…") any button/popover label wider than its column, so every
 # action column is weighted to fit its label — #53: labels never change
-# mid-work ("Update Hashtags", "Update Images", "Reset", "Delete" +
-# chevron), so the static labels are the longest state. Share / Copy are
-# short native-popover labels; a slim spacer keeps Delete visually
-# trailing. Each total is unchanged (10.0) so the overall layout is
-# preserved and the #24 baseline alignment is untouched.
-_DETAIL_TOOLBAR_WEIGHTS = [2.2, 2.0, 1.4, 1.1, 1.1, 0.5, 1.7]
+# mid-work (icon glyphs "#"/"🖼", "Reset", "Delete" + chevron), so the static
+# labels are the longest state. Share / Copy are short native-popover
+# labels. #71: hashtags/images became icon-only buttons, so their columns
+# shrank to icon width and the freed weight moved to the spacer — the row
+# stays full-width with no dead space in the action area and Delete stays
+# visually trailing. Each total is unchanged (10.0) so the overall layout
+# is preserved and the #24 baseline alignment is untouched.
+_DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 1.4, 1.1, 1.1, 2.9, 1.7]
 _TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
 
 # #60: the story-detail header shows ONE static glyph for every story —
@@ -1577,16 +1583,18 @@ def _render_story_detail(story_id: str) -> None:
     _share_text = _compose_news_tags_text(meta)
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
-    # toolbar — Update Hashtags, Update Images, Reset, Share, Copy — with
-    # Delete trailing (#46). The title carries its own inline ✏️ edit icon
-    # next to the centered title text.
+    # toolbar — hashtag/image refresh icons (#71), Reset, Share, Copy —
+    # with Delete trailing (#46). The title carries its own inline ✏️ edit
+    # icon next to the centered title text.
     #
     # #53 HIG progress: a refresh button NEVER changes its label. While
-    # its kind runs the button keeps its label, shows a CSS spinner (the
-    # lib-spin-<kind> marker, painted via ::before) and stays disabled.
-    # Stable width comes from use_container_width — each button fills its
-    # fixed column slot, so nothing shoves its neighbours. Refreshes run
-    # in daemon threads, so tab switches never interrupt them.
+    # its kind runs the button keeps its glyph label, shows a CSS spinner
+    # (the lib-spin-<kind> marker, painted via ::before in front of the
+    # glyph) and stays disabled. Tooltips keep the "Update Hashtags" /
+    # "Update Images" labels (#71). Stable width comes from
+    # use_container_width — each button fills its fixed column slot, so
+    # nothing shoves its neighbours. Refreshes run in daemon threads, so
+    # tab switches never interrupt them.
     #
     # #54 concurrency: "hashtags" and "images" are independent — each
     # button disables only while ITS kind runs. Reset is destructive and
@@ -1636,15 +1644,15 @@ def _render_story_detail(story_id: str) -> None:
         tc1, tc2, tc3, tc4, tc5, _tsp, tc6 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
         with tc1:
             _render_kind_button(
-                story_id=story_id, kind="hashtags", label="Update Hashtags",
+                story_id=story_id, kind="hashtags", label="#",
                 button_key=f"lib_tags_{story_id}", kick_label="hashtag",
-                help_text="Find hashtags for this story's topic and add them",
+                help_text="Update Hashtags",
                 busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc2:
             _render_kind_button(
-                story_id=story_id, kind="images", label="Update Images",
+                story_id=story_id, kind="images", label="🖼",
                 button_key=f"lib_imgs_{story_id}", kick_label="image",
-                help_text="Re-fetch news images for this story's topic",
+                help_text="Update Images",
                 busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc3:
             # Reset is destructive: it confirms via the same native popover
