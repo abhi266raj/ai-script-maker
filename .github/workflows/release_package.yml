@@ -1,13 +1,18 @@
 # ──────────────────────────────────────────────────────────────────────
-# Build & Release macOS App — GitHub Actions CI/CD (v2.0 skeleton)
+# Build & Release macOS App — GitHub Actions CI/CD (v2.0)
 # ──────────────────────────────────────────────────────────────────────
-# Phase 1 (v1.3): manual workflow_dispatch trigger only.
-# Phase 2 (v2.0): uncomment the tag-push trigger for full automation.
+# Triggers:
+#   - workflow_dispatch: manual build (choose dev / release / both).
+#   - push of tags matching 'v*': automatic — builds the RELEASE
+#     variant and attaches dist/*.dmg to a GitHub Release.
+# Tag automation runs the workflow file as of the TAGGED commit, so it
+# takes effect starting with the v1.7 tag; earlier tags are unaffected
+# and nothing triggers retroactively.
 # ──────────────────────────────────────────────────────────────────────
 name: Build & Release macOS App
 
 on:
-  workflow_dispatch:           # Manual trigger (Phase 1 — v1.3)
+  workflow_dispatch:           # Manual trigger
     inputs:
       variant:
         description: 'Build variant'
@@ -18,15 +23,20 @@ on:
           - dev
           - release
           - both
-  # push:                      # Uncomment for Phase 2 (v2.0)
-  #   tags: ['v*']
+  push:                        # Automatic on version tags (v1.7+)
+    tags: ['v*']
 
 jobs:
   build-macos:
     runs-on: macos-latest
+    permissions:
+      contents: write          # required to create the GitHub Release
     strategy:
+      # Tag pushes have no workflow_dispatch inputs (github.event.inputs
+      # is empty), so they build just the release variant. Manual runs
+      # keep the existing input-driven behaviour.
       matrix:
-        variant: ${{ github.event.inputs.variant == 'both' && fromJSON('["dev","release"]') || fromJSON(format('["{0}"]', github.event.inputs.variant)) }}
+        variant: ${{ github.event_name == 'push' && fromJSON('["release"]') || (github.event.inputs.variant == 'both' && fromJSON('["dev","release"]') || fromJSON(format('["{0}"]', github.event.inputs.variant))) }}
 
     steps:
       - name: Checkout
@@ -57,9 +67,9 @@ jobs:
             dist/*.dmg
             dist/*.app
 
-      # ── Uncomment for automated GitHub Release uploads (v2.0) ──
-      # - name: Create Release
-      #   if: startsWith(github.ref, 'refs/tags/v')
-      #   uses: softprops/action-gh-release@v2
-      #   with:
-      #     files: dist/*.dmg
+      - name: Create GitHub Release and upload DMG
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.dmg
+          generate_release_notes: true
