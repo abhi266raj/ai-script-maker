@@ -10,6 +10,9 @@ Two messages per share (user-approved):
   1. the story video with a caption (title + hashtags) — or the caption
      as a plain text message when the story has no video attached;
   2. the news links, one "site: url" line each.
+#186: a text message longer than Telegram's 4096-char limit is split
+into sequential messages (paragraph boundaries first, hard split as a
+last resort) instead of failing — nothing is dropped, order preserved.
 
 #179: after the DM share, the same two messages are broadcast to every
 group/supergroup the bot is a member of. #184: broadcast targets come
@@ -416,14 +419,54 @@ def send_video(token: str, chat_id: Any, video_path: Any, caption: str,
                     timeout=timeout)
 
 
+def split_text(text: str, limit: int = MAX_TEXT_CHARS) -> list:
+    """Split ``text`` into sequential chunks of at most ``limit`` chars.
+
+    #186: Telegram caps a text message at 4096 chars. Paragraphs
+    (separated by blank lines) stay whole when they fit; a single
+    paragraph longer than ``limit`` is hard-split as a last resort.
+    Nothing is ever dropped — the chunks carry the full text, in order.
+    """
+    if not text:
+        return []
+    if limit <= 0:
+        raise TelegramShareError(
+            f"Refusing to split text: invalid chunk limit {limit}.")
+    if len(text) <= limit:
+        return [text]
+    chunks: list = []
+    current: list = []
+    current_len = 0
+    for para in text.split("\n\n"):
+        if not para.strip():
+            continue  # pure-whitespace separator run — no content to keep
+        pieces = [para[i:i + limit] for i in range(0, len(para), limit)]
+        for piece in pieces:
+            if current and current_len + 2 + len(piece) > limit:
+                chunks.append("\n\n".join(current))
+                current, current_len = [], 0
+            if current:
+                current_len += 2  # the "\n\n" separator
+            current.append(piece)
+            current_len += len(piece)
+    if current:
+        chunks.append("\n\n".join(current))
+    return chunks
+
+
 def send_text(token: str, chat_id: Any, text: str,
               transport: Optional[Transport] = None,
-              timeout: float = 30) -> Dict[str, Any]:
-    """POST sendMessage: a plain text message. Returns the API result."""
+              timeout: float = 30) -> list:
+    """POST sendMessage: the text as one or more sequential messages.
+
+    #186: text longer than Telegram's 4096-char limit is split into
+    sequential messages (paragraph boundaries first, hard split as a
+    last resort) instead of failing — every chunk is sent, in order,
+    nothing is dropped. Returns the list of API results, one per chunk.
+    """
     if not (text or "").strip():
         raise TelegramShareError("Refusing to send an empty Telegram message.")
-    if len(text) > MAX_TEXT_CHARS:
-        raise TelegramShareError(
-            f"Message is {len(text)} chars — Telegram allows {MAX_TEXT_CHARS}.")
-    return _api(transport, token, "sendMessage",
-                data={"chat_id": str(chat_id), "text": text}, timeout=timeout)
+    return [_api(transport, token, "sendMessage",
+                 data={"chat_id": str(chat_id), "text": chunk},
+                 timeout=timeout)
+            for chunk in split_text(text, MAX_TEXT_CHARS)]
