@@ -1745,20 +1745,20 @@ def test_confirm_popover_marker_immediately_precedes_popover(monkeypatch):
 
 def test_detail_toolbar_weights_fit_full_labels():
     """#38: the Delete trigger was ellipsized to "D..." in the 1.0-weight
-    column, and "Update Hashtags"/"Update Images" also showed "…". Every
-    action column must be weighted to fit its label — #53: labels never
-    change mid-work, so the static labels ("Update Hashtags",
-    "Update Images", "Reset", "Delete" + chevron) are the longest state.
-    #46: Share/Copy joined the same row — Delete stays the trailing (last)
-    column and each toolbar total is unchanged (10.0) so the overall
-    layout — and the #24 baseline alignment — is preserved."""
+    column. #71: hashtags/images are icon-only buttons ("#"/"🖼" glyphs, the
+    tooltip keeps the "Update …" label), so their columns shrank to icon
+    width and the freed weight moved to the spacer — no dead space in the
+    action area, Delete stays trailing. #53: glyph labels never change
+    mid-work, so the static labels are the longest state. #46: Share/Copy
+    joined the same row; each toolbar total is unchanged (10.0) so the
+    overall layout — and the #24 baseline alignment — is preserved."""
     lui, _fake = _ui_with_fake_st()
     assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.0
     assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0
-    # Minimum widths that fit the longest label states (generous headroom
-    # over the old 1.7/1.6/1.3/1.0 weights that truncated).
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 2.0  # Update Hashtags
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 1.8  # Update Images
+    # Icon columns fit the glyph + spinner (generous headroom); text
+    # columns unchanged from the #38 fit.
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # hashtag icon button
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 0.8  # image icon button
     assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 1.3  # Reset popover trigger
     assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.0  # Share popover trigger
     assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Copy popover trigger

@@ -250,44 +250,48 @@ def test_parse_refresh_outcome():
 # ---------------------------------------------------------------------------
 
 def _kind_button_kwargs(**kw):
-    d = dict(story_id="sid1", kind="hashtags", label="Update Hashtags",
+    d = dict(story_id="sid1", kind="hashtags", label="#",
              button_key="lib_tags_sid1", kick_label="hashtag",
-             help_text="Find hashtags for this story's topic and add them",
+             help_text="Update Hashtags",
              busy_kinds=set(), ai_engine=None)
     d.update(kw)
     return d
 
 
 def test_kind_button_label_stable_while_running():
-    """#53: while hashtags runs the button still reads "Update Hashtags"
-    (never "Updating Hashtags…"), is disabled, keeps full width, and the
-    spin marker is emitted for the CSS spinner."""
+    """#53/#71: while hashtags runs the icon button still reads "#" (never
+    "Updating Hashtags…"), is disabled, keeps full width, and the spin
+    marker is emitted for the CSS spinner. The tooltip keeps the
+    "Update Hashtags" label for discoverability."""
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_kind_button_kwargs(busy_kinds={"hashtags"}))
-    assert fake.buttons == [("Update Hashtags", "lib_tags_sid1")]
+    assert fake.buttons == [("#", "lib_tags_sid1")]
     kw = fake.button_kwargs[0]
     assert kw["disabled"] is True
     assert kw["use_container_width"] is True
+    assert kw["help"] == "Update Hashtags"
     assert 'data-marker="lib-spin-hashtags"' in "".join(fake.markup)
 
 
 def test_kind_button_idle_state():
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_kind_button_kwargs())
-    assert fake.buttons == [("Update Hashtags", "lib_tags_sid1")]
+    assert fake.buttons == [("#", "lib_tags_sid1")]
     assert fake.button_kwargs[0]["disabled"] is False
+    assert fake.button_kwargs[0]["help"] == "Update Hashtags"
     assert "lib-spin-hashtags" not in "".join(fake.markup)
 
 
 def test_kind_button_independent_while_sibling_runs():
-    """#54: the images button stays enabled while hashtags runs."""
+    """#54: the images icon button stays enabled while hashtags runs."""
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_kind_button_kwargs(
-        kind="images", label="Update Images", button_key="lib_imgs_sid1",
-        kick_label="image", help_text="Re-fetch news images",
+        kind="images", label="🖼", button_key="lib_imgs_sid1",
+        kick_label="image", help_text="Update Images",
         busy_kinds={"hashtags"}))
-    assert fake.buttons == [("Update Images", "lib_imgs_sid1")]
+    assert fake.buttons == [("🖼", "lib_imgs_sid1")]
     assert fake.button_kwargs[0]["disabled"] is False
+    assert fake.button_kwargs[0]["help"] == "Update Images"
     assert "lib-spin-images" not in "".join(fake.markup)
 
 
