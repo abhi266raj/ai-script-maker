@@ -133,9 +133,10 @@ def test_toolbar_renders_share_copy_in_same_row(monkeypatch):
     # (#84 reverted #60's title popover — every popover here is a toolbar
     # action; #90: icon-only triggers. #94 adds the "⬆" upload popover
     # at the end of the detail view.)
-    assert [p["label"] for p in fake.popovers] == [
+    assert [p["label"] for p in fake.popovers] == ["", "", "", "", "⬆"]
+    assert [p.get("icon") for p in fake.popovers[:4]] == [
         lui._TB_ICON_RESET, lui._TB_ICON_SHARE,
-        lui._TB_ICON_COPY, lui._TB_ICON_DELETE, "⬆"]
+        lui._TB_ICON_COPY, lui._TB_ICON_DELETE]
 
 
 def test_title_edit_toolbar_renders_share_copy(monkeypatch):
@@ -148,8 +149,9 @@ def test_title_edit_toolbar_renders_share_copy(monkeypatch):
                 and abs(sum(s) - 10.0) < 1e-9]
     assert len(toolbars) == 1
     # #94: the "⬆" upload popover renders at the end of the detail view.
-    assert [p["label"] for p in fake.popovers] == [
-        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_DELETE, "⬆"]
+    assert [p["label"] for p in fake.popovers] == ["", "", "", "⬆"]
+    assert [p.get("icon") for p in fake.popovers[:3]] == [
+        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_DELETE]
 
 
 # ---------------------------------------------------------------------------
@@ -164,5 +166,8 @@ def test_share_copy_labels_have_no_baked_chevron(monkeypatch):
     lui._render_share_popover("sid1", "https://example.com/a\n\n#X")
     lui._render_copy_popover("sid1", {"hashtags": []}, "script")
     labels = [p["label"] for p in fake.popovers]
-    assert labels == [lui._TB_ICON_SHARE, lui._TB_ICON_COPY]
-    assert all("⌄" not in label and "∨" not in label for label in labels)
+    icons = [p.get("icon") for p in fake.popovers]
+    assert labels == ["", ""]
+    assert icons == [lui._TB_ICON_SHARE, lui._TB_ICON_COPY]
+    assert all("⌄" not in (label or "") and "∨" not in (label or "")
+               for label in labels)

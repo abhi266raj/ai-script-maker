@@ -1441,8 +1441,10 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
     lui._render_share_popover("sid1", share_text)
-    # Popover trigger is the self-describing dropdown (#30).
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_SHARE
+    # Popover trigger is the self-describing dropdown (#30): icon-only,
+    # native material icon (#111).
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_SHARE
     assert fake.popover_kwargs["key"] == "lib_sharepop_sid1"
     # Copy button gets the exact share text…
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
@@ -1450,11 +1452,10 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     # deep-linking into the installed Mac app (#28) with NO target="_blank"
     # (#95) — st.link_button's forced new tab defeats the deep link.
     assert fake.link_buttons == []
-    # #90: the first markup chunk is the tbicon marker for the icon-only
-    # trigger; the second is the WhatsApp anchor.
-    assert len(fake.markup) == 2
-    assert fake.markup[0] == '<div data-tbicon style="display:none"></div>'
-    anchor = fake.markup[1]
+    # #111: no tbicon marker — the trigger is a native material icon;
+    # the only markup chunk is the WhatsApp anchor.
+    assert len(fake.markup) == 1
+    anchor = fake.markup[0]
     assert 'class="lib-wa-direct"' in anchor
     assert "target=" not in anchor
     import re as _re
@@ -1595,7 +1596,8 @@ def test_share_popover_empty_state(monkeypatch):
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
     lui._render_share_popover("sid1", "")
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_SHARE
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_SHARE
     assert fake.link_buttons == []
     assert fake.codes == []
 
@@ -1610,7 +1612,8 @@ def test_copy_popover_renders_four_actions(monkeypatch):
             "uploaded_images": []}
     script_md = "**Hook:** hello"
     lui._render_copy_popover("sid1", meta, script_md)
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_COPY
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_COPY
     assert fake.popover_kwargs["key"] == "lib_copypop_sid1"
     labels = [c[0] for c in copies]
     assert labels == ["Script", "Script + Tags", "Script + Media", "All"]
@@ -1632,7 +1635,8 @@ def test_copy_popover_empty_state(monkeypatch):
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
     lui._render_copy_popover("sid1", {}, "")
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_COPY
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_COPY
     assert fake.codes == []
 
 
@@ -1652,7 +1656,8 @@ def test_action_dropdowns_have_no_actions_header(monkeypatch):
 def test_reset_popover_idle_wiring():
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", set(), ai_engine=None)
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_RESET
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_RESET
     assert fake.popover_kwargs["key"] == "lib_resetpop_sid1"
     assert fake.popover_kwargs["disabled"] is False
     assert fake.popover_kwargs["on_change"] == "rerun"
@@ -1662,12 +1667,12 @@ def test_reset_popover_idle_wiring():
 
 
 def test_reset_popover_busy_label_stable_and_disabled():
-    # #53: the trigger label NEVER changes to "Resetting…" — it keeps
-    # the reset glyph (#90), shows the CSS spinner and stays disabled
-    # while resetting.
+    # #53: the trigger label NEVER changes to "Resetting…" — it shows
+    # the native spinner icon (#111) and stays disabled while resetting.
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", {"reset"}, ai_engine=None)
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_RESET
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == "spinner"
     assert fake.popover_kwargs["disabled"] is True
 
 
@@ -1676,7 +1681,8 @@ def test_reset_popover_blocked_by_other_kind_no_spinner():
     # not working) while another kind runs.
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", {"hashtags"}, ai_engine=None)
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_RESET
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_RESET
     assert fake.popover_kwargs["disabled"] is True
     assert 'data-marker="lib-spin-reset"' not in "".join(fake.markup)
 

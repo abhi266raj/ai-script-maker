@@ -472,20 +472,22 @@ def test_load_more_button_idle_state():
     lui, fake = _ui_with_fake_st()
     lui._render_load_more_button(**_load_more_kwargs())
     assert fake.buttons == [("Load more images", "lib_moreimg_sid1")]
+    assert fake.button_kwargs[0].get("icon") is None
     assert fake.button_kwargs[0]["disabled"] is False
     assert "lib-spin-more-images" not in "".join(fake.markup)
 
 
 def test_load_more_button_running_shows_spinner_and_disables():
-    """#53: label never changes; spinner + disabled while its kind runs."""
+    """#53: label never changes; native spinner + disabled while its kind runs."""
     lui, fake = _ui_with_fake_st()
     lui._render_load_more_button(
         **_load_more_kwargs(busy_kinds={"more_images"}))
     assert fake.buttons == [("Load more images", "lib_moreimg_sid1")]
     kw = fake.button_kwargs[0]
+    assert kw["icon"] == "spinner"
     assert kw["disabled"] is True
     assert kw["help"] == "Fetch up to 5 more"
-    assert 'data-marker="lib-spin-more-images"' in "".join(fake.markup)
+    assert "lib-spin-more-images" not in "".join(fake.markup)
 
 
 def test_load_more_button_blocked_while_sibling_runs_no_spinner():
@@ -510,8 +512,9 @@ def test_load_more_news_button_markers():
     lui._render_load_more_button(
         **_load_more_kwargs(kind="more_news", busy_kinds={"more_news"}))
     assert fake.buttons == [("Load more news", "lib_morenews_sid1")]
+    assert fake.button_kwargs[0]["icon"] == "spinner"
     assert fake.button_kwargs[0]["disabled"] is True
-    assert 'data-marker="lib-spin-more-news"' in "".join(fake.markup)
+    assert "lib-spin-more-news" not in "".join(fake.markup)
 
 
 def test_load_more_button_click_kicks_kind(monkeypatch):
@@ -535,10 +538,9 @@ def test_load_more_button_kick_failure_is_loud(monkeypatch):
     assert fake.reran is False
 
 
-def test_more_spinner_css_rules_match_dom_order():
-    """The lib-spin-more-* selectors must share the exact adjacent-sibling
-    shape as the hashtags/images/news selectors — a mismatched middle
-    sibling silently kills the spinner (cf. the #81 reset-loader bug)."""
+def test_no_spinner_css_rules_remain():
+    """#111: the marker + ::before spinner CSS is gone — the spinner is
+    Streamlit's native icon="spinner"."""
     import re
     saved = dict(sys.modules)
     chunks = []
@@ -559,14 +561,8 @@ def test_more_spinner_css_rules_match_dom_order():
         sys.modules.update(saved)
     css = "\n".join(chunks)
     clean = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    for kind in ("more_images", "more_news"):
-        # CSS markers use hyphens (lib-spin-more-images).
-        marker = "lib-spin-" + kind.replace("_", "-")
-        pat = (r'div\[data-testid="stElementContainer"\]:has\(\[data-marker='
-               rf'"{marker}"\]\)\s*\+\s*div\[data-testid="stElementContainer"\]'
-               r'\s*\[data-testid="stButton"\]\s*button::before')
-        assert re.search(pat, clean), \
-            f"{marker} selector missing or wrong DOM order"
+    assert "lib-spin-" not in clean
+    assert "button::before" not in clean
 
 
 def test_more_toast_text():
