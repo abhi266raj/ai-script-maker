@@ -292,7 +292,13 @@ def inject_library_css() -> None:
         overflow-x: auto !important;
         gap: var(--lib-chip-gap) !important;
         padding: 10px 10px 12px 10px !important;
-        align-items: start !important;
+        /* #162: vertically center every column in the tray. The old
+           `align-items: start !important` defeated Streamlit's
+           `vertical_alignment="center"` (stylesheet !important beats the
+           inline style), so #166's kwarg was a no-op here and chips/cards
+           stayed top-aligned while only the title/load-more columns were
+           centered via the stretch rules below. */
+        align-items: center !important;
         background: rgba(128, 128, 128, 0.08) !important;
         border-radius: 14px !important;
     }
@@ -563,6 +569,15 @@ def inject_library_css() -> None:
        popover's element container inside the Upload row's button column.
        The border uses a neutral translucent gray — theme-safe in light
        and dark mode. */
+    /* #162: the lib-upload-btn marker div is display:none, but its
+       stElementContainer wrapper still occupies one inter-element gap
+       in the button column's vertical block (the #24/#53/#68 pattern) —
+       pushing the upload popover button below the "Upload" title's
+       optical center. Collapse the wrapper; the `+` sibling selectors
+       below keep matching on DOM order regardless of display. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-upload-btn"]) {
+        display: none !important;
+    }
     div[data-testid="stElementContainer"]:has([data-marker="lib-upload-btn"])
         + div[data-testid="stElementContainer"] [data-testid="stPopoverButton"] {
         border: 1px solid rgba(128, 128, 128, 0.5) !important;
@@ -642,7 +657,12 @@ def inject_library_css() -> None:
         font-size: 30px;
         font-weight: 700;
         line-height: 1.25;
-        margin: 6px 0 2px 0;
+        /* #162: symmetric vertical margins — the old 6px/2px asymmetry
+           shifted the title's optical center 2px below the row's center
+           line, so the edit icon (vertically centered by the columns
+           call) sat visibly high next to the title characters. Total
+           8px vertical breathing room is unchanged. */
+        margin: 4px 0;
         overflow-wrap: anywhere;
     }
     /* #68 follow-up / #84: the story title never shows Streamlit's
@@ -659,6 +679,15 @@ def inject_library_css() -> None:
        hover. The marker div sits directly before the button's element
        container, same proven pattern as the chip × buttons. If the
        selector ever misses it degrades to a normal small button. */
+    /* #162: the lib-title-edit marker div is display:none, but its
+       stElementContainer wrapper still occupies one inter-element gap
+       in the edit button column's vertical block (the #24/#53/#68
+       pattern) — pushing the edit button below the title's optical
+       center. Collapse the wrapper; the `+` sibling selectors below
+       keep matching on DOM order regardless of display. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-title-edit"]) {
+        display: none !important;
+    }
     div[data-testid="stElementContainer"]:has([data-marker="lib-title-edit"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
         background: transparent !important;
