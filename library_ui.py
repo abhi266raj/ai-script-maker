@@ -373,8 +373,8 @@ def inject_library_css() -> None:
         color: inherit !important;
         border-color: rgba(128, 128, 128, 0.7) !important;
     }
-    /* Detail action buttons (Share/Copy) share the same system: one
-       button height (--lib-act-h), one gap, top-aligned in their columns.
+    /* Detail action dropdowns (Share ⌄ / Copy ⌄) share the same system: one
+       gap, top-aligned in their columns.
        Marker-scoped: a hidden [data-marker="lib-actions"] div sits
        directly before the actions st.columns() call. The copy buttons
        render inside an iframe (components.html) and get their height from
@@ -384,18 +384,11 @@ def inject_library_css() -> None:
         gap: var(--lib-chip-gap) !important;
         align-items: start !important;
     }
-    /* v1.5.4: the sibling after the marker is stLayoutWrapper (not
-       stElementContainer), and the anchor is nested inside the link
-       button (descendant, not direct child) — with the real selectors the
-       WhatsApp link button shares the 38px action height with the copy
-       buttons. */
-    div[data-testid="stElementContainer"]:has([data-marker="lib-actions"])
-        + div[data-testid="stLayoutWrapper"] [data-testid="stLinkButton"] a {
-        min-height: var(--lib-act-h) !important;
-        display: inline-flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-    }
+    /* v1.6 (#27/#28/#30): the WhatsApp link button moved inside the Share
+       popover, which renders in a portal outside the marker's subtree, so the
+       old marker-scoped 38px height rule no longer applies. The popover's
+       link button uses use_container_width and Streamlit's native button
+       metrics — no custom height needed. */
     /* macOS HIG: deference — toolbar rows use a hairline, not a heavy box */
     .lib-hairline {
         border-bottom: 1px solid rgba(128, 128, 128, 0.25);
@@ -1114,38 +1107,84 @@ def _compose_news_tags_text(meta: dict) -> str:
 
 
 def _whatsapp_share_url(text: str) -> str:
-    """wa.me share link carrying the EXACT share text (URL-encoded for
-    transport only — the text itself is never reformatted). Opens
-    WhatsApp with the text prefilled; no connection or connector needed.
+    """whatsapp:// deep link carrying the EXACT share text (URL-encoded for
+    transport only — the text itself is never reformatted). macOS routes the
+    whatsapp:// scheme to the installed WhatsApp Mac app, opening it directly
+    with the text prefilled — unlike wa.me links, which always resolve in the
+    browser (WhatsApp Web flow) even when the app is installed. No connection
+    or connector needed.
+
+    Note: st.link_button passes the URL to the frontend unmodified (no scheme
+    validation on the Python side; it renders a plain anchor), so non-http(s)
+    schemes like whatsapp:// work the same way mailto: links already do.
     """
     import urllib.parse as _up
-    return "https://wa.me/?text=" + _up.quote(text, safe="")
+    return "whatsapp://send?text=" + _up.quote(text, safe="")
 
 
-def _render_share_column(story_id: str, share_text: str) -> None:
-    """Share column: "Copy News Link + Hashtags" and "Send via WhatsApp"
-    side by side, then the share-text preview.
+def _render_share_popover(story_id: str, share_text: str) -> None:
+    """Share ⌄ dropdown (native popover, macOS HIG): sub-actions for the
+    story's news-links + hashtags share text.
 
-    The WhatsApp button is a native ``st.link_button`` (theme-safe) to a
-    wa.me deep link carrying the EXACT share text — no reformatting, no
-    WhatsApp connection needed.
+    The redundant st.code(share_text) preview is gone (#27) — the dedicated
+    Hashtags / News Links sections already show that content, and the text
+    stays one click away via "Copy News Link + Hashtags". "Send via WhatsApp"
+    deep-links straight into the installed WhatsApp Mac app (#28).
     """
-    st.markdown('<div class="lib-quiet" style="text-align:left;margin:0 0 4px 0">Share</div>',
-                unsafe_allow_html=True)
-    if share_text:
-        _sh1, _sh2 = st.columns(2)
-        with _sh1:
-            _copy_button("Copy News Link + Hashtags", share_text, f"n-{story_id}")
-        with _sh2:
+    with st.popover("Share ⌄", key=f"lib_sharepop_{story_id}",
+                     help="Share this story's news links and hashtags"):
+        if share_text:
+            _copy_button("Copy News Link + Hashtags", share_text,
+                         f"n-{story_id}")
             st.link_button(
                 "Send via WhatsApp",
                 _whatsapp_share_url(share_text),
-                help="Open WhatsApp with this text prefilled",
+                help="Open the installed WhatsApp Mac app with this text prefilled",
                 use_container_width=True,
             )
-        st.code(share_text)
-    else:
-        st.caption("No news links or hashtags to share yet.")
+        else:
+            st.caption("No news links or hashtags to share yet.")
+
+
+def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
+    """Copy ⌄ dropdown (native popover, macOS HIG): Script / Script + Tags /
+    Script + Media / All — the same one-click copy texts as before, now
+    revealed as sub-actions. Each copy button owns its loading state
+    ("Copied ✓") via _copy_button — no second click.
+    """
+    with st.popover("Copy ⌄", key=f"lib_copypop_{story_id}",
+                     help="Copy the screenplay in different formats"):
+        if script_md:
+            _copy_button("Script", _script_plain_text(script_md),
+                         f"s-{story_id}")
+            _copy_button("Script + Tags",
+                         _compose_share_text(meta, script_md, False, True),
+                         f"h-{story_id}")
+            _copy_button("Script + Media",
+                         _compose_share_text(meta, script_md, True, False),
+                         f"m-{story_id}")
+            _copy_button("All",
+                         _compose_share_text(meta, script_md, True, True),
+                         f"a-{story_id}")
+        else:
+            st.caption("No script to copy yet.")
+
+
+def _render_action_dropdowns(story_id: str, meta: dict, script_md: str) -> None:
+    """Share ⌄ / Copy ⌄ dropdown row (native popovers, macOS HIG).
+
+    The triggers are self-describing, so no vague "Actions" section header
+    is needed (#29). Copied texts are identical to the old flat buttons;
+    only the presentation changed (#30).
+    """
+    _share_text = _compose_news_tags_text(meta)
+    st.markdown('<div data-marker="lib-actions" style="display:none"></div>',
+                unsafe_allow_html=True)
+    _aa1, _aa2 = st.columns(2)
+    with _aa1:
+        _render_share_popover(story_id, _share_text)
+    with _aa2:
+        _render_copy_popover(story_id, meta, script_md)
 
 
 # Shared with --lib-act-h in inject_library_css: the copy button renders
@@ -1264,34 +1303,10 @@ def _render_story_detail(story_id: str) -> None:
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
     script_md = story["script"].strip()
 
-    # Actions at top (compact): Share + Copy live here so the user can grab
-    # anything without scrolling past the script. Copied texts are identical
-    # to before — only the position changed.
-    st.markdown('<div class="lib-section">Actions</div>', unsafe_allow_html=True)
-    _share_text = _compose_news_tags_text(meta)
-    st.markdown('<div data-marker="lib-actions" style="display:none"></div>',
-                unsafe_allow_html=True)
-    _aa1, _aa2 = st.columns([3, 2])
-    with _aa1:
-        _render_share_column(story_id, _share_text)
-    with _aa2:
-        st.markdown('<div class="lib-quiet" style="text-align:left;margin:0 0 4px 0">Copy</div>',
-                    unsafe_allow_html=True)
-        if script_md:
-            _ac1, _ac2 = st.columns(2)
-            with _ac1:
-                _copy_button("Script", _script_plain_text(script_md), f"s-{story_id}")
-                _copy_button("Script + Tags",
-                             _compose_share_text(meta, script_md, False, True),
-                             f"h-{story_id}")
-            with _ac2:
-                _copy_button("Script + Media",
-                             _compose_share_text(meta, script_md, True, False),
-                             f"m-{story_id}")
-                _copy_button("All", _compose_share_text(meta, script_md, True, True),
-                             f"a-{story_id}")
-        else:
-            st.caption("No script to copy yet.")
+    # Share / Copy dropdowns (compact, at top) so the user can grab anything
+    # without scrolling past the script. See _render_action_dropdowns for
+    # the #27/#28/#29/#30 rework notes.
+    _render_action_dropdowns(story_id, meta, script_md)
 
     # Title at top: big, multiline, centered, with a small inline edit icon.
     # While editing, a borderless editor takes its place (Save/Cancel live
