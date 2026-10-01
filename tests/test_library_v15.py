@@ -1046,13 +1046,14 @@ class _FakeSt:
         self.link_buttons = []  # (label, url) in render order
         self.codes = []
         self.markup = []  # raw markdown html, in render order
+        self.captions = []  # caption text, in render order (#95)
         self.toasts = []  # (message, icon) in render order
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
 
     def caption(self, *a, **k):
-        pass
+        self.captions.append(a[0] if a else "")
 
     def success(self, msg):
         self.successes.append(msg)
@@ -1436,6 +1437,8 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: copies.append((label, text, key)))
+    # #95: WhatsApp.app present → direct deep link, no browser tab.
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
     lui._render_share_popover("sid1", share_text)
     # Popover trigger is the self-describing dropdown (#30).
@@ -1443,16 +1446,81 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     assert fake.popover_kwargs["key"] == "lib_sharepop_sid1"
     # Copy button gets the exact share text…
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
-    # …and the WhatsApp link carries the exact same text, URL-encoded,
-    # deep-linking into the installed Mac app (#28).
-    assert fake.link_buttons == [("Send via WhatsApp",
-                                  lui._whatsapp_share_url(share_text))]
-    assert fake.link_buttons[0][1].startswith("whatsapp://send?text=")
+    # …and the WhatsApp anchor carries the exact same text, URL-encoded,
+    # deep-linking into the installed Mac app (#28) with NO target="_blank"
+    # (#95) — st.link_button's forced new tab defeats the deep link.
+    assert fake.link_buttons == []
+    assert len(fake.markup) == 1
+    anchor = fake.markup[0]
+    assert 'class="lib-wa-direct"' in anchor
+    assert "target=" not in anchor
+    import re as _re
+    import html as _html
+    m = _re.search(r'href="([^"]+)"', anchor)
+    assert m and m.group(1).startswith("whatsapp://send?text=")
+    assert "wa.me" not in m.group(1)
     import urllib.parse as up
-    sent = up.unquote(fake.link_buttons[0][1].split("?text=", 1)[1])
+    sent = up.unquote(_html.unescape(m.group(1)).split("?text=", 1)[1])
     assert sent == share_text
+    assert "Send via WhatsApp" in anchor
     # No share-text preview block anymore (#27).
     assert fake.codes == []
+
+
+def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    copies = []
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: copies.append((label, text, key)))
+    # #95: no WhatsApp.app → honest inline note; never a dead link, never a
+    # silent wa.me browser fallback (the user asked for direct app handoff).
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: False)
+    share_text = "https://example.com/a\n\n#DogShowdown #Funny"
+    lui._render_share_popover("sid1", share_text)
+    assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
+    assert fake.link_buttons == []
+    assert not any("whatsapp://" in m for m in fake.markup)
+    assert any("not installed" in c for c in fake.captions)
+
+
+def test_whatsapp_app_installed_detects_applications_dir(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    import os as _os
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr("os.path.isdir",
+                            lambda p: p == "/Applications/WhatsApp.app")
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # …and the ~/Applications fallback.
+        home_app = _os.path.expanduser("~/Applications/WhatsApp.app")
+        monkeypatch.setattr("os.path.isdir", lambda p: p == home_app)
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # Neither location → not installed.
+        monkeypatch.setattr("os.path.isdir", lambda p: False)
+        assert lui._whatsapp_app_installed() is False
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+def test_whatsapp_app_installed_is_cached(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    import os as _os
+    calls = []
+    real_isdir = _os.path.isdir
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        def _counting(p):
+            calls.append(p)
+            return real_isdir(p)
+        monkeypatch.setattr("os.path.isdir", _counting)
+        lui._whatsapp_app_installed()
+        lui._whatsapp_app_installed()
+        # Two candidate paths checked once; the second call hits the cache.
+        assert len(calls) == 2
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
 
 
 def test_share_popover_empty_state(monkeypatch):
