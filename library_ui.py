@@ -371,7 +371,7 @@ def inject_library_css() -> None:
         gap: var(--lib-chip-gap) !important;
         align-items: start !important;
     }
-    /* v1.5.3: the sibling after the marker is stLayoutWrapper (not
+    /* v1.5.4: the sibling after the marker is stLayoutWrapper (not
        stElementContainer), and the anchor is nested inside the link
        button (descendant, not direct child) — with the real selectors the
        WhatsApp link button shares the 38px action height with the copy
