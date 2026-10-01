@@ -141,7 +141,7 @@ def test_suggest_hashtags_ai_success_validated(libdir, monkeypatch):
     de = _dual_engine_module()  # the module, not the instance
 
     class _FakeEngine:
-        def generate(self, prompt="", instructions="", mode=""):
+        def generate(self, prompt="", instructions="", mode="", timeout=None):
             assert mode == "codex_only"
             return "#ChubbyDogs\n#RussiaKillsFour\n", "fake-engine"
 
@@ -168,7 +168,8 @@ def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
                         lambda story, topic, ai_engine=None: (["#DogShowdown", "#ChubbyDogs"], ""))
-    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
+    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
+                                            ai_engine="codex_only")
     assert changed is True
     assert "Validated 1 existing hashtag(s)." in note
     assert "Added 1: #ChubbyDogs." in note
@@ -180,7 +181,8 @@ def test_refresh_hashtags_no_change_is_honest(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
                         lambda story, topic, ai_engine=None: (["#DogShowdown"], ""))
-    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
+    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
+                                            ai_engine="codex_only")
     assert changed is False
     assert "Validated 1 existing hashtag(s)." in note
     assert "Everything still valid — nothing new found." in note
@@ -193,7 +195,8 @@ def test_refresh_hashtags_removes_invalid_existing(libdir, monkeypatch):
                                "#FormatRequirementVertical", "bogus"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
                         lambda story, topic, ai_engine=None: ([], ""))
-    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
+    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
+                                            ai_engine="codex_only")
     assert changed is True
     assert ("Removed 3 not relevant to the story topic/headline: "
             "#RussiaKillsFour, #FormatRequirementVertical, bogus.") in note
@@ -207,14 +210,36 @@ def test_refresh_hashtags_removes_invalid_existing(libdir, monkeypatch):
 
 def test_start_refresh_falls_back_to_title(libdir, monkeypatch):
     sid = _make_story(source_topic="")  # old story without source_topic
-    monkeypatch.setattr(lib, "_refresh_worker",
-                        lambda sid_, kind, topic, ai_engine=None: None)
-    assert lib.start_refresh(sid, "hashtags") is True
+    lib.update_story_fields(sid, enrichment_status="succeeded")  # idle, not busy
+    seen = {}
+    done = threading.Event()
+
+    def _fake_worker(sid_, kind, topic, ai_engine=None):
+        seen["topic"] = topic
+        done.set()
+
+    monkeypatch.setattr(lib, "_refresh_worker", _fake_worker)
+    ok, reason = lib.start_refresh(sid, "hashtags")
+    assert ok, reason
+    assert done.wait(timeout=5)
+    assert seen["topic"] == "Dog Showdown Reel"
 
 
 def test_start_refresh_rejects_bad_kind(libdir):
     sid = _make_story()
-    assert lib.start_refresh(sid, "bogus") is False
+    ok, reason = lib.start_refresh(sid, "bogus")
+    assert not ok and "bogus" in reason
+
+
+def test_start_refresh_refuses_while_busy(libdir):
+    sid = _make_story()
+    lib.update_story_fields(sid, enrichment_status="running", refresh_kind="hashtags")
+    ok, reason = lib.start_refresh(sid, "hashtags")
+    assert not ok and "already running" in reason
+    # The in-flight state is untouched — the loader keeps showing.
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "running"
+    assert meta["refresh_kind"] == "hashtags"
 
 
 def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
@@ -226,14 +251,26 @@ def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
     monkeypatch.setattr(lib, "refresh_hashtags", _boom)
     lib._refresh_worker(sid, "hashtags", "chubby dogs voting contest")
     meta = lib.load_story(sid)["meta"]
-    assert meta["enrichment_status"] == "done"
+    assert meta["enrichment_status"] == "failed"
     assert meta["refresh_kind"] == ""
-    assert "Refresh failed" in meta["refresh_note"]
+    assert "Hashtag refresh failed" in meta["refresh_note"]
     assert "network down" in meta["refresh_note"]
 
 
-def test_refresh_worker_busy_lock_is_honest(libdir):
+def test_refresh_worker_no_change_state(libdir, monkeypatch):
     sid = _make_story()
+    monkeypatch.setattr(lib, "refresh_images",
+                        lambda sid_, topic: (False, "No new images found; kept 1 existing."))
+    lib._refresh_worker(sid, "images", "chubby dogs voting contest")
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "no_change"
+    assert meta["refresh_kind"] == ""
+    assert "No new images" in meta["refresh_note"]
+
+
+def test_refresh_worker_busy_lock_leaves_state_untouched(libdir):
+    sid = _make_story()
+    lib.update_story_fields(sid, enrichment_status="running", refresh_kind="hashtags")
     lock = lib._ENRICH_LOCKS.setdefault(sid, threading.Lock())
     assert lock.acquire(blocking=False)
     try:
@@ -241,7 +278,10 @@ def test_refresh_worker_busy_lock_is_honest(libdir):
     finally:
         lock.release()
     meta = lib.load_story(sid)["meta"]
-    assert "already running" in meta["refresh_note"]
+    # The losing worker must not clobber the in-flight "running" state —
+    # the UI keeps showing the loader instead of flipping to idle.
+    assert meta["enrichment_status"] == "running"
+    assert meta["refresh_kind"] == "hashtags"
 
 
 # ---------------------------------------------------------------------------
@@ -255,7 +295,9 @@ def test_do_media_refresh_returns_note_and_preserves_links(libdir, monkeypatch):
     monkeypatch.setattr(lib, "_fetch_images_for_story", lambda story, topic, **k: [])
     monkeypatch.setattr(lib, "_suggest_hashtags",
                         lambda story, topic, ai_engine=None: (["#NewTag"], ""))
-    note = lib._do_media_refresh(sid, "chubby dogs voting contest")
+    changed, note = lib._do_media_refresh(sid, "chubby dogs voting contest",
+                                          ai_engine="agy_only")
+    assert changed is True
     assert isinstance(note, str) and note
     meta = lib.load_story(sid)["meta"]
     assert meta["news_links"] == links, "retry must never touch verified links"
@@ -263,13 +305,40 @@ def test_do_media_refresh_returns_note_and_preserves_links(libdir, monkeypatch):
     assert "#DogShowdown" in meta["hashtags"]
 
 
+def test_do_media_refresh_ai_off_fails_loudly(libdir):
+    sid = _make_story()
+    with pytest.raises(RuntimeError, match="AI processing is disabled"):
+        lib._do_media_refresh(sid, "chubby dogs voting contest", ai_engine=None)
+
+
 def test_enrich_worker_records_retry_note(libdir):
     sid = _make_story()
     lib._enrich_worker(sid, "chubby dogs voting contest",
-                       lambda s, t: "Images updated (2 found).")
+                       lambda s, t: (True, "Images updated (2 found)."))
     meta = lib.load_story(sid)["meta"]
-    assert meta["enrichment_status"] == "done"
+    assert meta["enrichment_status"] == "succeeded"
     assert meta["refresh_note"] == "Images updated (2 found)."
+
+
+def test_enrich_worker_failure_is_failed_not_done(libdir):
+    sid = _make_story()
+
+    def _boom(sid_, topic):
+        raise RuntimeError("disk gone")
+
+    lib._enrich_worker(sid, "chubby dogs voting contest", _boom)
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "failed"
+    assert "disk gone" in meta["refresh_note"]
+
+
+def test_start_enrichment_no_topic_is_no_change(libdir):
+    sid = _make_story()
+    ok, reason = lib.start_enrichment(sid, "")
+    assert not ok
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "no_change"
+    assert "No topic" in meta["refresh_note"]
 
 
 # ---------------------------------------------------------------------------
@@ -418,7 +487,9 @@ def test_do_media_refresh_merges_images(libdir, monkeypatch):
                         lambda story, topic, **k: ["https://img.example/new.jpg"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
                         lambda story, topic, ai_engine=None: ([], ""))
-    note = lib._do_media_refresh(sid, "chubby dogs voting contest")
+    changed, note = lib._do_media_refresh(sid, "chubby dogs voting contest",
+                                          ai_engine="agy_only")
+    assert changed is True
     meta = lib.load_story(sid)["meta"]
     assert meta["image_urls"] == ["https://img.example/old.jpg",
                                  "https://img.example/new.jpg"]
@@ -557,7 +628,7 @@ def test_ai_finds_trending_tags_with_news_link_context(libdir, monkeypatch):
     seen = {}
 
     class _FakeEngine:
-        def generate(self, prompt="", instructions="", mode=""):
+        def generate(self, prompt="", instructions="", mode="", timeout=None):
             seen["prompt"] = prompt
             seen["mode"] = mode
             return "#DelhiDogShow\n#DogContestDelhi\n", "fake-engine"
@@ -578,7 +649,7 @@ def test_ai_irrelevant_tags_dropped_however_trending(libdir, monkeypatch):
     de = _dual_engine_module()
 
     class _FakeEngine:
-        def generate(self, prompt="", instructions="", mode=""):
+        def generate(self, prompt="", instructions="", mode="", timeout=None):
             return "#DelhiDogShow\n#CryptoMoonShot\n", "fake-engine"
 
     monkeypatch.setattr(de, "dual_engine", _FakeEngine())
@@ -594,7 +665,7 @@ def test_ai_empty_result_falls_back_and_note_says_so(libdir, monkeypatch):
     de = _dual_engine_module()
 
     class _FakeEngine:
-        def generate(self, prompt="", instructions="", mode=""):
+        def generate(self, prompt="", instructions="", mode="", timeout=None):
             return "#CryptoMoonShot\n", "fake-engine"
 
     monkeypatch.setattr(de, "dual_engine", _FakeEngine())
@@ -611,7 +682,7 @@ def test_suggest_hashtags_note_states_ai_path(libdir, monkeypatch):
     de = _dual_engine_module()
 
     class _FakeEngine:
-        def generate(self, prompt="", instructions="", mode=""):
+        def generate(self, prompt="", instructions="", mode="", timeout=None):
             return "#DelhiDogShow\n", "fake-engine"
 
     monkeypatch.setattr(de, "dual_engine", _FakeEngine())
@@ -677,3 +748,101 @@ def test_compose_news_tags_text_tags_only_and_empty():
     assert lui._compose_news_tags_text({"hashtags": ["#Only"]}) == "#Only"
     assert lui._compose_news_tags_text({}) == ""
     assert lui._compose_news_tags_text({"news_links": [], "hashtags": []}) == ""
+
+
+# ---------------------------------------------------------------------------
+# AI toggle: explicit refresh with AI off fails loudly, never silently falls back
+# ---------------------------------------------------------------------------
+
+def test_refresh_hashtags_ai_off_raises_loudly(libdir):
+    sid = _make_story()
+    with pytest.raises(RuntimeError, match="AI processing is disabled"):
+        lib.refresh_hashtags(sid, "chubby dogs voting contest", ai_engine=None)
+
+
+def test_update_hashtags_ai_off_reports_failed_and_changes_nothing(libdir):
+    sid = _make_story()
+    lib.update_story_fields(sid, enrichment_status="succeeded")  # idle
+    lib._refresh_worker(sid, "hashtags", "chubby dogs voting contest", ai_engine=None)
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "failed"
+    assert meta["refresh_kind"] == ""
+    assert "AI processing is disabled" in meta["refresh_note"]
+    assert "enable AI processing in Library settings" in meta["refresh_note"]
+    assert meta["hashtags"] == ["#DogShowdown"], "failed refresh must change no tags"
+
+
+def test_ai_hashtag_suggestions_uses_bounded_timeout(libdir, monkeypatch):
+    de = _dual_engine_module()  # the module, not the instance
+    seen = {}
+
+    class _FakeEngine:
+        def generate(self, prompt="", instructions="", mode="", timeout=None):
+            seen["timeout"] = timeout
+            return "#DogShowdown", "fake-engine"
+
+    monkeypatch.setattr(de, "dual_engine", _FakeEngine())
+    story = {"meta": {"title": "Dog Showdown Reel",
+                      "source_topic": "chubby dogs voting contest",
+                      "source_headline": "Chubby dogs battle in voting contest"}}
+    tags = lib._ai_hashtag_suggestions(story, "chubby dogs voting contest", "agy_only")
+    assert seen["timeout"] == lib._AI_HASHTAG_TIMEOUT_S
+    assert tags == ["#DogShowdown"]
+
+
+# ---------------------------------------------------------------------------
+# Timeouts: slow steps raise TimeoutError naming the step; refreshes stay honest
+# ---------------------------------------------------------------------------
+
+def test_run_bounded_times_out_and_names_step():
+    import time as _t
+    with pytest.raises(TimeoutError, match="slow step"):
+        lib._run_bounded(lambda: _t.sleep(30), 0.2, "slow step")
+
+
+def test_run_bounded_reraises_worker_errors_loudly():
+    def _boom():
+        raise ValueError("kaput")
+
+    with pytest.raises(ValueError, match="kaput"):
+        lib._run_bounded(_boom, 5.0, "step")
+
+
+def test_refresh_images_timeout_keeps_existing_media(libdir, monkeypatch):
+    sid = _make_story()
+    lib.update_story_fields(sid, image_urls=["https://img.example/kept.jpg"])
+
+    def _hang(story, topic, tries=3):
+        raise TimeoutError("article image fetch timed out after 40s")
+
+    monkeypatch.setattr(lib, "_fetch_images_for_story", _hang)
+    changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
+    assert changed is False
+    assert "timed out" in note and "article image fetch" in note
+    meta = lib.load_story(sid)["meta"]
+    assert meta["image_urls"] == ["https://img.example/kept.jpg"]
+
+
+# ---------------------------------------------------------------------------
+# Startup recovery: orphaned busy states become interrupted, never stuck
+# ---------------------------------------------------------------------------
+
+def test_recover_orphaned_refreshes(libdir, monkeypatch):
+    monkeypatch.setattr(lib, "_RECOVERY_DONE", False)
+    s1 = _make_story(title="Stuck refresh")
+    lib.update_story_fields(s1, enrichment_status="refreshing", refresh_kind="hashtags")
+    s2 = _make_story(title="Stuck pending")
+    lib.update_story_fields(s2, enrichment_status="pending", refresh_kind="all")
+    s3 = _make_story(title="Healthy done")
+    lib.update_story_fields(s3, enrichment_status="succeeded", refresh_note="ok")
+    assert lib.recover_orphaned_refreshes() == 2
+    for sid in (s1, s2):
+        meta = lib.load_story(sid)["meta"]
+        assert meta["enrichment_status"] == "interrupted"
+        assert meta["refresh_kind"] == ""
+        assert "interrupted" in meta["refresh_note"]
+    healthy = lib.load_story(s3)["meta"]
+    assert healthy["enrichment_status"] == "succeeded"
+    assert healthy["refresh_note"] == "ok"
+    # Idempotent: a second call in the same process recovers nothing.
+    assert lib.recover_orphaned_refreshes() == 0

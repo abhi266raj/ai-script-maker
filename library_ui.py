@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import html as _html
 import re as _re
+import time as _time
 import streamlit as st
 
 import story_library as lib
@@ -435,7 +436,7 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
     st.session_state["lib_autosaved_for"] = guard
     st.session_state.pop("lib_save_failed_for", None)
     topic = st.session_state.get("run_topic", "") or ""
-    lib.start_enrichment(story_id, topic)
+    _ok, _why = lib.start_enrichment(story_id, topic)
 
 
 def _verified_news_links(batch_result) -> list:
@@ -528,7 +529,7 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
         st.session_state["lib_autosaved_for"] = guard
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
-        lib.start_enrichment(story_id, topic)
+        _ok, _why = lib.start_enrichment(story_id, topic)
         st.success("Saved to Library.")
         st.rerun()
 
@@ -541,6 +542,9 @@ def render_library_page() -> None:
     # macOS HIG: the tab bar already identifies this view — no redundant
     # large title repeating "Library". Deference: content first.
     _inject_story_list_css()
+    # Once per process: clear refresh states orphaned by a dead worker so
+    # buttons can never stay stuck on a previous run's "Updating…".
+    lib.recover_orphaned_refreshes()
     stories = lib.list_stories()
 
     if not stories:
@@ -799,17 +803,19 @@ def _render_story_detail(story_id: str) -> None:
     # (in-button loader); there are no detached progress messages.
     # Refreshes run in daemon threads, so tab switches never interrupt them.
     _status = meta.get("enrichment_status")
-    _refresh_kind = meta.get("refresh_kind", "") if _status in ("pending", "refreshing") else ""
+    _refresh_kind = meta.get("refresh_kind", "") if _status in lib.BUSY_STATES else ""
     _busy = bool(_refresh_kind)
     _editing = bool(st.session_state.get(f"lib_edit_title_{story_id}"))
     _confirm_del = bool(st.session_state.get(f"lib_confirm_del_{story_id}"))
     _ai_engine = _library_ai_engine()
 
     def _kick_refresh(kind: str, label: str) -> None:
-        if lib.start_refresh(story_id, kind, ai_engine=_ai_engine):
+        ok, reason = lib.start_refresh(story_id, kind, ai_engine=_ai_engine)
+        if ok:
             st.rerun()
         else:
-            st.error(f"Could not start the {label} refresh.")
+            st.error(f"Could not start the {label} refresh: {reason}" if reason
+                     else f"Could not start the {label} refresh.")
 
     def _delete_first_step() -> None:
         if _danger_button("Delete", key=f"lib_del_{story_id}",
@@ -871,10 +877,12 @@ def _render_story_detail(story_id: str) -> None:
                          key=f"lib_retry_{story_id}",
                          help="Re-run the hashtag + image fetch for this story",
                          disabled=_busy):
-                if lib.retry_enrichment(story_id, ai_engine=_ai_engine):
+                ok, reason = lib.retry_enrichment(story_id, ai_engine=_ai_engine)
+                if ok:
                     st.rerun()
                 else:
-                    st.error("Could not start the retry.")
+                    st.error(f"Could not start the retry: {reason}" if reason
+                             else "Could not start the retry.")
         with tc5:
             _delete_first_step()
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
@@ -1000,7 +1008,7 @@ def _render_story_detail(story_id: str) -> None:
                          help="Remove this uploaded image"):
                 lib.remove_uploaded_image(story_id, f)
                 st.rerun()
-    if not img_urls and not uploaded and meta.get("enrichment_status") != "pending":
+    if not img_urls and not uploaded and meta.get("enrichment_status") not in lib.BUSY_STATES:
         st.caption("No images yet — try ↻ Retry or upload manually below.")
     links = meta.get("news_links") or []
     if links:
@@ -1010,7 +1018,7 @@ def _render_story_detail(story_id: str) -> None:
             src = lk.get("source", "")
             label = f"{title} ({src})" if src else title
             st.markdown(f"[{label}]({url})" if url else label)
-    elif meta.get("enrichment_status") != "pending":
+    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
         st.caption("No news links yet.")
 
     # Video upload + playback
@@ -1043,6 +1051,19 @@ def _render_story_detail(story_id: str) -> None:
 
     # (All primary actions — Edit, Update Hashtags, Update Images, Retry
     # Media, Delete — live in the detail toolbar at the top.)
+
+    # Auto-poll while a refresh is in flight. The daemon worker thread
+    # cannot trigger st.rerun() itself, so without this the page would
+    # never repaint on completion — and the loader painted by the kickoff
+    # rerun could miss its window entirely. While busy, re-render on a
+    # short cadence; the moment the worker writes its terminal state the
+    # page settles to the idle buttons plus the honest result note. Fully
+    # automatic — no "click to check status" hunting. The loop always
+    # terminates: workers always write a terminal state, and startup
+    # recovery clears anything a dead process left behind.
+    if _busy:
+        _time.sleep(1.0)
+        st.rerun()
 
 
 def _md_to_html(md: str) -> str:

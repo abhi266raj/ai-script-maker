@@ -22,6 +22,7 @@ import json
 import re
 import threading
 import time
+import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -38,6 +39,27 @@ PREFS_PATH = LIBRARY_ROOT / "prefs.json"
 _STORY_ID_RE = re.compile(r"^[0-9A-Za-z-]{8,64}$")
 _ENRICH_LOCKS: Dict[str, threading.Lock] = {}
 _ENRICH_THREADS: Dict[str, threading.Thread] = {}
+
+# Set once per process by recover_orphaned_refreshes().
+_RECOVERY_DONE = False
+
+# Refresh state machine (persisted as ``enrichment_status`` frontmatter).
+#   pending      — queued; set at save time / when a retry is kicked off.
+#   running      — a worker thread is actively refreshing.
+#   succeeded    — the worker finished and changed something.
+#   no_change    — the worker finished; nothing needed changing.
+#   failed       — the worker raised; ``refresh_note`` carries the real error.
+#   interrupted  — recovered at startup: a previous process died mid-refresh.
+# Legacy values "refreshing" (busy) and "done" (terminal) are still
+# recognized when *reading* old stories, but are never written anymore.
+BUSY_STATES = ("pending", "refreshing", "running")
+
+# Hard wall-clock bound for one AI hashtag-discovery call inside a refresh.
+_AI_HASHTAG_TIMEOUT_S = 45
+
+# Fail-loud message when hashtag discovery is asked for with AI off.
+_AI_DISABLED_MSG = ("AI processing is disabled — enable AI processing in "
+                    "Library settings to find trending hashtags.")
 
 
 def library_root() -> Path:
@@ -461,6 +483,36 @@ def remove_uploaded_image(story_id: str, filename: str) -> bool:
 # Post-save enrichment (background threads; best-effort; never blocks save)
 # ---------------------------------------------------------------------------
 
+def _run_bounded(fn, timeout_s: float, step_name: str):
+    """Run ``fn()`` with a hard wall-clock bound.
+
+    The callable runs in a daemon thread; if it is still alive after
+    ``timeout_s`` seconds, ``TimeoutError`` is raised naming the step.
+    Threads can't be killed — the orphaned daemon thread keeps running in
+    the background but its result is discarded, so a stuck network call
+    can never hang a refresh. ``fn`` must be side-effect free (pure
+    fetch); all persistence happens in the caller after the bound
+    returns. Exceptions raised by ``fn`` itself are re-raised loudly.
+    """
+    result: Dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            result["value"] = fn()
+        except Exception as e:  # re-raised in the caller, loudly
+            result["error"] = e
+
+    t = threading.Thread(target=_target, daemon=True,
+                         name=f"bounded-{step_name}")
+    t.start()
+    t.join(timeout=timeout_s)
+    if t.is_alive():
+        raise TimeoutError(f"{step_name} timed out after {timeout_s:g}s")
+    if "error" in result:
+        raise result["error"]
+    return result.get("value")
+
+
 def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
     """Best-effort hero-image extraction from an article page.
 
@@ -539,31 +591,73 @@ def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
 
 
 def _enrich_worker(story_id: str, topic: str, do_work) -> None:
-    """Run do_work under the per-story lock; write back to the story.
+    """Run do_work under the per-story lock; write back an honest state.
 
-    The story's enrichment_status is ALWAYS flipped to done at the end —
-    even if every fetch fails — so the UI never sticks on "pending".
-    When do_work returns a non-empty string it is recorded as the story's
-    ``refresh_note`` so the outcome (success / no-change / failure) is
-    visible instead of silent.
+    ``do_work`` returns ``(changed, note)``. The story's
+    ``enrichment_status`` becomes ``succeeded`` / ``no_change`` /
+    ``failed`` accordingly — a failure is never recorded as a success,
+    and the real error text lands in ``refresh_note``. A failure to
+    persist the final state is printed loudly, never swallowed.
     """
     lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
     if not lock.acquire(blocking=False):
         return
-    note = ""
     try:
-        result = do_work(story_id, topic)
-        if isinstance(result, str) and result.strip():
-            note = result.strip()
-    finally:
         try:
-            fields: Dict[str, Any] = {"enrichment_status": "done", "refresh_kind": ""}
-            if note:
-                fields["refresh_note"] = note
-            update_story_fields(story_id, **fields)
+            changed, note = do_work(story_id, topic)
+            status = "succeeded" if changed else "no_change"
+        except Exception as e:
+            status = "failed"
+            note = f"Enrichment failed: {type(e).__name__}: {e}"
+        try:
+            update_story_fields(story_id, enrichment_status=status,
+                                refresh_kind="", refresh_note=note or "")
         except Exception:
-            pass
+            traceback.print_exc()
+    finally:
         lock.release()
+
+
+def recover_orphaned_refreshes() -> int:
+    """Mark stories stuck in a busy refresh state as interrupted.
+
+    Refresh workers live only in this process's memory: when the
+    Streamlit process restarts, any persisted busy state (``pending`` /
+    ``refreshing`` / ``running``) is orphaned and its buttons would stay
+    stuck forever. Runs once per process — at process start no worker of
+    ours can be alive, so every busy state found here is orphaned by
+    definition. Recovered stories get ``interrupted`` plus an honest
+    note; nothing else is touched. Returns the number recovered.
+    """
+    global _RECOVERY_DONE
+    if _RECOVERY_DONE:
+        return 0
+    _RECOVERY_DONE = True
+    recovered = 0
+    for summary in list_stories():
+        sid = summary.get("id") or ""
+        if not sid:
+            continue
+        try:
+            story = load_story(sid)
+        except Exception:
+            continue
+        if not story:
+            continue
+        if (story.get("meta") or {}).get("enrichment_status") in BUSY_STATES:
+            try:
+                update_story_fields(
+                    sid,
+                    enrichment_status="interrupted",
+                    refresh_kind="",
+                    refresh_note=("A previous refresh was interrupted (the app "
+                                  "restarted while it was running). Nothing was "
+                                  "changed — try again."),
+                )
+                recovered += 1
+            except Exception:
+                traceback.print_exc()
+    return recovered
 
 
 def _fetch_news_articles(topic: str, limit: int = 6):
@@ -580,14 +674,14 @@ def _url_is_image(url: str) -> bool:
     try:
         import httpx
         try:
-            r = httpx.head(url, timeout=8, follow_redirects=True,
+            r = httpx.head(url, timeout=5, follow_redirects=True,
                            headers={"User-Agent": "Mozilla/5.0"})
             if r.status_code == 200:
                 return r.headers.get("content-type", "").startswith("image/")
         except Exception:
             pass
         # Some hosts reject HEAD — do a minimal GET and check the content type.
-        with httpx.stream("GET", url, timeout=8, follow_redirects=True,
+        with httpx.stream("GET", url, timeout=5, follow_redirects=True,
                           headers={"User-Agent": "Mozilla/5.0"}) as r:
             return r.status_code == 200 and r.headers.get("content-type", "").startswith("image/")
     except Exception:
@@ -604,7 +698,7 @@ def _search_web_images(topic: str, limit: int = 4) -> List[str]:
         import subprocess
         proc = subprocess.run(
             ["/opt/hatch/bin/image-search", topic, "--max-results", str(limit)],
-            capture_output=True, text=True, timeout=45)
+            capture_output=True, text=True, timeout=25)
         data = _json.loads(proc.stdout or "{}")
         urls: List[str] = []
         for r in data.get("results") or []:
@@ -732,14 +826,22 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
     <img> photos are extracted (news sites carry real photos in body <img>
     tags). Only when those yield nothing do we fall back to topic-search
     articles and web image search.
+
+    Every step runs under a hard wall-clock bound (via ``_run_bounded``):
+    a stuck host raises ``TimeoutError`` naming the step instead of
+    hanging the refresh. Pure fetch — no persistence here.
     """
     direct = _story_direct_link_urls(story)
     if direct:
-        found = _grab_article_images(direct[:6], tries=tries)
+        found = _run_bounded(
+            lambda: _grab_article_images(direct[:6], tries=tries),
+            40.0, "article image fetch")
         if found:
             return found[:6]
     articles = _fetch_news_articles(topic, limit=6)
-    return _fetch_article_images(articles, topic, tries=tries)
+    return _run_bounded(
+        lambda: _fetch_article_images(articles, topic, tries=tries),
+        90.0, "topic image fetch")
 
 
 def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str]:
@@ -747,13 +849,32 @@ def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str
 
     Tries hero-image extraction from the article pages (parallel, with
     retries). If that finds nothing at all, falls back to a web image search
-    for the topic so the story still gets images.
+    for the topic so the story still gets images. Candidate preflights run
+    in parallel under a bounded join — sequential HEAD+GET checks used to
+    cost up to 16s per URL.
     """
     urls = [getattr(a, "link", "") for a in articles[:6]]
     found = _grab_og_images(urls, tries=tries)
     if not found and topic.strip():
-        for u in _search_web_images(topic.strip(), limit=4):
-            if _url_is_image(u) and u not in found:
+        candidates = _search_web_images(topic.strip(), limit=4)
+        good: List[str] = []
+        good_lock = threading.Lock()
+        check_threads: List[threading.Thread] = []
+
+        def _check(u: str) -> None:
+            if u and _url_is_image(u):
+                with good_lock:
+                    if u not in good:
+                        good.append(u)
+
+        for u in candidates:
+            t = threading.Thread(target=_check, args=(u,), daemon=True)
+            t.start()
+            check_threads.append(t)
+        for t in check_threads:
+            t.join(timeout=20.0)
+        for u in good:
+            if u not in found:
                 found.append(u)
     return found[:6]
 
@@ -934,6 +1055,9 @@ def _ai_hashtag_suggestions(story: Dict[str, Any], topic: str,
                           "must be relevant to the topic; never invent "
                           "unrelated trends."),
             mode=engine_mode,
+            # Bounded: an AI call must never hang a refresh. On timeout the
+            # caller falls back to deterministic tags with an honest note.
+            timeout=_AI_HASHTAG_TIMEOUT_S,
         )
     except ModelGenerationError:
         raise
@@ -1014,13 +1138,20 @@ def refresh_hashtags(story_id: str, topic: str = "",
     removed; the note honestly reports what was validated, removed, and
     added. Never touches the story content, screenplay, verified links,
     or images.
+
+    Raises RuntimeError when no AI engine is configured (the "Enable AI
+    processing" toggle is off): discovering *trending* hashtags without
+    the AI is impossible, so this fails loudly instead of silently
+    serving deterministic fallback tags. Nothing is changed in that case.
     """
     story = load_story(story_id)
     if not story:
-        return False, "Story not found — nothing refreshed."
+        raise RuntimeError("Story not found — nothing refreshed.")
+    if ai_engine is None:
+        raise RuntimeError(_AI_DISABLED_MSG)
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
-        return False, "No topic to find hashtags for."
+        raise RuntimeError("No topic to find hashtags for.")
 
     # 1. Validate ALL existing hashtags against the story's topic/headline —
     # stale or irrelevant tags are removed, not silently kept.
@@ -1069,12 +1200,16 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     """
     story = load_story(story_id)
     if not story:
-        return False, "Story not found — images unchanged."
+        raise RuntimeError("Story not found — images unchanged.")
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
-        return False, "No topic to search — images unchanged."
-    found = _fetch_images_for_story(story, topic)
+        raise RuntimeError("No topic to search — images unchanged.")
     existing = list(story["meta"].get("image_urls") or [])
+    try:
+        found = _fetch_images_for_story(story, topic)
+    except TimeoutError as e:
+        # The fetch names the step that timed out; existing media survives.
+        return False, f"Image refresh timed out ({e}); kept {len(existing)} existing."
     if not found:
         return False, f"No new images found; kept {len(existing)} existing."
     merged = list(existing)
@@ -1094,110 +1229,148 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
     """Background worker for a manual hashtag/image refresh. Never raises.
 
     Runs in a daemon thread so tab switches (st.rerun) can't stop it.
-    The outcome is recorded in the story's ``refresh_note`` frontmatter field
-    — success, no-change, busy, and failure are all reported explicitly.
+    The outcome is recorded honestly in ``enrichment_status``
+    (``succeeded`` / ``no_change`` / ``failed``) with the real detail in
+    ``refresh_note`` — a failure is never written as a success, and the
+    toggle-off AI error surfaces verbatim.
     """
     lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
     if not lock.acquire(blocking=False):
-        try:
-            update_story_fields(story_id, enrichment_status="done",
-                                refresh_note="A refresh is already running — try again shortly.")
-        except Exception:
-            pass
+        # Another worker owns this story's refresh state — leave it alone.
+        # Writing anything here (even "already running") would clobber the
+        # in-flight "running" state and flip the UI back to idle while
+        # work is still running. The owning worker writes the honest
+        # terminal state when it finishes.
         return
     try:
-        if kind == "hashtags":
-            _ok, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
-        else:
-            _ok, note = refresh_images(story_id, topic)
-    except Exception as e:
-        note = f"Refresh failed: {e}"
+        try:
+            if kind == "hashtags":
+                changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
+            elif kind == "images":
+                changed, note = refresh_images(story_id, topic)
+            else:
+                changed, note = False, f"Unknown refresh kind: {kind!r}."
+            status = "succeeded" if changed else "no_change"
+        except Exception as e:
+            status = "failed"
+            label = "Hashtag" if kind == "hashtags" else "Image"
+            note = f"{label} refresh failed: {e}"
+        try:
+            update_story_fields(story_id, enrichment_status=status,
+                                refresh_note=note or "", refresh_kind="")
+        except Exception:
+            traceback.print_exc()
     finally:
         lock.release()
-    try:
-        update_story_fields(story_id, enrichment_status="done", refresh_note=note,
-                            refresh_kind="")
-    except Exception:
-        pass
 
 
 def start_refresh(story_id: str, kind: str,
-                  ai_engine: Optional[str] = None) -> bool:
+                  ai_engine: Optional[str] = None) -> Tuple[bool, str]:
     """Kick off a background hashtag/image refresh. Never raises.
 
     ``kind`` is "hashtags" or "images". ``ai_engine`` (an engine mode string
-    or None) enables AI-assisted hashtag suggestions for the hashtags kind.
-    The fetch runs in a daemon thread, so changing tabs mid-refresh won't
-    stop it. Falls back to the story title when ``source_topic`` is missing
-    so older stories can still refresh.
+    or None) enables AI-assisted hashtag suggestions for the hashtags kind —
+    None means the "Enable AI processing" toggle is off, in which case the
+    worker fails loudly with a clear message instead of silently falling
+    back. The fetch runs in a daemon thread, so changing tabs mid-refresh
+    won't stop it. Falls back to the story title when ``source_topic`` is
+    missing so older stories can still refresh.
+
+    Returns (started, reason): ``reason`` is "" when the refresh started,
+    otherwise a human-readable explanation of why it could not start.
     """
     if kind not in ("hashtags", "images"):
-        return False
+        return False, f"Unknown refresh kind: {kind!r}."
     try:
         story = load_story(story_id)
         if not story:
-            return False
+            return False, "Story not found."
+        if (story["meta"].get("enrichment_status") or "") in BUSY_STATES:
+            # The buttons disable while busy, but a double-kick can still
+            # race here — refuse instead of starting a second worker that
+            # would fight the first over the story's refresh state.
+            return False, "A refresh is already running — try again shortly."
         topic = (story["meta"].get("source_topic")
                  or story["meta"].get("title") or "").strip()
         if not topic:
-            return False
+            return False, "No topic or title to refresh."
         _check_id(story_id)
-        update_story_fields(story_id, enrichment_status="refreshing", refresh_note="",
+        update_story_fields(story_id, enrichment_status="running", refresh_note="",
                             refresh_kind=kind)
         t = threading.Thread(
             target=_refresh_worker, args=(story_id, kind, topic, ai_engine),
             daemon=True, name=f"refresh-{kind}-{story_id}")
         t.start()
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as e:
+        return False, f"Could not start refresh: {type(e).__name__}: {e}"
 
 
 def _do_media_refresh(story_id: str, topic: str,
-                      ai_engine: Optional[str] = None) -> str:
+                      ai_engine: Optional[str] = None) -> Tuple[bool, str]:
     """Retry path: refresh hashtags + images ONLY.
 
     Never touches news_links and never touches the story content.
-    Returns a short outcome note describing what happened (fail loudly).
+    Returns (changed, note) describing the outcome (fail loudly).
+
+    Raises RuntimeError when no AI engine is configured: the retry
+    refreshes hashtags through AI discovery, and with AI processing off
+    there is nothing honest to do — so it fails loudly and changes
+    nothing instead of silently serving deterministic tags.
     """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Retry failed: story not found.")
+    if ai_engine is None:
+        raise RuntimeError(_AI_DISABLED_MSG)
+    meta = story["meta"]
+    image_note = ""
     try:
-        story = load_story(story_id)
-        if not story:
-            return "Retry failed: story not found."
         image_urls = _fetch_images_for_story(story, topic)
-        new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
-        meta = story["meta"]
-        merged_tags = list(meta.get("hashtags") or [])
-        tags_added = 0
-        for t in new_tags:
-            if t not in merged_tags:
-                merged_tags.append(t)
-                tags_added += 1
-        merged_images = list(meta.get("image_urls") or [])
-        images_added = 0
-        for u in image_urls:
-            if u not in merged_images:
-                merged_images.append(u)
-                images_added += 1
-        update_story_fields(
-            story_id,
-            image_urls=merged_images,
-            hashtags=merged_tags,
-        )
-        parts = []
+    except TimeoutError as e:
+        image_urls = []
+        image_note = f"Image fetch timed out ({e}); kept the existing ones."
+    new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
+    merged_tags = list(meta.get("hashtags") or [])
+    tags_added = 0
+    for t in new_tags:
+        if t not in merged_tags:
+            merged_tags.append(t)
+            tags_added += 1
+    merged_images = list(meta.get("image_urls") or [])
+    images_added = 0
+    for u in image_urls:
+        if u not in merged_images:
+            merged_images.append(u)
+            images_added += 1
+    update_story_fields(
+        story_id,
+        image_urls=merged_images,
+        hashtags=merged_tags,
+    )
+    parts = []
+    if image_note:
+        parts.append(image_note)
+    elif images_added:
         parts.append(f"Added {images_added} new image(s); kept "
-                     f"{len(merged_images) - images_added} existing."
-                     if images_added else "No new images found — kept the existing ones.")
-        parts.append(f"{tags_added} new hashtag(s) added."
-                     if tags_added else "No new hashtags found — kept the existing ones.")
-        if ai_note:
-            parts.append(ai_note)
-        return " ".join(parts)
-    except Exception as e:
-        return f"Retry failed: {e}"
+                     f"{len(merged_images) - images_added} existing.")
+    else:
+        parts.append("No new images found — kept the existing ones.")
+    parts.append(f"{tags_added} new hashtag(s) added."
+                 if tags_added else "No new hashtags found — kept the existing ones.")
+    if ai_note:
+        parts.append(ai_note)
+    changed = bool(images_added or tags_added)
+    return changed, " ".join(parts)
 
 
-def _do_enrich(story_id: str, topic: str) -> None:
+def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
+    """Post-save enrichment body: news links + images + hashtags.
+
+    Deterministic only — save-time enrichment never calls the AI, so a
+    story always saves cleanly with AI processing off. Returns
+    (changed, note); raises loudly on failure.
+    """
     articles = _fetch_news_articles(topic, limit=6)
     news_links: List[Dict[str, str]] = []
     for a in articles[:6]:
@@ -1208,71 +1381,106 @@ def _do_enrich(story_id: str, topic: str) -> None:
         })
     story = load_story(story_id)
     if not story:
-        return
-    image_urls = _fetch_images_for_story(story, topic)
+        raise RuntimeError("Enrichment failed: story not found.")
+    try:
+        image_urls = _fetch_images_for_story(story, topic)
+    except TimeoutError as e:
+        image_urls = []
+        img_note = f"Image fetch timed out ({e}); kept the existing ones."
+    else:
+        img_note = ""
     new_tags, _det_note = _fetch_trending_hashtags(topic, story)
     meta = story["meta"]
     merged_tags = list(meta.get("hashtags") or [])
+    tags_added = 0
     for t in new_tags:
         if t not in merged_tags:
             merged_tags.append(t)
+            tags_added += 1
     # Verified Stage-1 links are sacred: they point at the exact story the
     # reel was built from. Never replace them with topic-search results.
     # Images merge: the story may already carry the Stage-1 curated gallery —
     # keep those and add what enrichment found.
     verified_links = meta.get("news_links") or []
     merged_imgs = list(meta.get("image_urls") or [])
+    imgs_added = 0
     for u in image_urls:
         if u and u not in merged_imgs:
             merged_imgs.append(u)
+            imgs_added += 1
+    links_added = 0 if verified_links else len(news_links)
     update_story_fields(
         story_id,
         news_links=verified_links or news_links,
         image_urls=merged_imgs,
         hashtags=merged_tags,
     )
+    changed = bool(tags_added or imgs_added or links_added)
+    bits = []
+    bits.append(f"Found {links_added} news link(s)."
+                if links_added else "Kept verified news links.")
+    bits.append(img_note or (f"Added {imgs_added} image(s)."
+                             if imgs_added else "No new images found."))
+    bits.append(f"Added {tags_added} hashtag(s)."
+                if tags_added else "No new hashtags found.")
+    return changed, "Enrichment complete: " + " ".join(bits)
 
 
-def start_enrichment(story_id: str, topic: str) -> bool:
-    """Kick off post-save enrichment in a daemon thread. Never raises."""
+def start_enrichment(story_id: str, topic: str) -> Tuple[bool, str]:
+    """Kick off post-save enrichment in a daemon thread. Never raises.
+
+    Returns (started, reason): ``reason`` is "" when enrichment started,
+    otherwise a human-readable explanation.
+    """
     try:
         _check_id(story_id)
         if not (topic or "").strip():
-            update_story_fields(story_id, enrichment_status="done")
-            return False
+            update_story_fields(story_id, enrichment_status="no_change",
+                                refresh_note="No topic — enrichment skipped.",
+                                refresh_kind="")
+            return False, "No topic — enrichment skipped."
+        update_story_fields(story_id, enrichment_status="running",
+                            refresh_kind="enrich", refresh_note="")
         t = threading.Thread(
             target=_enrich_worker, args=(story_id, topic.strip(), _do_enrich),
             daemon=True, name=f"enrich-{story_id}")
         _ENRICH_THREADS[story_id] = t
         t.start()
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as e:
+        return False, f"Could not start enrichment: {type(e).__name__}: {e}"
 
 
-def retry_enrichment(story_id: str, ai_engine: Optional[str] = None) -> bool:
+def retry_enrichment(story_id: str, ai_engine: Optional[str] = None) -> Tuple[bool, str]:
     """Re-run the hashtag + image fetch for a story — and nothing else.
 
     News links and the story content are never touched by a retry.
     ``ai_engine`` (an engine mode string or None) enables AI-assisted
-    hashtag suggestions. The outcome is recorded in the story's
-    ``refresh_note`` so a retry never finishes silently.
+    hashtag suggestions — None means the "Enable AI processing" toggle is
+    off, in which case the retry fails loudly instead of silently falling
+    back. The outcome is recorded in the story's ``refresh_note`` so a
+    retry never finishes silently.
+
+    Returns (started, reason): ``reason`` is "" when the retry started,
+    otherwise a human-readable explanation.
     """
     story = load_story(story_id)
     if not story:
-        return False
+        return False, "Story not found."
+    if (story["meta"].get("enrichment_status") or "") in BUSY_STATES:
+        return False, "A refresh is already running — try again shortly."
     topic = (story["meta"].get("source_topic") or story["meta"].get("title") or "").strip()
     if not topic:
-        return False
+        return False, "No topic or title to retry."
     try:
         from functools import partial
         _check_id(story_id)
-        update_story_fields(story_id, enrichment_status="pending", refresh_kind="all")
+        update_story_fields(story_id, enrichment_status="running", refresh_kind="all")
         t = threading.Thread(
             target=_enrich_worker,
             args=(story_id, topic, partial(_do_media_refresh, ai_engine=ai_engine)),
             daemon=True, name=f"retry-{story_id}")
         t.start()
-        return True
-    except Exception:
-        return False
+        return True, ""
+    except Exception as e:
+        return False, f"Could not start retry: {type(e).__name__}: {e}"

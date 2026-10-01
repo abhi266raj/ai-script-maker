@@ -153,7 +153,15 @@ class NewsFetcher:
         articles: List[NewsArticle] = []
         now = datetime.datetime.now(datetime.timezone.utc)
         try:
-            feed = feedparser.parse(feed_url)
+            # Fetch with a hard timeout first: feedparser.parse(url) does
+            # its own fetching with NO timeout and can hang a refresh
+            # forever on a stalled connection.
+            with httpx.Client(headers=_HTTP_HEADERS, timeout=self._timeout,
+                             follow_redirects=True) as client:
+                r = client.get(feed_url)
+                if r.status_code != 200:
+                    return []
+                feed = feedparser.parse(r.content)
             for entry in feed.entries:
                 title = clean_html(getattr(entry, "title", "Untitled"))
                 link = getattr(entry, "link", "")
