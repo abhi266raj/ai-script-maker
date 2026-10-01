@@ -474,6 +474,25 @@ st.markdown(
     .stDeployButton, [data-testid="stToolbar"], header[data-testid="stHeader"],
     #MainMenu, footer, [data-testid="stDecoration"] { display: none !important; }
 
+    /* File uploader dropzone follows the app theme. Streamlit's native widget
+       theme can disagree with the app theme when a custom [theme] is configured
+       (the custom theme stays light while the app goes dark via the OS) — without
+       this override the dropzone paints a white box on the dark page. */
+    [data-testid="stFileUploaderDropzone"] {
+        background: var(--field) !important;
+        border: 1.5px dashed var(--line) !important;
+        border-radius: 12px !important;
+    }
+    [data-testid="stFileUploaderDropzone"]:hover {
+        background: var(--hover) !important;
+        border-color: var(--orange) !important;
+    }
+    [data-testid="stFileUploaderDropzoneInstructions"],
+    [data-testid="stFileUploaderDropzoneInstructions"] p,
+    [data-testid="stFileUploaderDropzoneInstructions"] span {
+        color: var(--muted) !important;
+    }
+
     .block-container {
         padding-top: 1.25rem !important;
         padding-bottom: 2rem !important;
@@ -1330,30 +1349,27 @@ st.html(
         setupAccordion();
     }
 
-    /* Custom CSS tokens must follow the theme Streamlit is ACTUALLY rendering,
-       not the OS preference: the user can set Streamlit to Dark while the OS
-       is Light (or vice versa), and any mismatch paints unreadable widgets
-       (e.g. white-on-white popover buttons). Streamlit 1.64 does not persist
-       a 'stActiveTheme' localStorage key, so the reliable signal is the
-       computed background of .stApp itself. */
+    /* The app's theme contract is OS-following: the CSS `@media
+       (prefers-color-scheme: dark)` block and this script key off the SAME
+       OS signal, so they agree by construction. (Do NOT read .stApp's
+       computed background here — the app's own CSS paints .stApp with
+       `var(--paper) !important`, so that read is circular: whichever theme
+       wins the first paint locks itself in and native widgets end up
+       disagreeing with the page, e.g. white tab segments / white uploader
+       dropzone on the dark page.) */
     function studioSyncTheme() {
         var dark = false;
         var detected = false;
-        /* 1) Read Streamlit's rendered theme from .stApp's background. */
+        /* 1) OS preference — the single source of truth. */
         try {
-            var stAppEl = document.querySelector('.stApp');
-            if (stAppEl) {
-                var bg = window.getComputedStyle(stAppEl).backgroundColor || '';
-                var m = bg.match(/[\\d.]+/g);
-                if (m && m.length >= 3) {
-                    var lum = (0.299 * parseFloat(m[0]) + 0.587 * parseFloat(m[1]) + 0.114 * parseFloat(m[2])) / 255;
-                    dark = lum < 0.5;
-                    detected = true;
-                }
+            if (window.matchMedia) {
+                dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+                detected = true;
             }
         } catch (err) {}
-        /* 2) Explicit stored theme choice (future-proof; absent in 1.64). */
-        if (!detected) {
+        /* 2) Explicit stored theme choice overrides the OS when present
+           (future-proof; Streamlit 1.64 persists no such key). */
+        if (detected) {
             try {
                 for (var i = 0; i < localStorage.length; i++) {
                     var k = localStorage.key(i);
@@ -1372,10 +1388,6 @@ st.html(
                     }
                 }
             } catch (err2) {}
-        }
-        /* 3) Last resort: OS preference. */
-        if (!detected) {
-            dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         }
 
         var themeVal = dark ? 'dark' : 'light';

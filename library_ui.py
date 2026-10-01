@@ -17,6 +17,23 @@ TAB_STUDIO = "Studio"
 TAB_LIBRARY = "Library"
 
 
+def _library_ai_engine() -> str | None:
+    """Engine mode for Library AI processing, or None when it is disabled.
+
+    Reads the persisted ``library_ai_enabled`` / ``library_ai_engine`` prefs
+    (off by default). The AI only ever suggests hashtags — it never alters
+    the screenplay, story content, verified links, or images.
+    """
+    try:
+        prefs = lib.load_prefs()
+    except Exception:
+        return None
+    if not prefs.get("library_ai_enabled", False):
+        return None
+    label = prefs.get("library_ai_engine", lib.DEFAULT_LIBRARY_AI_ENGINE)
+    return lib.LIBRARY_ENGINE_OPTIONS.get(label)
+
+
 # ---------------------------------------------------------------------------
 # CSS (separate block — the app's main CSS block is untouched)
 # ---------------------------------------------------------------------------
@@ -72,40 +89,62 @@ def inject_library_css() -> None:
         --lib-key: #67E8F9;
     }
     /* macOS segmented tab bar — latest macOS: a floating glass tab strip.
-       NOTE: the .lib-tabbar wrapper div cannot scope CSS in Streamlit's
-       DOM (each st.markdown is a separate element), so these rules target
-       the widget directly. st.segmented_control is used exactly once
-       app-wide (this tab bar), so no ancestor scoping is needed.
+       Real DOM (Streamlit 1.64): div[data-testid="stButtonGroup"] >
+       div[role="radiogroup"] > button[data-variant="segmented_control"],
+       with the active segment marked data-selected="true".
        Labels are plain 13px text (macOS HIG: no emoji in tab titles). */
     .lib-tabbar { display: flex; justify-content: center; margin: 6px 0 14px 0; }
-    [data-testid="stSegmentedControl"] {
+    /* Hide the "View" widget label Streamlit puts above the strip. */
+    [data-testid="stButtonGroup"] > label[data-testid="stWidgetLabel"] {
+        display: none !important;
+    }
+    [data-testid="stButtonGroup"] {
         width: fit-content !important;
         margin: 10px auto 18px auto !important;
     }
-    [data-testid="stSegmentedControl"] > div {
+    [data-testid="stButtonGroup"] > div[role="radiogroup"] {
         background: var(--lib-glass-bg) !important;
         -webkit-backdrop-filter: blur(18px) saturate(160%);
         backdrop-filter: blur(18px) saturate(160%);
         border: 1px solid var(--lib-glass-border) !important;
         border-radius: 18px !important;
         padding: 4px !important;
+        gap: 2px !important;
         box-shadow: var(--lib-glass-shadow) !important;
     }
-    [data-testid="stSegmentedControl"] button {
+    [data-testid="stButtonGroup"] button[data-variant="segmented_control"] {
         font-size: 13px !important;
         font-weight: 500 !important;
         padding: 6px 26px !important;
+        border: none !important;
         border-radius: 14px !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        color: #6B5F4E !important;
+    }
+    [data-testid="stButtonGroup"] button[data-variant="segmented_control"]:hover {
+        background: rgba(60, 40, 20, 0.06) !important;
         color: #3A2E1A !important;
     }
-    [data-theme="dark"] [data-testid="stSegmentedControl"] button {
+    [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"] {
+        background: var(--lib-seg-active-bg) !important;
+        color: #2A2118 !important;
+        box-shadow: var(--lib-seg-active-shadow) !important;
+        font-weight: 600 !important;
+    }
+    [data-testid="stButtonGroup"] button[data-variant="segmented_control"]:focus-visible {
+        outline: 2px solid #E0692A !important;
+        outline-offset: 1px !important;
+    }
+    [data-theme="dark"] [data-testid="stButtonGroup"] button[data-variant="segmented_control"] {
+        color: #A89B8B !important;
+    }
+    [data-theme="dark"] [data-testid="stButtonGroup"] button[data-variant="segmented_control"]:hover {
+        background: rgba(255, 255, 255, 0.06) !important;
         color: #F5EFE3 !important;
     }
-    [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
-        background: var(--lib-seg-active-bg) !important;
-        box-shadow: var(--lib-seg-active-shadow) !important;
-        border-radius: 14px !important;
-        font-weight: 600 !important;
+    [data-theme="dark"] [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"] {
+        color: #FAF7F0 !important;
     }
     /* Fallback: horizontal radio styled as segmented control (scoped to tabbar) */
     .lib-tabbar [data-testid="stRadio"] > div[role="radiogroup"] {
@@ -498,13 +537,44 @@ def render_library_page() -> None:
                     unsafe_allow_html=True)
         return
 
+    # Header row: story count leading; AI processing controls trailing
+    # (macOS HIG: view controls live in the header, trailing side).
+    _prefs = lib.load_prefs()
+    _ai_on = bool(_prefs.get("library_ai_enabled", False))
+    _engine_labels = list(lib.LIBRARY_ENGINE_OPTIONS.keys())
+    _engine_label = _prefs.get("library_ai_engine", lib.DEFAULT_LIBRARY_AI_ENGINE)
+    if _engine_label not in _engine_labels:
+        _engine_label = lib.DEFAULT_LIBRARY_AI_ENGINE
+    hh1, hh2, hh3 = st.columns([4.4, 2.6, 3.0], vertical_alignment="center")
+    with hh1:
+        st.markdown(f'<div class="lib-sidebar-label">Stories · {len(stories)}</div>',
+                    unsafe_allow_html=True)
+    with hh2:
+        _new_ai = st.toggle(
+            "Enable AI processing", value=_ai_on, key="lib_ai_toggle",
+            help="When on, hashtag refreshes use the selected AI engine for "
+                 "content-aware suggestions. AI never changes your script, "
+                 "verified links, or images.")
+        if _new_ai != _ai_on:
+            lib.save_prefs({"library_ai_enabled": _new_ai})
+            _ai_on = _new_ai  # use the fresh value for the rest of this run
+    with hh3:
+        _new_engine = st.selectbox(
+            "AI engine", options=_engine_labels,
+            index=_engine_labels.index(_engine_label),
+            disabled=not _ai_on, key="lib_ai_engine",
+            label_visibility="collapsed",
+            help="Engine used for AI hashtag suggestions. Disabled while "
+                 "AI processing is off.")
+        if _new_engine != _engine_label:
+            lib.save_prefs({"library_ai_engine": _new_engine})
+    st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
+
     master, detail = st.columns([1, 3])
     with master:
         # macOS sidebar: the story list is a single-select list with an
         # accent-tinted selected row (like Mail/Finder). Newest first, so
         # the latest story is selected on entry.
-        st.markdown(f'<div class="lib-sidebar-label">Stories · {len(stories)}</div>',
-                    unsafe_allow_html=True)
         ids = [s.get("id", "") for s in stories]
         titles = {s.get("id", ""): (s.get("title", "Untitled") or "Untitled")[:38]
                   for s in stories}
@@ -687,63 +757,113 @@ def _render_story_detail(story_id: str) -> None:
         return
     meta = story["meta"]
 
-    # Detail toolbar (macOS HIG): the sidebar owns navigation, so the
-    # detail keeps only its trailing destructive action + a hairline.
-    _, nb3 = st.columns([8.4, 1.6])
-    with nb3:
-        if not st.session_state.get(f"lib_confirm_del_{story_id}"):
-            if _danger_button("Delete", key=f"lib_del_{story_id}",
-                              use_container_width=True, help="Delete this story"):
-                st.session_state[f"lib_confirm_del_{story_id}"] = True
-                st.rerun()
+    # Detail toolbar (macOS HIG): every primary action lives in ONE top
+    # toolbar — Edit, Update Hashtags, Update Images, Retry Media — with
+    # Delete trailing. Progress lives inside the initiating button
+    # (in-button loader); there are no detached progress messages.
+    # Refreshes run in daemon threads, so tab switches never interrupt them.
+    _status = meta.get("enrichment_status")
+    _refresh_kind = meta.get("refresh_kind", "") if _status in ("pending", "refreshing") else ""
+    _busy = bool(_refresh_kind)
+    _editing = bool(st.session_state.get(f"lib_edit_title_{story_id}"))
+    _confirm_del = bool(st.session_state.get(f"lib_confirm_del_{story_id}"))
+    _ai_engine = _library_ai_engine()
+
+    def _kick_refresh(kind: str, label: str) -> None:
+        if lib.start_refresh(story_id, kind, ai_engine=_ai_engine):
+            st.rerun()
         else:
+            st.error(f"Could not start the {label} refresh.")
+
+    def _delete_first_step() -> None:
+        if _danger_button("Delete", key=f"lib_del_{story_id}",
+                          help="Delete this story"):
+            st.session_state[f"lib_confirm_del_{story_id}"] = True
+            st.rerun()
+
+    if _confirm_del:
+        # Focused delete confirmation: confirm + cancel, nothing else.
+        dc1, dc2, _dsp = st.columns([1.8, 1.0, 7.2])
+        with dc1:
             if _danger_button("Confirm Delete", key=f"lib_del_confirm_{story_id}",
-                              use_container_width=True, help="Confirm: delete this story"):
+                              help="Confirm: delete this story"):
                 lib.delete_story(story_id)
                 st.session_state.pop(f"lib_confirm_del_{story_id}", None)
                 st.session_state.pop("lib_selected_story", None)
                 st.session_state.pop("lib_story_radio", None)
                 st.success("Story deleted.")
                 st.rerun()
-    st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
-
-    # Title at top: big, multiline. "Edit" swaps in a borderless editor (no label text).
-    title = meta.get("title", "Untitled Story") or "Untitled Story"
-    if st.session_state.get(f"lib_edit_title_{story_id}"):
-        new_title = st.text_area("", value=title, key=f"lib_title_{story_id}",
-                                 height=80, label_visibility="collapsed")
-        b1, b2, _ = st.columns([1, 1, 6])
-        with b1:
+        with dc2:
+            if st.button("Cancel", key=f"lib_del_cancel_{story_id}"):
+                st.session_state.pop(f"lib_confirm_del_{story_id}", None)
+                st.rerun()
+    elif _editing:
+        # Title edit mode: Save/Cancel lead, Delete stays trailing.
+        ec1, ec2, _esp, ec3 = st.columns([1.0, 1.0, 7.0, 1.0])
+        with ec1:
             if st.button("Save", key=f"lib_title_save_{story_id}", type="primary"):
-                if new_title.strip():
-                    lib.update_story_fields(story_id, title=new_title.strip())
+                _new = (st.session_state.get(f"lib_title_{story_id}") or "").strip()
+                if _new:
+                    lib.update_story_fields(story_id, title=_new)
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
-        with b2:
+        with ec2:
             if st.button("Cancel", key=f"lib_title_cancel_{story_id}"):
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
+        with ec3:
+            _delete_first_step()
     else:
-        t1, t2 = st.columns([11, 1])
-        with t1:
-            st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
-                        unsafe_allow_html=True)
-        with t2:
-            if st.button("Edit", key=f"lib_title_edit_{story_id}", help="Edit title"):
+        tc1, tc2, tc3, tc4, _tsp, tc5 = st.columns([0.9, 1.7, 1.6, 1.3, 3.5, 1.0])
+        with tc1:
+            if st.button("Edit", key=f"lib_title_edit_{story_id}", help="Edit title",
+                         disabled=_busy):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
                 st.rerun()
+        with tc2:
+            _loading = _refresh_kind == "hashtags"
+            if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
+                         key=f"lib_tags_{story_id}",
+                         help="Find hashtags for this story's topic and add them",
+                         disabled=_busy):
+                _kick_refresh("hashtags", "hashtag")
+        with tc3:
+            _loading = _refresh_kind == "images"
+            if st.button("Updating Images…" if _loading else "Update Images",
+                         key=f"lib_imgs_{story_id}",
+                         help="Re-fetch news images for this story's topic",
+                         disabled=_busy):
+                _kick_refresh("images", "image")
+        with tc4:
+            _loading = _refresh_kind == "all"
+            if st.button("Retrying…" if _loading else "Retry Media",
+                         key=f"lib_retry_{story_id}",
+                         help="Re-run the hashtag + image fetch for this story",
+                         disabled=_busy):
+                if lib.retry_enrichment(story_id, ai_engine=_ai_engine):
+                    st.rerun()
+                else:
+                    st.error("Could not start the retry.")
+        with tc5:
+            _delete_first_step()
+    st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
+
+    # Title at top: big, multiline, centered. While editing, a borderless
+    # editor takes its place (Save/Cancel live in the toolbar above).
+    title = meta.get("title", "Untitled Story") or "Untitled Story"
+    if _editing:
+        st.text_area("", value=title, key=f"lib_title_{story_id}",
+                     height=80, label_visibility="collapsed")
+    else:
+        st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
+                    unsafe_allow_html=True)
     created = (meta.get("created_at", "") or "").replace("T", " ")
     _sub = f"Created {created}" + (f" · Tone: {meta.get('tone')}" if meta.get("tone") else "")
     st.markdown(f"<div style='text-align:center' class='stCaption'>{_html.escape(_sub)}</div>",
                 unsafe_allow_html=True)
 
-    # Enrichment / refresh state — quiet inline status, never a loud banner.
-    _status = meta.get("enrichment_status")
-    if _status in ("pending", "refreshing"):
-        _msg = ("Fetching images and links in the background…"
-                if _status == "pending"
-                else "Refreshing in the background — safe to switch tabs.")
-        st.markdown(f'<div class="lib-quiet">{_msg}</div>', unsafe_allow_html=True)
+    # Refresh outcome — quiet inline status, never a loud banner and never a
+    # detached progress message (progress lives in the toolbar button itself).
     _note = (meta.get("refresh_note") or "").strip()
     if _note:
         st.caption(f"Last refresh: {_note}")
@@ -848,45 +968,8 @@ def _render_story_detail(story_id: str) -> None:
         st.success(f"Attached {len(up_imgs)} image(s).")
         st.rerun()
 
-    # Refresh / retry controls — professional in-button loading state while the
-    # background job runs (macOS HIG: progress lives in the control itself,
-    # never in a popover/toast). The running button shows ⏳ and all three
-    # stay disabled until the job finishes, so two refreshes can't interleave.
-    _refresh_kind = meta.get("refresh_kind", "") if _status in ("pending", "refreshing") else ""
-    _busy = bool(_refresh_kind)
-    r1, r2, r3 = st.columns(3)
-    with r1:
-        _loading = _refresh_kind == "hashtags"
-        if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
-                     key=f"lib_tags_{story_id}",
-                     help="Find trending hashtags for this story's topic and add them",
-                     disabled=_busy):
-            if lib.start_refresh(story_id, "hashtags"):
-                st.rerun()
-            else:
-                st.error("Could not start the hashtag refresh.")
-    with r2:
-        _loading = _refresh_kind == "images"
-        if st.button("Updating Images…" if _loading else "Update Images",
-                     key=f"lib_imgs_{story_id}",
-                     help="Re-fetch news images for this story's topic",
-                     disabled=_busy):
-            if lib.start_refresh(story_id, "images"):
-                st.rerun()
-            else:
-                st.error("Could not start the image refresh.")
-    with r3:
-        _loading = _refresh_kind == "all"
-        if st.button("Retrying…" if _loading else "Retry Media",
-                     key=f"lib_retry_{story_id}",
-                     help="Re-run the hashtag + image fetch for this story",
-                     disabled=_busy):
-            if lib.retry_enrichment(story_id):
-                st.rerun()
-            else:
-                st.error("Could not start the retry.")
-
-    # (Back / Delete live in the detail navigation bar at the top.)
+    # (All primary actions — Edit, Update Hashtags, Update Images, Retry
+    # Media, Delete — live in the detail toolbar at the top.)
 
 
 def _md_to_html(md: str) -> str:

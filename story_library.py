@@ -24,7 +24,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
 # ---------------------------------------------------------------------------
@@ -75,6 +75,25 @@ def save_prefs(updates: Dict[str, Any]) -> None:
         PREFS_PATH.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
     except Exception:
         pass
+
+
+# ---------------------------------------------------------------------------
+# AI engines for Library AI processing
+# ---------------------------------------------------------------------------
+# Mirrors the Studio's ENGINE_OPTIONS (app.py) but lives here so the Library
+# UI can offer engine choice without importing app.py (which would be
+# circular: app.py imports library_ui which imports this module).
+LIBRARY_ENGINE_OPTIONS = {
+    "Local First Then Antigravity": "first_local_then_agy",
+    "Antigravity": "agy_only",
+    "Codex": "codex_only",
+    "Grok Low": "grok_low",
+    "Grok Medium": "grok_medium",
+    "Grok High": "grok_high",
+    "On-device": "fm_only",
+}
+LIBRARY_ENGINE_MODES = frozenset(LIBRARY_ENGINE_OPTIONS.values())
+DEFAULT_LIBRARY_AI_ENGINE = "Local First Then Antigravity"
 
 
 def new_story_id() -> str:
@@ -503,15 +522,24 @@ def _enrich_worker(story_id: str, topic: str, do_work) -> None:
 
     The story's enrichment_status is ALWAYS flipped to done at the end —
     even if every fetch fails — so the UI never sticks on "pending".
+    When do_work returns a non-empty string it is recorded as the story's
+    ``refresh_note`` so the outcome (success / no-change / failure) is
+    visible instead of silent.
     """
     lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
     if not lock.acquire(blocking=False):
         return
+    note = ""
     try:
-        do_work(story_id, topic)
+        result = do_work(story_id, topic)
+        if isinstance(result, str) and result.strip():
+            note = result.strip()
     finally:
         try:
-            update_story_fields(story_id, enrichment_status="done", refresh_kind="")
+            fields: Dict[str, Any] = {"enrichment_status": "done", "refresh_kind": ""}
+            if note:
+                fields["refresh_note"] = note
+            update_story_fields(story_id, **fields)
         except Exception:
             pass
         lock.release()
@@ -569,13 +597,8 @@ def _search_web_images(topic: str, limit: int = 4) -> List[str]:
         return []
 
 
-def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str]:
-    """Hero images for a topic.
-
-    First tries hero-image extraction from the article pages (parallel, with
-    retries). If that finds nothing at all, falls back to a web image search
-    for the topic so the story still gets images.
-    """
+def _grab_og_images(urls: List[str], tries: int = 3) -> List[str]:
+    """Parallel og:image hero extraction from a list of page URLs."""
     found: List[str] = []
     found_lock = threading.Lock()
     threads: List[threading.Thread] = []
@@ -590,14 +613,60 @@ def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str
                 return
             time.sleep(1.0 * (attempt + 1))
 
-    for a in articles[:6]:
-        link = getattr(a, "link", "")
+    for link in urls:
         if link:
             t = threading.Thread(target=_grab, args=(link,), daemon=True)
             t.start()
             threads.append(t)
     for t in threads:
         t.join(timeout=30.0)
+    return found
+
+
+def _story_direct_link_urls(story: Optional[Dict[str, Any]]) -> List[str]:
+    """Direct publisher URLs from the story's verified Stage-1 news links.
+
+    These links were verified at save time to point at the exact story the
+    reel was built from, so their hero images are the most on-topic image
+    source available. Topic-search links are never allowed to replace these
+    verified links — they are only *read* here for hero images.
+    """
+    urls: List[str] = []
+    if not story:
+        return urls
+    for lk in (story.get("meta") or {}).get("news_links") or []:
+        u = (lk.get("url") or "").strip() if isinstance(lk, dict) else ""
+        if u.startswith(("http://", "https://")) and u not in urls:
+            urls.append(u)
+    return urls
+
+
+def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
+                            tries: int = 3) -> List[str]:
+    """Hero images for a story: verified story links first, then topic search.
+
+    The story's own verified news links point at the exact story's publisher
+    pages, so their hero images are the most on-topic. Only when those yield
+    nothing do we fall back to topic-search articles and web image search.
+    """
+    direct = _story_direct_link_urls(story)
+    if direct:
+        found = _grab_og_images(direct[:6], tries=tries)
+        if found:
+            return found[:6]
+    articles = _fetch_news_articles(topic, limit=6)
+    return _fetch_article_images(articles, topic, tries=tries)
+
+
+def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str]:
+    """Hero images for a topic.
+
+    Tries hero-image extraction from the article pages (parallel, with
+    retries). If that finds nothing at all, falls back to a web image search
+    for the topic so the story still gets images.
+    """
+    urls = [getattr(a, "link", "") for a in articles[:6]]
+    found = _grab_og_images(urls, tries=tries)
     if not found and topic.strip():
         for u in _search_web_images(topic.strip(), limit=4):
             if _url_is_image(u) and u not in found:
@@ -707,21 +776,120 @@ def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None)
     return tags[:8]
 
 
-def refresh_hashtags(story_id: str, topic: str = "") -> bool:
-    """Find trending hashtags for the story's topic and merge them in.
+def _validate_ai_tags(raw_tags: List[str],
+                      story: Optional[Dict[str, Any]]) -> List[str]:
+    """Keep only AI-suggested tags that are well-formed and story-grounded.
 
-    Returns True when at least one new hashtag was found and saved.
-    Never wipes the existing hashtags.
+    A tag survives only if it looks like #CamelCase and at least one of its
+    words appears in the story's own content words. This keeps the AI honest:
+    it may rank and rephrase, but it cannot invent off-topic tags.
+    """
+    content_words = {w.lower()
+                     for w in re.findall(r"[A-Za-z]{4,}", " ".join(_story_content_texts(story)))}
+    content_words -= _HASHTAG_STOPWORDS
+    out: List[str] = []
+    for t in raw_tags or []:
+        t = (t or "").strip()
+        if not re.fullmatch(r"#[A-Za-z][A-Za-z0-9]{2,29}", t):
+            continue
+        if t in out:
+            continue
+        if content_words & _tag_words(t):
+            out.append(t)
+        if len(out) >= 8:
+            break
+    return out
+
+
+def _ai_hashtag_suggestions(story: Dict[str, Any], topic: str,
+                            engine_mode: str) -> List[str]:
+    """Ask the selected engine for content-aware hashtag suggestions.
+
+    Constrained by design: the model only suggests hashtags built from the
+    story's own content, and every suggestion is validated against the
+    story's words before use. Raises on engine failure (fail loudly — the
+    caller decides the fallback). Never touches the story content, the
+    screenplay, verified links, or images.
+    """
+    if engine_mode not in LIBRARY_ENGINE_MODES:
+        raise ValueError(f"Unknown AI engine mode: {engine_mode!r}")
+    from core.dual_engine import dual_engine, ModelGenerationError
+
+    texts = _story_content_texts(story)
+    headline = texts[0] if len(texts) > 0 else ""
+    title = texts[1] if len(texts) > 1 else ""
+    script_excerpt = (texts[3] if len(texts) > 3 else "")[:1500]
+    prompt = (
+        "Suggest hashtags for a short news video. Use ONLY words from the "
+        "story below; do not invent names, places, or topics not present in it.\n\n"
+        f"HEADLINE: {headline}\n"
+        f"TITLE: {title}\n"
+        f"TOPIC: {topic}\n"
+        f"SCRIPT EXCERPT:\n{script_excerpt}\n\n"
+        "Return 4 to 8 hashtags, one per line, each like #CamelCaseWords. "
+        "No other text."
+    )
+    try:
+        raw, _engine_used = dual_engine.generate(
+            prompt=prompt,
+            instructions=("You suggest hashtags grounded strictly in the provided "
+                          "story content. Never invent facts, names, or topics."),
+            mode=engine_mode,
+        )
+    except ModelGenerationError:
+        raise
+    except Exception as e:
+        raise RuntimeError(
+            f"AI hashtag generation failed ({type(e).__name__}: {e})") from e
+    candidates = re.findall(r"#[A-Za-z][A-Za-z0-9]*", raw or "")
+    tags = _validate_ai_tags(candidates, story)
+    if not tags:
+        raise RuntimeError(
+            "AI returned no usable hashtags grounded in the story content.")
+    return tags
+
+
+def _suggest_hashtags(story: Dict[str, Any], topic: str,
+                      ai_engine: Optional[str] = None) -> Tuple[List[str], str]:
+    """Hashtag candidates for a refresh: AI first (when enabled), then deterministic.
+
+    Returns (tags, note). When ``ai_engine`` is set and the AI call fails,
+    the deterministic path still runs and the failure is reported in the
+    note — fail loudly, never silently. The AI never alters content, links,
+    or images; it only suggests tags, each validated against the story.
+    """
+    ai_note = ""
+    ai_tags: List[str] = []
+    if ai_engine:
+        try:
+            ai_tags = _ai_hashtag_suggestions(story, topic, ai_engine)
+        except Exception as e:
+            ai_note = f"AI hashtag step failed ({e}); used deterministic tags instead."
+    det_tags = _fetch_trending_hashtags(topic, story)
+    tags = list(ai_tags)
+    for t in det_tags:
+        if t not in tags:
+            tags.append(t)
+    return tags[:10], ai_note
+
+
+def refresh_hashtags(story_id: str, topic: str = "",
+                     ai_engine: Optional[str] = None) -> Tuple[bool, str]:
+    """Find hashtags for the story's topic and merge them in.
+
+    Returns (added_anything, note). Never wipes the existing hashtags and
+    never touches the story content, screenplay, verified links, or images.
     """
     story = load_story(story_id)
     if not story:
-        return False
+        return False, "Story not found."
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
-        return False
-    new_tags = _fetch_trending_hashtags(topic, story)
+        return False, "No topic to find hashtags for."
+    new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
     if not new_tags:
-        return False
+        note = ai_note or "No hashtags found."
+        return False, note
     merged = list(story["meta"].get("hashtags") or [])
     added = False
     for t in new_tags:
@@ -730,14 +898,19 @@ def refresh_hashtags(story_id: str, topic: str = "") -> bool:
             added = True
     if added:
         update_story_fields(story_id, hashtags=merged)
-    return added
+        note = "Hashtags updated." + (f" {ai_note}" if ai_note else "")
+        return True, note
+    note = "No new hashtags found — kept the existing ones." + (f" {ai_note}" if ai_note else "")
+    return False, note
 
 
 def refresh_images(story_id: str, topic: str = "") -> bool:
     """Re-fetch news images for the story's topic and replace the fetched set.
 
-    Returns True when new images were found and saved. The existing fetched
-    set and manual uploads are kept when the fetch finds nothing.
+    Tries the story's verified news links first (exact-story publisher pages),
+    then topic search. Returns True when new images were found and saved.
+    The existing fetched set and manual uploads are kept when the fetch finds
+    nothing. Never touches hashtags, links, or story content.
     """
     story = load_story(story_id)
     if not story:
@@ -745,18 +918,20 @@ def refresh_images(story_id: str, topic: str = "") -> bool:
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
         return False
-    found = _fetch_article_images(_fetch_news_articles(topic, limit=6), topic)
+    found = _fetch_images_for_story(story, topic)
     if not found:
         return False
     update_story_fields(story_id, image_urls=found)
     return True
 
 
-def _refresh_worker(story_id: str, kind: str, topic: str) -> None:
+def _refresh_worker(story_id: str, kind: str, topic: str,
+                    ai_engine: Optional[str] = None) -> None:
     """Background worker for a manual hashtag/image refresh. Never raises.
 
     Runs in a daemon thread so tab switches (st.rerun) can't stop it.
-    The outcome is recorded in the story's ``refresh_note`` frontmatter field.
+    The outcome is recorded in the story's ``refresh_note`` frontmatter field
+    — success, no-change, busy, and failure are all reported explicitly.
     """
     lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
     if not lock.acquire(blocking=False):
@@ -768,8 +943,7 @@ def _refresh_worker(story_id: str, kind: str, topic: str) -> None:
         return
     try:
         if kind == "hashtags":
-            ok = refresh_hashtags(story_id, topic)
-            note = "Hashtags updated." if ok else "No new trending hashtags found — kept the existing ones."
+            _ok, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
         else:
             ok = refresh_images(story_id, topic)
             note = "Images updated." if ok else "No images found — kept the existing ones."
@@ -784,11 +958,15 @@ def _refresh_worker(story_id: str, kind: str, topic: str) -> None:
         pass
 
 
-def start_refresh(story_id: str, kind: str) -> bool:
+def start_refresh(story_id: str, kind: str,
+                  ai_engine: Optional[str] = None) -> bool:
     """Kick off a background hashtag/image refresh. Never raises.
 
-    ``kind`` is "hashtags" or "images". The fetch runs in a daemon thread,
-    so changing tabs mid-refresh won't stop it.
+    ``kind`` is "hashtags" or "images". ``ai_engine`` (an engine mode string
+    or None) enables AI-assisted hashtag suggestions for the hashtags kind.
+    The fetch runs in a daemon thread, so changing tabs mid-refresh won't
+    stop it. Falls back to the story title when ``source_topic`` is missing
+    so older stories can still refresh.
     """
     if kind not in ("hashtags", "images"):
         return False
@@ -796,14 +974,15 @@ def start_refresh(story_id: str, kind: str) -> bool:
         story = load_story(story_id)
         if not story:
             return False
-        topic = (story["meta"].get("source_topic") or "").strip()
+        topic = (story["meta"].get("source_topic")
+                 or story["meta"].get("title") or "").strip()
         if not topic:
             return False
         _check_id(story_id)
         update_story_fields(story_id, enrichment_status="refreshing", refresh_note="",
                             refresh_kind=kind)
         t = threading.Thread(
-            target=_refresh_worker, args=(story_id, kind, topic),
+            target=_refresh_worker, args=(story_id, kind, topic, ai_engine),
             daemon=True, name=f"refresh-{kind}-{story_id}")
         t.start()
         return True
@@ -811,27 +990,41 @@ def start_refresh(story_id: str, kind: str) -> bool:
         return False
 
 
-def _do_media_refresh(story_id: str, topic: str) -> None:
+def _do_media_refresh(story_id: str, topic: str,
+                      ai_engine: Optional[str] = None) -> str:
     """Retry path: refresh hashtags + images ONLY.
 
     Never touches news_links and never touches the story content.
+    Returns a short outcome note describing what happened (fail loudly).
     """
-    articles = _fetch_news_articles(topic, limit=6)
-    image_urls = _fetch_article_images(articles, topic)
-    story = load_story(story_id)
-    if not story:
-        return
-    new_tags = _fetch_trending_hashtags(topic, story)
-    meta = story["meta"]
-    merged_tags = list(meta.get("hashtags") or [])
-    for t in new_tags:
-        if t not in merged_tags:
-            merged_tags.append(t)
-    update_story_fields(
-        story_id,
-        image_urls=image_urls or meta.get("image_urls") or [],
-        hashtags=merged_tags,
-    )
+    try:
+        story = load_story(story_id)
+        if not story:
+            return "Retry failed: story not found."
+        image_urls = _fetch_images_for_story(story, topic)
+        new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
+        meta = story["meta"]
+        merged_tags = list(meta.get("hashtags") or [])
+        tags_added = 0
+        for t in new_tags:
+            if t not in merged_tags:
+                merged_tags.append(t)
+                tags_added += 1
+        update_story_fields(
+            story_id,
+            image_urls=image_urls or meta.get("image_urls") or [],
+            hashtags=merged_tags,
+        )
+        parts = []
+        parts.append(f"Images updated ({len(image_urls)} found)."
+                     if image_urls else "No new images found — kept the existing ones.")
+        parts.append(f"{tags_added} new hashtag(s) added."
+                     if tags_added else "No new hashtags found — kept the existing ones.")
+        if ai_note:
+            parts.append(ai_note)
+        return " ".join(parts)
+    except Exception as e:
+        return f"Retry failed: {e}"
 
 
 def _do_enrich(story_id: str, topic: str) -> None:
@@ -843,10 +1036,10 @@ def _do_enrich(story_id: str, topic: str) -> None:
             "url": getattr(a, "link", ""),
             "source": getattr(a, "source", ""),
         })
-    image_urls = _fetch_article_images(articles, topic)
     story = load_story(story_id)
     if not story:
         return
+    image_urls = _fetch_images_for_story(story, topic)
     new_tags = _fetch_trending_hashtags(topic, story)
     meta = story["meta"]
     merged_tags = list(meta.get("hashtags") or [])
@@ -887,10 +1080,13 @@ def start_enrichment(story_id: str, topic: str) -> bool:
         return False
 
 
-def retry_enrichment(story_id: str) -> bool:
+def retry_enrichment(story_id: str, ai_engine: Optional[str] = None) -> bool:
     """Re-run the hashtag + image fetch for a story — and nothing else.
 
     News links and the story content are never touched by a retry.
+    ``ai_engine`` (an engine mode string or None) enables AI-assisted
+    hashtag suggestions. The outcome is recorded in the story's
+    ``refresh_note`` so a retry never finishes silently.
     """
     story = load_story(story_id)
     if not story:
@@ -899,10 +1095,12 @@ def retry_enrichment(story_id: str) -> bool:
     if not topic:
         return False
     try:
+        from functools import partial
         _check_id(story_id)
         update_story_fields(story_id, enrichment_status="pending", refresh_kind="all")
         t = threading.Thread(
-            target=_enrich_worker, args=(story_id, topic, _do_media_refresh),
+            target=_enrich_worker,
+            args=(story_id, topic, partial(_do_media_refresh, ai_engine=ai_engine)),
             daemon=True, name=f"retry-{story_id}")
         t.start()
         return True
