@@ -1416,6 +1416,159 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
             busy_kinds=busy_kinds)
 
 
+def _render_title_row(story_id: str, title: str, editing: bool, busy: bool) -> None:
+    """#154: the story title as ONE reusable component.
+
+    Renders the title row — big left-aligned h2 + borderless edit icon
+    riding in the narrow trailing column (or the borderless text-area
+    editor while ``editing``) — and OWNS its alignment: the [11, 1]
+    column split, vertical centering, and the edit marker all live
+    inside this function.
+
+    Pure refactor of the inline block in ``_render_story_detail``
+    (#154): no behavior change.
+    """
+    if editing:
+        st.text_area("", value=title, key=f"lib_title_{story_id}",
+                     height=80, label_visibility="collapsed")
+    else:
+        # #120: [11, 1] — title fills the row left-aligned; the edit
+        # icon-button rides in the narrow trailing column, vertically
+        # centered, styled borderless via the lib-title-edit marker so it
+        # feels part of the title itself.
+        _tt1, _tt2 = st.columns([11, 1], vertical_alignment="center")
+        with _tt1:
+            st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
+                        unsafe_allow_html=True)
+        with _tt2:
+            st.markdown('<div data-marker="lib-title-edit" style="display:none"></div>',
+                        unsafe_allow_html=True)
+            if st.button("", icon=_TB_ICON_EDIT, key=f"lib_title_edit_{story_id}",
+                         help="Edit title", disabled=busy):
+                st.session_state[f"lib_edit_title_{story_id}"] = True
+                st.rerun()
+
+
+def _render_hashtags_row(story_id: str, tags: list) -> None:
+    """#154: the Hashtags section as ONE reusable component.
+
+    Renders the full row — "Hashtags" title + tag chips, each with a ×
+    that removes exactly that tag — and OWNS its alignment: the hscroll
+    marker, the column layout (title weight + per-chip weights), the
+    title cell, and every chip cell (chip + × remove overlay) all live
+    inside this function. Same pattern as ``_render_news_links_row``.
+
+    Pure refactor of the inline block in ``_render_story_detail``
+    (#154): no behavior change. ``tags`` are non-empty; callers skip
+    the row entirely when there are no tags.
+    """
+    st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
+                unsafe_allow_html=True)
+    _tcols = st.columns([_section_title_weight("Hashtags")]
+                        + _chip_col_weights(tags))
+    with _tcols[0]:
+        st.markdown('<div class="lib-section lib-section-inline">Hashtags</div>',
+                    unsafe_allow_html=True)
+    for _i, (_tc, _tag) in enumerate(zip(_tcols[1:], tags)):
+        with _tc:
+            st.markdown(f'<span class="lib-chip">{_html.escape(_tag)}</span>',
+                        unsafe_allow_html=True)
+            if _overlay_button("lib-x-r", f"lib_xtag_{story_id}_{_i}", "×",
+                               help=f"Remove {_tag}"):
+                try:
+                    lib.remove_hashtag(story_id, _tag)
+                except ValueError as e:
+                    st.error(str(e))
+                else:
+                    st.rerun()
+
+
+def _render_images_row(story_id: str, img_urls: list, uploaded: list,
+                       busy_kinds) -> None:
+    """#154: the Images cards row as ONE reusable component.
+
+    Renders the horizontal scroll row — image cards (fetched + uploaded,
+    each with ×; fetched cards keep the ✎ address editor) + "Load more
+    images" as the last column — and OWNS its alignment: the hscroll
+    marker, the per-card columns + load-more weight, every card cell,
+    and the load-more cell all live inside this function.
+
+    Pure refactor of the inline block in ``_render_story_detail``
+    (#154): no behavior change. Callers render the "Images" title and
+    the "No images yet" hint themselves; ``img_urls``/``uploaded`` are
+    non-empty here (at least one is).
+    """
+    st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
+                unsafe_allow_html=True)
+    _cards = [("fetched", i, u) for i, u in enumerate(img_urls)]
+    _cards += [("uploaded", i, f) for i, f in enumerate(uploaded)]
+    # #113: the Load more button rides as the LAST column of this
+    # scroll row — same line as the thumbnails, inside the scroll
+    # view — instead of an orphan row below.
+    _icols = st.columns([1] * len(_cards)
+                        + [_load_more_weight("Load more images")])
+    for _ci, (_icol, (_kind, _ki, _ref)) in enumerate(zip(_icols[:-1], _cards)):
+        with _icol:
+            if _kind == "fetched":
+                st.image(_ref, width=200)
+                if _overlay_button("lib-x-l", f"lib_xedit_{story_id}_{_ci}", "✎",
+                                   help="Edit this image's address"):
+                    st.session_state[f"lib_editimg_{story_id}_{_ki}"] = True
+                    st.rerun()
+                if _overlay_button("lib-x-r", f"lib_ximg_{story_id}_{_ci}", "×",
+                                   help="Remove this fetched image"):
+                    if lib.remove_fetched_image(story_id, _ref):
+                        st.rerun()
+                    else:
+                        st.error("Could not remove the image — "
+                                 "the story may have been deleted.")
+            else:
+                st.image(str(lib.media_path(story_id, _ref)), width=200)
+                if _overlay_button("lib-x-r", f"lib_xup_{story_id}_{_ci}", "×",
+                                   help="Remove this uploaded image"):
+                    if lib.remove_uploaded_image(story_id, _ref):
+                        st.rerun()
+                    else:
+                        st.error("Could not remove the image — "
+                                 "the story may have been deleted.")
+    # #113: inline Load more — last column of the scroll row (see
+    # above). The button owns its loading state (spinner + disabled
+    # while more_images runs, #91/#53).
+    with _icols[-1]:
+        st.markdown('<div data-marker="lib-load-more" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        _render_load_more_button(
+            story_id=story_id, kind="more_images",
+            label="Load more images",
+            button_key=f"lib_moreimg_{story_id}",
+            help_text="Fetch up to 5 more images",
+            busy_kinds=busy_kinds)
+
+
+def _render_upload_row(story_id: str) -> None:
+    """#154: the Upload section as ONE reusable component.
+
+    Renders the full row — "Upload" title + upload popover button
+    (Video/Image picker) — and OWNS its alignment: the [11, 1] column
+    split, vertical centering, the title cell, and the button cell
+    (with its marker) all live inside this function.
+
+    Pure refactor of the inline block in ``_render_story_detail``
+    (#154): no behavior change.
+    """
+    # (Video/Image radio + file uploader). Title and button share one
+    # line, vertically centered.
+    _u1, _u2 = st.columns([11, 1], vertical_alignment="center")
+    with _u1:
+        st.markdown('<div class="lib-section lib-section-inline">Upload</div>',
+                    unsafe_allow_html=True)
+    with _u2:
+        st.markdown('<div data-marker="lib-upload-btn" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        with st.popover("", icon=_TB_ICON_UPLOAD, help="Upload video or image"):
+            _render_upload_popover(story_id)
+
+
 def _fm_warmup_button_props(state: dict) -> tuple:
     """Pure helper: (label, disabled) for the warm-up button given the
     mailbox state. Kept pure so the HIG loading/disabled contract is
@@ -2518,25 +2671,9 @@ def _render_story_detail(story_id: str) -> None:
     # delete popover's meta.get("title") naming (#58) are untouched; no
     # recency caption is emitted ("Edited … ago" stays removed).
     title = meta.get("title", "Untitled Story") or "Untitled Story"
-    if _editing:
-        st.text_area("", value=title, key=f"lib_title_{story_id}",
-                     height=80, label_visibility="collapsed")
-    else:
-        # #120: [11, 1] — title fills the row left-aligned; the edit
-        # icon-button rides in the narrow trailing column, vertically
-        # centered, styled borderless via the lib-title-edit marker so it
-        # feels part of the title itself.
-        _tt1, _tt2 = st.columns([11, 1], vertical_alignment="center")
-        with _tt1:
-            st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
-                        unsafe_allow_html=True)
-        with _tt2:
-            st.markdown('<div data-marker="lib-title-edit" style="display:none"></div>',
-                        unsafe_allow_html=True)
-            if st.button("", icon=_TB_ICON_EDIT, key=f"lib_title_edit_{story_id}",
-                         help="Edit title", disabled=_busy):
-                st.session_state[f"lib_edit_title_{story_id}"] = True
-                st.rerun()
+    # #154: the title row is the reusable _render_title_row component —
+    # it owns its own alignment, so layout fixes land there, not here.
+    _render_title_row(story_id, title, _editing, _busy)
     # Hashtags: ONE horizontal scroll row. Every tag is a chip with a ×
     # that removes exactly that tag (fail loudly, rerun after).
     # #107: the "Hashtags" title and the chips share ONE row — the title
@@ -2545,25 +2682,10 @@ def _render_story_detail(story_id: str) -> None:
     # untouched.
     tags = [t for t in (meta.get("hashtags") or []) if t]
     if tags:
-        st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
-                    unsafe_allow_html=True)
-        _tcols = st.columns([_section_title_weight("Hashtags")]
-                            + _chip_col_weights(tags))
-        with _tcols[0]:
-            st.markdown('<div class="lib-section lib-section-inline">Hashtags</div>',
-                        unsafe_allow_html=True)
-        for _i, (_tc, _tag) in enumerate(zip(_tcols[1:], tags)):
-            with _tc:
-                st.markdown(f'<span class="lib-chip">{_html.escape(_tag)}</span>',
-                            unsafe_allow_html=True)
-                if _overlay_button("lib-x-r", f"lib_xtag_{story_id}_{_i}", "×",
-                                   help=f"Remove {_tag}"):
-                    try:
-                        lib.remove_hashtag(story_id, _tag)
-                    except ValueError as e:
-                        st.error(str(e))
-                    else:
-                        st.rerun()
+        # #154: the whole row is the reusable _render_hashtags_row
+        # component — it owns its own alignment, so layout fixes land
+        # there, not here.
+        _render_hashtags_row(story_id, tags)
 
     # Images: ONE horizontal scroll row of cards (fetched + uploaded). Each
     # card shows the image with a × at its top; fetched cards keep a discreet
@@ -2597,51 +2719,9 @@ def _render_story_detail(story_id: str) -> None:
                 st.rerun()
     if img_urls or uploaded:
         st.markdown('<div class="lib-section">Images</div>', unsafe_allow_html=True)
-        st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
-                    unsafe_allow_html=True)
-        _cards = [("fetched", i, u) for i, u in enumerate(img_urls)]
-        _cards += [("uploaded", i, f) for i, f in enumerate(uploaded)]
-        # #113: the Load more button rides as the LAST column of this
-        # scroll row — same line as the thumbnails, inside the scroll
-        # view — instead of an orphan row below.
-        _icols = st.columns([1] * len(_cards)
-                            + [_load_more_weight("Load more images")])
-        for _ci, (_icol, (_kind, _ki, _ref)) in enumerate(zip(_icols[:-1], _cards)):
-            with _icol:
-                if _kind == "fetched":
-                    st.image(_ref, width=200)
-                    if _overlay_button("lib-x-l", f"lib_xedit_{story_id}_{_ci}", "✎",
-                                       help="Edit this image's address"):
-                        st.session_state[f"lib_editimg_{story_id}_{_ki}"] = True
-                        st.rerun()
-                    if _overlay_button("lib-x-r", f"lib_ximg_{story_id}_{_ci}", "×",
-                                       help="Remove this fetched image"):
-                        if lib.remove_fetched_image(story_id, _ref):
-                            st.rerun()
-                        else:
-                            st.error("Could not remove the image — "
-                                     "the story may have been deleted.")
-                else:
-                    st.image(str(lib.media_path(story_id, _ref)), width=200)
-                    if _overlay_button("lib-x-r", f"lib_xup_{story_id}_{_ci}", "×",
-                                       help="Remove this uploaded image"):
-                        if lib.remove_uploaded_image(story_id, _ref):
-                            st.rerun()
-                        else:
-                            st.error("Could not remove the image — "
-                                     "the story may have been deleted.")
-        # #113: inline Load more — last column of the scroll row (see
-        # above). The button owns its loading state (spinner + disabled
-        # while more_images runs, #91/#53).
-        with _icols[-1]:
-            st.markdown('<div data-marker="lib-load-more" style="display:none"></div>',
-                        unsafe_allow_html=True)
-            _render_load_more_button(
-                story_id=story_id, kind="more_images",
-                label="Load more images",
-                button_key=f"lib_moreimg_{story_id}",
-                help_text="Fetch up to 5 more images",
-                busy_kinds=_busy_kinds)
+        # #154: the cards row is the reusable _render_images_row component —
+        # it owns its own alignment, so layout fixes land there, not here.
+        _render_images_row(story_id, img_urls, uploaded, _busy_kinds)
     elif not (_busy_kinds & {"images", "more_images", "reset", "enrich"}):
         # #54: only kinds that (re-)fetch images suppress the hint — a
         # concurrent hashtag run leaves it visible.
@@ -2739,15 +2819,9 @@ def _render_story_detail(story_id: str) -> None:
     # rule below); the popover body carries the upload affordance
     # (Video/Image radio + file uploader). Title and button share one
     # line, vertically centered.
-    _u1, _u2 = st.columns([11, 1], vertical_alignment="center")
-    with _u1:
-        st.markdown('<div class="lib-section lib-section-inline">Upload</div>',
-                    unsafe_allow_html=True)
-    with _u2:
-        st.markdown('<div data-marker="lib-upload-btn" style="display:none"></div>',
-                    unsafe_allow_html=True)
-        with st.popover("", icon=_TB_ICON_UPLOAD, help="Upload video or image"):
-            _render_upload_popover(story_id)
+    # #154: the whole row is the reusable _render_upload_row component —
+    # it owns its own alignment, so layout fixes land there, not here.
+    _render_upload_row(story_id)
 
     # (Refresh actions live in the detail toolbar at the top; Share/Copy
     # actions sit in the Actions row just below it.)

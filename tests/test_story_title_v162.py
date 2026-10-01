@@ -76,8 +76,9 @@ def test_edit_flow_survives_revert(monkeypatch):
                and kw.get("icon") == lui._TB_ICON_EDIT
                for kw in fake.button_kwargs), "title edit must use the material edit icon"
     # Edit mode: a text editor takes the title's place (Save/Cancel live
-    # in the toolbar above).
-    src = inspect.getsource(lui._render_story_detail)
+    # in the toolbar above). #154: the title row is now the reusable
+    # _render_title_row component.
+    src = inspect.getsource(lui._render_title_row)
     assert 'st.text_area("", value=title' in src
 
 
@@ -95,7 +96,8 @@ def test_render_source_has_no_icon_popover(monkeypatch):
     assert "_STORY_ICON_GLYPH" not in src
     assert "lib_icon_" not in src
     assert "lib-story-icon" not in src
-    assert "<h2 class='lib-doc-title'>" in src
+    # #154: the h2 title now lives in the reusable _render_title_row component.
+    assert "<h2 class='lib-doc-title'>" in inspect.getsource(lui._render_title_row)
 
 
 # ---------------------------------------------------------------------------
