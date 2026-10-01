@@ -1436,17 +1436,6 @@ def _render_story_detail(story_id: str) -> None:
                          help="Edit title", disabled=_busy):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
                 st.rerun()
-    created = (meta.get("created_at", "") or "").replace("T", " ")
-    _sub = f"Created {created}" + (f" · Tone: {meta.get('tone')}" if meta.get("tone") else "")
-    st.markdown(f"<div style='text-align:center' class='stCaption'>{_html.escape(_sub)}</div>",
-                unsafe_allow_html=True)
-
-    # Refresh outcome — quiet inline status, never a loud banner and never a
-    # detached progress message (progress lives in the toolbar button itself).
-    _note = (meta.get("refresh_note") or "").strip()
-    if _note:
-        st.caption(f"Last refresh: {_note}")
-
     # Hashtags: ONE horizontal scroll row. Every tag is a chip with a ×
     # that removes exactly that tag (fail loudly, rerun after).
     tags = [t for t in (meta.get("hashtags") or []) if t]
