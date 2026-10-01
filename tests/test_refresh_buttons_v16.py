@@ -1,7 +1,7 @@
 """v1.6 (#53/#54) — HIG progress buttons + concurrent refresh kinds.
 
 #53: toolbar refresh buttons never change their label mid-work. While a
-kind runs its button keeps its label, shows a CSS spinner (lib-spin-<kind>
+kind runs its button shows Streamlit's native spinner icon (icon="spinner",
 marker), stays disabled, and keeps a stable width (use_container_width);
 the outcome is reported once via a toast, never by mutating the button.
 
@@ -259,24 +259,26 @@ def _kind_button_kwargs(lui, **kw):
 
 
 def test_kind_button_label_stable_while_running():
-    """#53/#71/#90: while hashtags runs the icon button still reads the tag
-    glyph (never "Updating Hashtags…"), is disabled, keeps full width, and
-    the spin marker is emitted for the CSS spinner. The tooltip keeps the
+    """#53/#71/#111: while hashtags runs the icon button shows Streamlit's
+    native spinner (never "Updating Hashtags…"), is disabled, keeps full
+    width, and the text label stays empty. The tooltip keeps the
     "Update Hashtags" label for discoverability."""
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_kind_button_kwargs(lui, busy_kinds={"hashtags"}))
-    assert fake.buttons == [(lui._TB_ICON_TAG, "lib_tags_sid1")]
+    assert fake.buttons == [("", "lib_tags_sid1")]
     kw = fake.button_kwargs[0]
+    assert kw["icon"] == "spinner"
     assert kw["disabled"] is True
     assert kw["use_container_width"] is True
     assert kw["help"] == "Update Hashtags"
-    assert 'data-marker="lib-spin-hashtags"' in "".join(fake.markup)
+    assert "lib-spin-hashtags" not in "".join(fake.markup)
 
 
 def test_kind_button_idle_state():
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_kind_button_kwargs(lui))
-    assert fake.buttons == [(lui._TB_ICON_TAG, "lib_tags_sid1")]
+    assert fake.buttons == [("", "lib_tags_sid1")]
+    assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_TAG
     assert fake.button_kwargs[0]["disabled"] is False
     assert fake.button_kwargs[0]["help"] == "Update Hashtags"
     assert "lib-spin-hashtags" not in "".join(fake.markup)
@@ -289,7 +291,8 @@ def test_kind_button_independent_while_sibling_runs():
         kind="images", label=lui._TB_ICON_IMAGE, button_key="lib_imgs_sid1",
         kick_label="image", help_text="Update Images",
         busy_kinds={"hashtags"}))
-    assert fake.buttons == [(lui._TB_ICON_IMAGE, "lib_imgs_sid1")]
+    assert fake.buttons == [("", "lib_imgs_sid1")]
+    assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_IMAGE
     assert fake.button_kwargs[0]["disabled"] is False
     assert fake.button_kwargs[0]["help"] == "Update Images"
     assert "lib-spin-images" not in "".join(fake.markup)
@@ -316,11 +319,12 @@ def test_kind_button_kick_failure_is_loud(monkeypatch):
     assert fake.reran is False
 
 
-def test_reset_popover_emits_spin_marker_while_resetting():
+def test_reset_popover_shows_native_spinner_while_resetting():
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", {"reset"}, ai_engine=None)
-    assert 'data-marker="lib-spin-reset"' in "".join(fake.markup)
-    assert fake.popover_kwargs["label"] == lui._TB_ICON_RESET
+    assert "lib-spin-reset" not in "".join(fake.markup)
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == "spinner"
     assert fake.popover_kwargs["disabled"] is True
 
 

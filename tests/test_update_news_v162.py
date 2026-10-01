@@ -11,7 +11,7 @@ to re-fetch news links. #80 adds a "news" refresh kind end-to-end:
   links in — the stored list is never wiped. Fetch failures raise
   loudly; they are never reported as "nothing new".
 - library_ui: icon-only "📰" toolbar button (#71 pattern — glyph +
-  "Update News" tooltip), lib-spin-news CSS spinner while running,
+  "Update News" tooltip), native spinner icon while running,
   stable label, per-kind disable, toast via the existing outcome path.
 
 Run: python -m pytest tests/test_update_news_v162.py -q
@@ -259,22 +259,25 @@ def _news_button_kwargs(lui, **kw):
 
 
 def test_news_button_icon_only_and_stable_while_running():
-    """#71/#80/#90: icon-only newspaper-glyph button — glyph label never changes, tooltip
-    keeps "Update News", disabled + spin marker while running."""
+    """#71/#80/#111: icon-only button — native material icon via icon=,
+    empty text label, tooltip keeps "Update News", disabled + native
+    spinner while running."""
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_news_button_kwargs(lui, busy_kinds={"news"}))
-    assert fake.buttons == [(lui._TB_ICON_NEWS, "lib_news_sid1")]
+    assert fake.buttons == [("", "lib_news_sid1")]
     kw = fake.button_kwargs[0]
+    assert kw["icon"] == "spinner"
     assert kw["disabled"] is True
     assert kw["use_container_width"] is True
     assert kw["help"] == "Update News"
-    assert 'data-marker="lib-spin-news"' in "".join(fake.markup)
+    assert "lib-spin-news" not in "".join(fake.markup)
 
 
 def test_news_button_idle_state():
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_news_button_kwargs(lui))
-    assert fake.buttons == [(lui._TB_ICON_NEWS, "lib_news_sid1")]
+    assert fake.buttons == [("", "lib_news_sid1")]
+    assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_NEWS
     assert fake.button_kwargs[0]["disabled"] is False
     assert "lib-spin-news" not in "".join(fake.markup)
 
@@ -308,11 +311,9 @@ def test_news_button_kick_failure_is_loud(monkeypatch):
     assert fake.reran is False
 
 
-def test_news_spinner_css_rule_matches_dom_order():
-    """#80: the lib-spin-news selector must match the real DOM order —
-    the marker's element container immediately followed by the button's
-    container (the hashtags/images pattern). A mismatched middle sibling
-    silently kills the spinner (cf. the #81 reset-loader bug)."""
+def test_no_spinner_css_rules_remain():
+    """#111: the marker + ::before spinner CSS is gone — the spinner is
+    Streamlit's native icon="spinner"."""
     import re
     lui, _fake = _ui_with_fake_st()
     chunks = []
@@ -336,15 +337,8 @@ def test_news_spinner_css_rule_matches_dom_order():
         sys.modules.update(saved)
     css = "\n".join(chunks)
     clean = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
-    # The news selector must share the exact adjacent-sibling shape as
-    # the hashtags/images selectors: marker container + next container
-    # holding the stButton.
-    for kind in ("hashtags", "images", "news"):
-        pat = (r'div\[data-testid="stElementContainer"\]:has\(\[data-marker='
-               rf'"lib-spin-{kind}"\]\)\s*\+\s*div\[data-testid="stElementContainer"\]'
-               r'\s*\[data-testid="stButton"\]\s*button::before')
-        assert re.search(pat, clean), \
-            f"lib-spin-{kind} selector missing or wrong DOM order"
+    assert "lib-spin-" not in clean
+    assert "button::before" not in clean
 
 
 def test_news_toast_text():
