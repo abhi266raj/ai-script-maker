@@ -61,6 +61,8 @@ _TB_ICON_RESET = ":material/refresh:"        # Reset
 _TB_ICON_SHARE = ":material/share:"          # Share
 _TB_ICON_COPY = ":material/content_copy:"    # Copy
 _TB_ICON_DELETE = ":material/delete:"        # Delete
+_TB_ICON_UPLOAD = ":material/upload:"        # Upload (#114)
+_TB_ICON_EDIT = ":material/edit:"            # Edit title/script (no emoji)
 _TB_ICON_SPINNER = "spinner"                 # native animated spinner
 
 
@@ -528,6 +530,22 @@ def inject_library_css() -> None:
        icons (``icon=":material/<name>:"``) — no custom font, no CSS
        needed. The native popover chevron is Streamlit's own and is
        untouched. */
+    /* #114: the Upload popover trigger — icon-only (native material
+       upload glyph), with a visible theme-safe border so it reads as a
+       real button, not a bare glyph. Marker-scoped: the hidden
+       [data-marker="lib-upload-btn"] div sits directly before the
+       popover's element container inside the Upload row's button column.
+       The border uses a neutral translucent gray — theme-safe in light
+       and dark mode. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-upload-btn"])
+        + div[data-testid="stElementContainer"] [data-testid="stPopoverButton"] {
+        border: 1px solid rgba(128, 128, 128, 0.5) !important;
+        border-radius: 0.5rem !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-upload-btn"])
+        + div[data-testid="stElementContainer"] [data-testid="stPopoverButton"]:hover {
+        border-color: currentColor !important;
+    }
     /* macOS HIG section header: plain semibold text, no emoji, no boxes */
     .lib-section {
         font-size: 15px;
@@ -538,16 +556,50 @@ def inject_library_css() -> None:
        (Hashtags / News Links). The title rides in the first column of
        the chip row so it always sits on the same line as the chips.
        Margins zeroed — the standalone .lib-section spacing would push
-       the row taller than one line — and the title column vertically
-       centered against the pills. */
+       the row taller than one line.
+       #112: the old `align-self: center` on the column never took effect
+       reliably (Streamlit's column internals + the hscroll
+       `align-items: start` interplay). Robust approach: the title column
+       stretches to the row height and centers its content via flex —
+       belt (column) and suspenders (inner vertical block). */
     .lib-section-inline {
         margin: 0 !important;
+        padding: 0 !important;
         white-space: nowrap;
+        line-height: 1.2 !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
         > div[data-testid="stColumn"]:has(.lib-section-inline) {
-        align-self: center !important;
+        align-self: stretch !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        > div[data-testid="stColumn"]:has(.lib-section-inline)
+        > div[data-testid="stVerticalBlock"] {
+        justify-content: center !important;
+        gap: 0 !important;
+    }
+    /* #113: the inline Load more button column — same robust vertical
+       centering as the section title above, so the button sits on the
+       row's optical center line with the chips/cards. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        > div[data-testid="stColumn"]:has([data-marker="lib-load-more"]) {
+        align-self: stretch !important;
+        display: flex !important;
+        flex-direction: column !important;
+        justify-content: center !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        > div[data-testid="stColumn"]:has([data-marker="lib-load-more"])
+        > div[data-testid="stVerticalBlock"] {
+        justify-content: center !important;
+        gap: 0 !important;
     }
     /* Quiet inline status line (replaces loud banners for background work) */
     .lib-quiet {
@@ -1069,6 +1121,14 @@ def _section_title_weight(title: str) -> int:
     selector can only ever produce a proportionally sized column.
     Pure (no Streamlit) so it is unit-testable."""
     return max(len(str(title)), 4) + 2
+
+
+def _load_more_weight(label: str) -> int:
+    """#113: ``st.columns`` weight for the inline Load more button that
+    rides as the last column of a section's scroll row. Same
+    shrink-wrap-fallback contract as :func:`_section_title_weight`.
+    Pure (no Streamlit) so it is unit-testable."""
+    return max(len(str(label)), 4) + 2
 
 
 def _fm_warmup_button_props(state: dict) -> tuple:
@@ -1887,7 +1947,7 @@ def _render_story_detail(story_id: str) -> None:
             st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
                         unsafe_allow_html=True)
         with _tt3:
-            if st.button("✏️", key=f"lib_title_edit_{story_id}",
+            if st.button("", icon=_TB_ICON_EDIT, key=f"lib_title_edit_{story_id}",
                          help="Edit title", disabled=_busy):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
                 st.rerun()
@@ -1955,8 +2015,12 @@ def _render_story_detail(story_id: str) -> None:
                     unsafe_allow_html=True)
         _cards = [("fetched", i, u) for i, u in enumerate(img_urls)]
         _cards += [("uploaded", i, f) for i, f in enumerate(uploaded)]
-        _icols = st.columns(len(_cards))
-        for _ci, (_icol, (_kind, _ki, _ref)) in enumerate(zip(_icols, _cards)):
+        # #113: the Load more button rides as the LAST column of this
+        # scroll row — same line as the thumbnails, inside the scroll
+        # view — instead of an orphan row below.
+        _icols = st.columns([1] * len(_cards)
+                            + [_load_more_weight("Load more images")])
+        for _ci, (_icol, (_kind, _ki, _ref)) in enumerate(zip(_icols[:-1], _cards)):
             with _icol:
                 if _kind == "fetched":
                     st.image(_ref, width=200)
@@ -1980,15 +2044,18 @@ def _render_story_detail(story_id: str) -> None:
                         else:
                             st.error("Could not remove the image — "
                                      "the story may have been deleted.")
-        # #91: explicit "load more" — one more batch (up to 5) of genuinely
-        # new images past the #83 cap. The button owns its loading state
-        # (spinner + disabled while more_images runs).
-        _render_load_more_button(
-            story_id=story_id, kind="more_images",
-            label="Load more images",
-            button_key=f"lib_moreimg_{story_id}",
-            help_text="Fetch up to 5 more images",
-            busy_kinds=_busy_kinds)
+        # #113: inline Load more — last column of the scroll row (see
+        # above). The button owns its loading state (spinner + disabled
+        # while more_images runs, #91/#53).
+        with _icols[-1]:
+            st.markdown('<div data-marker="lib-load-more" style="display:none"></div>',
+                        unsafe_allow_html=True)
+            _render_load_more_button(
+                story_id=story_id, kind="more_images",
+                label="Load more images",
+                button_key=f"lib_moreimg_{story_id}",
+                help_text="Fetch up to 5 more images",
+                busy_kinds=_busy_kinds)
     elif not (_busy_kinds & {"images", "more_images", "reset", "enrich"}):
         # #54: only kinds that (re-)fetch images suppress the hint — a
         # concurrent hashtag run leaves it visible.
@@ -2008,11 +2075,12 @@ def _render_story_detail(story_id: str) -> None:
                                     (_lk.get("source") or ""))
                    for _lk in links]
         _lcols = st.columns([_section_title_weight("News Links")]
-                            + _chip_col_weights(_labels))
+                            + _chip_col_weights(_labels)
+                            + [_load_more_weight("Load more news")])
         with _lcols[0]:
             st.markdown('<div class="lib-section lib-section-inline">News Links</div>',
                         unsafe_allow_html=True)
-        for _i, (_lc, _lk, _label) in enumerate(zip(_lcols[1:], links, _labels)):
+        for _i, (_lc, _lk, _label) in enumerate(zip(_lcols[1:-1], links, _labels)):
             _ltitle = _lk.get("title", "News link") or "News link"
             _lurl = (_lk.get("url") or "").strip()
             with _lc:
@@ -2029,15 +2097,18 @@ def _render_story_detail(story_id: str) -> None:
                         st.error(str(e))
                     else:
                         st.rerun()
-        # #91: explicit "load more" — one more batch (up to 5) of genuinely
-        # new news links past the #82 cap. The button owns its loading
-        # state (spinner + disabled while more_news runs).
-        _render_load_more_button(
-            story_id=story_id, kind="more_news",
-            label="Load more news",
-            button_key=f"lib_morenews_{story_id}",
-            help_text="Fetch up to 5 more news links",
-            busy_kinds=_busy_kinds)
+        # #113: inline Load more — last column of the scroll row (see
+        # above). The button owns its loading state (spinner + disabled
+        # while more_news runs, #91/#53).
+        with _lcols[-1]:
+            st.markdown('<div data-marker="lib-load-more" style="display:none"></div>',
+                        unsafe_allow_html=True)
+            _render_load_more_button(
+                story_id=story_id, kind="more_news",
+                label="Load more news",
+                button_key=f"lib_morenews_{story_id}",
+                help_text="Fetch up to 5 more news links",
+                busy_kinds=_busy_kinds)
     elif not (_busy_kinds & {"news", "more_news", "reset", "enrich"}):
         # #54/#80: only kinds that re-fetch links suppress the hint.
         st.caption("No news links yet.")
@@ -2070,7 +2141,7 @@ def _render_story_detail(story_id: str) -> None:
         with _sh1:
             st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
         with _sh2:
-            if st.button("✏️", key=f"lib_script_edit_{story_id}",
+            if st.button("", icon=_TB_ICON_EDIT, key=f"lib_script_edit_{story_id}",
                          help="Edit script",
                          disabled=_busy or _script_editing or _script_saving):
                 st.session_state[f"lib_edit_script_{story_id}"] = True
@@ -2114,12 +2185,19 @@ def _render_story_detail(story_id: str) -> None:
     # store_video_upload / store_image_upload paths, same success/error
     # handling). Uploads stay exempt from the #83 image cap and are
     # never auto-removed.
+    # #114: the trigger is icon-only (native material upload glyph, no
+    # "⬆" text/emoji) with a visible theme-safe border (see CSS marker
+    # rule below); the popover body carries the upload affordance
+    # (Video/Image radio + file uploader). Title and button share one
+    # line, vertically centered.
     _u1, _u2 = st.columns([11, 1], vertical_alignment="center")
     with _u1:
         st.markdown('<div class="lib-section lib-section-inline">Upload</div>',
                     unsafe_allow_html=True)
     with _u2:
-        with st.popover("⬆", help="Upload video or image"):
+        st.markdown('<div data-marker="lib-upload-btn" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        with st.popover("", icon=_TB_ICON_UPLOAD, help="Upload video or image"):
             _up_kind = st.radio("Media type", ["Video", "Image"],
                                 key=f"lib_upkind_{story_id}")
             if _up_kind == "Video":

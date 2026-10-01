@@ -65,7 +65,7 @@ class _FakeSt(types.ModuleType):
         return [_Ctx(self, "columns", (spec,), kwargs) for _ in range(n)]
 
     def popover(self, label, **kwargs):
-        self.events.append(("popover", label))
+        self.events.append(("popover", label, kwargs))
         return _Ctx(self, "popover", (label,), kwargs)
 
     def expander(self, label, expanded=False, **kwargs):
@@ -175,9 +175,10 @@ def test_inline_section_css_zeroes_margins_and_centers(lui_st):
     clean = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     assert ".lib-section-inline" in clean
     assert "margin: 0" in clean
-    # The title column is vertically centered against the pills.
+    # #112: the title column is vertically centered against the pills via
+    # the robust stretch+flex approach (not the old align-self: center).
     assert ":has(.lib-section-inline)" in clean
-    assert "align-self: center" in clean
+    assert "justify-content: center" in clean
 
 
 # ---------------------------------------------------------------------------
@@ -210,10 +211,13 @@ def test_news_links_title_and_chips_share_one_row(libdir, lui_st):
     lui._render_story_detail(sid)
 
     labels = ["Alpha", "Beta"]
-    expected = [lui._section_title_weight("News Links")] + lui._chip_col_weights(labels)
+    # #113: the Load more button rides as the last column of the row.
+    expected = ([lui._section_title_weight("News Links")]
+                + lui._chip_col_weights(labels)
+                + [lui._load_more_weight("Load more news")])
     col_specs = [e[1] for e in fake.events if e[0] == "columns"]
     assert expected in col_specs, (
-        f"News Links title+chips must be one st.columns row; saw {col_specs}")
+        f"News Links title+chips+load-more must be one st.columns row; saw {col_specs}")
 
     standalone = [e[1] for e in fake.events
                   if e[0] == "markdown" and e[1] == '<div class="lib-section">News Links</div>']
@@ -269,9 +273,11 @@ def test_upload_row_title_left_button_right(libdir, lui_st):
               if e[0] == "markdown" and "lib-section-inline" in e[1] and ">Upload<" in e[1]]
     assert len(inline) == 1, "exactly one inline 'Upload' title"
 
-    popovers = [e[1] for e in fake.events if e[0] == "popover"]
-    assert any("⬆" in p for p in popovers), (
-        f"upload popover button must render; saw {popovers}")
+    # #114: the popover trigger is icon-only (native material upload
+    # glyph, no "⬆" text/emoji).
+    popovers = [e for e in fake.events if e[0] == "popover"]
+    assert any(e[2].get("icon") == lui._TB_ICON_UPLOAD for e in popovers), (
+        f"upload popover must use the material upload icon; saw {popovers}")
 
 
 def test_upload_popover_offers_video_image_selection(libdir, lui_st):

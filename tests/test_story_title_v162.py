@@ -69,9 +69,12 @@ def test_no_icon_glyph_popover_or_marker_left(monkeypatch):
 
 
 def test_edit_flow_survives_revert(monkeypatch):
-    # View mode: the ✏️ edit button is next to the title.
+    # View mode: the edit button (icon-only, no emoji) is next to the title.
     lui, fake = _render_detail(monkeypatch, "T")
-    assert ("✏️", "lib_title_edit_sid1") in fake.buttons
+    assert ("", "lib_title_edit_sid1") in fake.buttons
+    assert any(kw.get("key") == "lib_title_edit_sid1"
+               and kw.get("icon") == lui._TB_ICON_EDIT
+               for kw in fake.button_kwargs), "title edit must use the material edit icon"
     # Edit mode: a text editor takes the title's place (Save/Cancel live
     # in the toolbar above).
     src = inspect.getsource(lui._render_story_detail)
