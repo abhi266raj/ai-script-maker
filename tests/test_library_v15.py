@@ -452,21 +452,32 @@ def test_refresh_images_keeps_existing_when_fetch_empty(libdir, monkeypatch):
     sid = _make_story(image_urls=["https://img.example/old.jpg"])
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: [])
+    # Issue #57: the merge always runs, so missing hashes for the stored
+    # image are backfilled (one-time network cost, then persisted) even
+    # though the fetch found nothing new.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
-    assert changed is False
-    assert lib.load_story(sid)["meta"]["image_urls"] == [
-        "https://img.example/old.jpg"]
-    assert "kept 1 existing" in note
+    assert changed is True  # backfilled hashes were persisted
+    meta = lib.load_story(sid)["meta"]
+    assert meta["image_urls"] == ["https://img.example/old.jpg"]
+    assert len(meta["image_hashes"]) == 1 and all(meta["image_hashes"])
+    assert len(meta["image_phashes"]) == 1 and all(meta["image_phashes"])
+    assert "No new images found" in note and "kept 1 existing" in note
 
 
 def test_refresh_images_no_change_when_nothing_new(libdir, monkeypatch):
     sid = _make_story(image_urls=["https://img.example/old.jpg"])
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: ["https://img.example/old.jpg"])
+    # Issue #57: the stored image's missing hashes are backfilled even
+    # though the only candidate is a URL-dupe — that backfill is
+    # persisted, so the refresh reports a change.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
-    assert changed is False
-    assert lib.load_story(sid)["meta"]["image_urls"] == [
-        "https://img.example/old.jpg"]
+    assert changed is True
+    meta = lib.load_story(sid)["meta"]
+    assert meta["image_urls"] == ["https://img.example/old.jpg"]
+    assert all(meta["image_hashes"]) and all(meta["image_phashes"])
 
 
 # ---------------------------------------------------------------------------
