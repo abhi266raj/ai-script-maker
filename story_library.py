@@ -875,33 +875,53 @@ def _suggest_hashtags(story: Dict[str, Any], topic: str,
 
 def refresh_hashtags(story_id: str, topic: str = "",
                      ai_engine: Optional[str] = None) -> Tuple[bool, str]:
-    """Find hashtags for the story's topic and merge them in.
+    """Validate every stored hashtag against the story's own content, drop
+    the invalid ones, and merge in fresh grounded suggestions.
 
-    Returns (added_anything, note). Never wipes the existing hashtags and
-    never touches the story content, screenplay, verified links, or images.
+    Returns (changed, note). `changed` is True when any tag was added or
+    removed; the note honestly reports what was validated, removed, and
+    added. Never touches the story content, screenplay, verified links,
+    or images.
     """
     story = load_story(story_id)
     if not story:
-        return False, "Story not found."
+        return False, "Story not found — nothing refreshed."
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
         return False, "No topic to find hashtags for."
+
+    # 1. Validate ALL existing hashtags against the story's own content —
+    # stale or off-topic tags are removed, not silently kept.
+    existing = [h for h in (story["meta"].get("hashtags") or []) if h]
+    valid_existing = _validate_ai_tags(existing, story)
+    removed = [h for h in existing if h not in valid_existing]
+
+    # 2. Fresh grounded suggestions (AI first when enabled, deterministic always).
     new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
-    if not new_tags:
-        note = ai_note or "No hashtags found."
-        return False, note
-    merged = list(story["meta"].get("hashtags") or [])
-    added = False
-    for t in new_tags:
+
+    # 3. Merge: keep the validated existing tags, add genuinely new ones.
+    merged: List[str] = []
+    for t in valid_existing + new_tags:
         if t not in merged:
             merged.append(t)
-            added = True
+    added = [t for t in merged if t not in valid_existing]
+
+    parts = [f"Validated {len(existing)} existing hashtag(s)."]
+    if removed:
+        parts.append(f"Removed {len(removed)} invalid: {', '.join(removed)}.")
     if added:
+        parts.append(f"Added {len(added)}: {', '.join(added)}.")
+    if not removed and not added:
+        parts.append("Everything still valid — nothing new found."
+                     if existing else "No hashtags found.")
+    if ai_note:
+        parts.append(ai_note)
+    note = " ".join(parts)
+
+    changed = bool(removed or added)
+    if changed:
         update_story_fields(story_id, hashtags=merged)
-        note = "Hashtags updated." + (f" {ai_note}" if ai_note else "")
-        return True, note
-    note = "No new hashtags found — kept the existing ones." + (f" {ai_note}" if ai_note else "")
-    return False, note
+    return changed, note
 
 
 def refresh_images(story_id: str, topic: str = "") -> bool:

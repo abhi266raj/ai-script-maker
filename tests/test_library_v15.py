@@ -151,9 +151,10 @@ def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_fetch_trending_hashtags",
                         lambda topic, story=None: ["#DogShowdown", "#ChubbyDogs"])
-    added, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
-    assert added is True
-    assert "Hashtags updated." in note
+    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
+    assert changed is True
+    assert "Validated 1 existing hashtag(s)." in note
+    assert "Added 1: #ChubbyDogs." in note
     assert "#DogShowdown" in lib.load_story(sid)["meta"]["hashtags"]
     assert "#ChubbyDogs" in lib.load_story(sid)["meta"]["hashtags"]
 
@@ -162,9 +163,23 @@ def test_refresh_hashtags_no_change_is_honest(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_fetch_trending_hashtags",
                         lambda topic, story=None: ["#DogShowdown"])
-    added, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
-    assert added is False
-    assert "kept the existing ones" in note
+    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
+    assert changed is False
+    assert "Validated 1 existing hashtag(s)." in note
+    assert "Everything still valid — nothing new found." in note
+
+
+def test_refresh_hashtags_removes_invalid_existing(libdir, monkeypatch):
+    # Stale/off-topic tags stored earlier are validated against the story's
+    # own content on refresh and removed — not silently kept.
+    sid = _make_story(hashtags=["#DogShowdown", "#RussiaKillsFour", "bogus"])
+    monkeypatch.setattr(lib, "_fetch_trending_hashtags",
+                        lambda topic, story=None: [])
+    changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
+    assert changed is True
+    assert "Removed 2 invalid: #RussiaKillsFour, bogus." in note
+    remaining = lib.load_story(sid)["meta"]["hashtags"]
+    assert remaining == ["#DogShowdown"]
 
 
 # ---------------------------------------------------------------------------
