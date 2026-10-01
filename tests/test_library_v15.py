@@ -1489,8 +1489,11 @@ def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
 def test_whatsapp_app_installed_detects_applications_dir(monkeypatch):
     lui, _fake = _ui_with_fake_st()
     import os as _os
+    import shutil as _shutil
     lui._whatsapp_app_installed.cache_clear()
     try:
+        # mdfind unavailable → pure path-check fallback.
+        monkeypatch.setattr(_shutil, "which", lambda _cmd: None)
         monkeypatch.setattr("os.path.isdir",
                             lambda p: p == "/Applications/WhatsApp.app")
         assert lui._whatsapp_app_installed() is True
@@ -1498,6 +1501,11 @@ def test_whatsapp_app_installed_detects_applications_dir(monkeypatch):
         # …and the ~/Applications fallback.
         home_app = _os.path.expanduser("~/Applications/WhatsApp.app")
         monkeypatch.setattr("os.path.isdir", lambda p: p == home_app)
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # #108: the macOS localized-folder install.
+        loc_app = "/Applications/WhatsApp.localized/WhatsApp.app"
+        monkeypatch.setattr("os.path.isdir", lambda p: p == loc_app)
         assert lui._whatsapp_app_installed() is True
         lui._whatsapp_app_installed.cache_clear()
         # Neither location → not installed.
@@ -1510,18 +1518,73 @@ def test_whatsapp_app_installed_detects_applications_dir(monkeypatch):
 def test_whatsapp_app_installed_is_cached(monkeypatch):
     lui, _fake = _ui_with_fake_st()
     import os as _os
+    import shutil as _shutil
     calls = []
     real_isdir = _os.path.isdir
     lui._whatsapp_app_installed.cache_clear()
     try:
+        monkeypatch.setattr(_shutil, "which", lambda _cmd: None)
         def _counting(p):
             calls.append(p)
             return real_isdir(p)
         monkeypatch.setattr("os.path.isdir", _counting)
         lui._whatsapp_app_installed()
         lui._whatsapp_app_installed()
-        # Two candidate paths checked once; the second call hits the cache.
-        assert len(calls) == 2
+        # Four candidate paths checked once; the second call hits the cache.
+        assert len(calls) == 4
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+def test_whatsapp_app_installed_mdfind_finds_arbitrary_path(monkeypatch):
+    # #108: Spotlight by bundle ID finds the app anywhere on disk.
+    lui, _fake = _ui_with_fake_st()
+    import shutil as _shutil
+    import subprocess as _sp
+    seen = {}
+
+    class _FakeResult:
+        returncode = 0
+        stdout = "/Applications/WhatsApp.localized/WhatsApp.app\n"
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return _FakeResult()
+
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr(_shutil, "which",
+                            lambda cmd: "/usr/bin/mdfind" if cmd == "mdfind" else None)
+        monkeypatch.setattr(_sp, "run", _fake_run)
+        assert lui._whatsapp_app_installed() is True
+        # The query must be the WhatsApp bundle ID.
+        assert any("net.whatsapp.WhatsApp" in a for a in seen["argv"])
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+def test_whatsapp_app_installed_mdfind_failure_falls_back(monkeypatch):
+    # #108: mdfind broken (Spotlight disabled) → path checks, not False.
+    lui, _fake = _ui_with_fake_st()
+    import shutil as _shutil
+    import subprocess as _sp
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/mdfind")
+        def _boom(_argv, **_kwargs):
+            raise OSError("Spotlight unavailable")
+        monkeypatch.setattr(_sp, "run", _boom)
+        monkeypatch.setattr("os.path.isdir",
+                            lambda p: p == "/Applications/WhatsApp.app")
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # mdfind finds nothing → second-opinion path check still applies.
+        class _Empty:
+            returncode = 0
+            stdout = "\n"
+        monkeypatch.setattr(_sp, "run", lambda _a, **_k: _Empty())
+        monkeypatch.setattr("os.path.isdir", lambda p: False)
+        assert lui._whatsapp_app_installed() is False
     finally:
         lui._whatsapp_app_installed.cache_clear()
 
