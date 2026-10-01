@@ -509,11 +509,12 @@ def _inject_story_list_css() -> None:
     /* v1.6 (#24): the lib-danger-/lib-danger-pop- marker divs are
        display:none themselves, but their stElementContainer wrapper still
        occupies one inter-element gap in Streamlit's vertical block —
-       pushing the "Reset"/"Delete" popover triggers (and the red "Yes"
-       inside the popover) one gap lower than their plain-button siblings.
+       pushing the "Reset"/"Delete" popover triggers (and the red
+       destructive button inside the popover) one gap lower than their
+       plain-button siblings.
        Collapse the wrapper: CSS `+` sibling combinators and :has() match
-       on DOM order regardless of display, so the red-trigger/red-button
-       rules below keep matching. Prefix-scoped: lib-x-/lib-hscroll/
+       on DOM order regardless of display, so the red-button rule below
+       keeps matching. Prefix-scoped: lib-x-/lib-hscroll/
        lib-story-list markers are untouched. */
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {
         display: none !important;
@@ -529,19 +530,11 @@ def _inject_story_list_css() -> None:
         color: #FF3B30 !important;
         border-color: rgba(255, 59, 48, 0.6) !important;
     }
-    /* Destructive popover trigger: same macOS system red on the native
-       popover button (graceful — plain button if the selector ever misses).
-       #FF3B30 reads on both light and dark themes; no theme overrides. */
-    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
-        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"] {
-        color: #FF3B30 !important;
-        border-color: rgba(255, 59, 48, 0.35) !important;
-    }
-    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
-        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"]:hover {
-        color: #FF3B30 !important;
-        border-color: rgba(255, 59, 48, 0.6) !important;
-    }
+    /* v1.6 (#58): destructive popover triggers are NEUTRAL — they read as
+       plain buttons like their neighbours (see the approved screenshot).
+       macOS system red lives ONLY on the explicit destructive button
+       inside the popover (the lib-danger- rule above). This deliberately
+       reverses the #38 red trigger. */
     /* v1.6 (#38): HIG-anchored destructive popover. Streamlit renders the
        popover body inside a floating overlay portal, so the lib-danger-pop-
        marker sitting before the trigger cannot reach the body with sibling
@@ -566,6 +559,19 @@ def _inject_story_list_css() -> None:
         """,
         unsafe_allow_html=True,
     )
+
+
+def _md_escape(text: str) -> str:
+    """Backslash-escape Markdown special characters so user-controlled text
+    (e.g. a story title) renders literally inside ``st.markdown``.
+
+    ``st.markdown`` already neutralises raw HTML (``unsafe_allow_html``
+    defaults to False), but Markdown *syntax* in the text — ``**``, ``[]()``,
+    backticks — would still be interpreted and could break the surrounding
+    formatting or inject a link. Every Markdown special is escaped; the
+    function is total (None/empty → "") and never raises.
+    """
+    return _re.sub(r"([\\`*_{}\[\]()#+\-.!|])", r"\\\1", text or "")
 
 
 def _danger_button(label: str, key: str, **kwargs) -> bool:
@@ -602,32 +608,41 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
                      trigger_help: str = "",
                      use_container_width: bool = False,
                      fail_label: str = "Confirm",
+                     destructive_label: str,
                      disabled: bool = False) -> None:
-    """Apple-style confirmation: native popover, red Yes, normal No.
+    """Apple-style confirmation: native popover, explicit red destructive
+    verb, standard Cancel. (#58)
 
-    The trigger is a red destructive button (marker-scoped CSS, graceful if
-    the selector misses). Inside the popover: a bold title, a secondary
-    message line, then "Yes" (red, destructive) and "No" (standard) side by
-    side.
+    The trigger is a NEUTRAL button, like its neighbours — macOS system red
+    lives only on the destructive action inside the popover (this reverses
+    the #38 red trigger, per the approved screenshot). Inside the popover:
+    a bold title, a secondary message line, then "Cancel" (standard, left)
+    and the destructive verb (red, right) side by side — never a bare
+    "Yes"/"No".
 
-    "Yes" arms a ``<key>-go`` flag via an ``on_click`` callback and closes
-    the popover; the flag is consumed at the top of the next script run —
-    *before* the popover widget instantiates, which is the only moment its
-    key may be driven programmatically (doing it after raises
-    ``StreamlitWidgetAlreadyInstantiatedError``). ``on_yes`` must raise on
-    failure: the error is shown loudly inside the reopened popover and the
-    popover stays open. "No" only closes the popover. The native popover
-    follows the light/dark theme; the only custom color is macOS system red,
-    which reads on both themes.
+    The destructive verb arms a ``<key>-go`` flag via an ``on_click``
+    callback and closes the popover; the flag is consumed at the top of
+    the next script run — *before* the popover widget instantiates, which
+    is the only moment its key may be driven programmatically (doing it
+    after raises ``StreamlitWidgetAlreadyInstantiatedError``). ``on_yes``
+    must raise on failure: the error is shown loudly inside the reopened
+    popover and the popover stays open. "Cancel" only closes the popover.
+    The native popover follows the light/dark theme; the only custom color
+    is macOS system red, which reads on both themes.
 
-    ``fail_label`` prefixes the loud error (e.g. "Delete", "Reset").
-    ``disabled`` disables the trigger (e.g. while its work is running) —
-    the trigger label can then carry the loading state ("Resetting…").
+    ``title`` may carry user-controlled text (e.g. a story name): Markdown
+    specials are escaped so it renders literally and can never break the
+    bold wrapper or inject a link. ``fail_label`` prefixes the loud error
+    (e.g. "Delete", "Reset"); ``destructive_label`` is the explicit red
+    button verb (e.g. "Delete story", "Reset media"). ``disabled`` disables
+    the trigger (e.g. while its work is running) — the trigger label can
+    then carry the loading state ("Resetting…").
     """
     _go_key = f"{popover_key}-go"
     _err_key = f"{popover_key}-err"
     # Marker first: it must sit directly before the popover's element
-    # container for the red-trigger CSS sibling selector to hit.
+    # container for the #24 collapse rule (the marker's wrapper would
+    # otherwise push the trigger one gap lower than its siblings).
     st.markdown(f'<div data-marker="lib-danger-pop-{popover_key}" style="display:none"></div>',
                 unsafe_allow_html=True)
     # Consume a previously armed confirmation *before* the popover
@@ -652,27 +667,30 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
         _failure = st.session_state.pop(_err_key, None)
         if _failure:
             st.error(f"{fail_label} failed: {_failure}")
-        st.markdown(f"**{title}**")
+        st.markdown(f"**{_md_escape(title)}**")
         st.caption(message)
-        _by, _bn = st.columns(2)
-        with _by:
+        _bc, _bd = st.columns(2)
+        with _bc:
+            st.button(
+                "Cancel", key=f"{popover_key}-no", use_container_width=True,
+                on_click=lambda: st.session_state.update({popover_key: False}),
+            )
+        with _bd:
             _danger_button(
-                "Yes", key=f"{popover_key}-yes", use_container_width=True,
+                destructive_label, key=f"{popover_key}-yes",
+                use_container_width=True,
                 on_click=lambda: st.session_state.update(
                     {popover_key: False, _go_key: True}),
-            )
-        with _bn:
-            st.button(
-                "No", key=f"{popover_key}-no", use_container_width=True,
-                on_click=lambda: st.session_state.update({popover_key: False}),
             )
 
 
 def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
                     message: str, on_yes: Callable[[], None],
                     trigger_help: str = "",
-                    use_container_width: bool = False) -> None:
-    """Apple-style delete confirmation: native popover, red Yes, normal No.
+                    use_container_width: bool = False,
+                    destructive_label: str) -> None:
+    """Apple-style delete confirmation: neutral trigger, red explicit
+    destructive verb + Cancel inside (#58).
 
     Thin wrapper over :func:`_confirm_popover` with the failure label set
     to "Delete" (kept for the existing delete flows and their tests).
@@ -686,12 +704,14 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
         trigger_help=trigger_help,
         use_container_width=use_container_width,
         fail_label="Delete",
+        destructive_label=destructive_label,
     )
 
 
 def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
                           ai_engine) -> None:
-    """Toolbar Reset: destructive confirm popover (red Yes / normal No).
+    """Toolbar Reset: destructive confirm popover (red "Reset media" /
+    standard "Cancel", #58).
 
     The trigger owns its loading state ("Resetting…") and stays disabled
     while any refresh is busy. Confirming kicks a "reset" refresh —
@@ -702,7 +722,7 @@ def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
 
     def _on_reset_yes() -> None:
         # Raises loudly on failure: the popover shows it and stays open.
-        # No st.rerun() here — the Yes click already reruns via the
+        # No st.rerun() here — the destructive click already reruns via the
         # popover's on_change, and the busy state + auto-poll take over.
         ok, reason = lib.start_refresh(story_id, "reset", ai_engine=ai_engine)
         if not ok:
@@ -720,6 +740,7 @@ def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
         on_yes=_on_reset_yes,
         trigger_help="Clear and re-fetch hashtags, images and news links",
         fail_label="Reset",
+        destructive_label="Reset media",
         disabled=busy,
     )
 def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
@@ -1103,6 +1124,7 @@ def render_library_page() -> None:
             on_yes=_confirm_delete_all,
             trigger_help="Delete every saved story",
             use_container_width=True,
+            destructive_label="Delete all stories",
         )
     with detail:
         _render_story_detail(sel)
@@ -1381,13 +1403,17 @@ def _render_story_detail(story_id: str) -> None:
                      else f"Could not start the {label} refresh.")
 
     def _story_delete_popover() -> None:
+        # #58: the confirmation names the story, quoted — the title is
+        # user-editable, so _confirm_popover escapes Markdown specials.
+        _story_title = meta.get("title", "Untitled Story") or "Untitled Story"
         _delete_popover(
             trigger_label="Delete",
             popover_key=f"lib_delpop_{story_id}",
-            title="Delete this story?",
+            title=f'Delete "{_story_title}"?',
             message="This can't be undone.",
             on_yes=lambda: _confirm_delete_story(story_id),
             trigger_help="Delete this story",
+            destructive_label="Delete story",
         )
 
     if _editing:
@@ -1429,8 +1455,9 @@ def _render_story_detail(story_id: str) -> None:
                 _kick_refresh("images", "image")
         with tc3:
             # Reset is destructive: it confirms via the same native popover
-            # pattern as Delete (red Yes / normal No). The trigger owns its
-            # loading state ("Resetting…") and stays disabled while busy.
+            # pattern as Delete (red explicit verb / standard Cancel, #58).
+            # The trigger owns its loading state ("Resetting…") and stays
+            # disabled while busy.
             _render_reset_popover(story_id, _busy, _refresh_kind, _ai_engine)
         with tc4:
             _render_share_popover(story_id, _share_text)
