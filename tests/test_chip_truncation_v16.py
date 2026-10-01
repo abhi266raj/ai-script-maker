@@ -1,9 +1,12 @@
-"""v1.6 (#25/#26) — chip × truncation fixes in the Library story detail.
+"""v1.6 (#25/#26, redesigned by #51) — chip × truncation fixes in the
+Library story detail.
 
-#25: hashtag chips cut tag text off under the × overlay button. The ×
-clearance now lives in the chip COLUMN's own padding (30px), so the ×
-(22px at right:4px of the column) floats 4px clear of the chip edge and
-tag text can never slide underneath it — regardless of chip width.
+#25: hashtag chips cut tag text off under the × overlay button.
+#51 redesign: the × is now a macOS token-field remove glyph centered
+INSIDE the pill (22px at 6px from the pill's trailing edge), so the ×
+clearance lives in the chip's own padding-right (34px = 22px target +
+6px inset + 6px breathing room) — tag text can never slide underneath
+it, regardless of chip width.
 
 #26: news-link chips had the same × truncation, and their label was the
 full headline ("title (source)"). The chip now shows the source website
@@ -37,44 +40,46 @@ def _capture_library_css():
 
 
 # ---------------------------------------------------------------------------
-# #25 — × clearance lives in the chip column's padding
+# #25 — × clearance lives in the chip's own padding (#51 redesign)
 # ---------------------------------------------------------------------------
 
-def test_chip_column_reserves_x_clearance():
-    """The × overlay is absolutely positioned at right:4px of the COLUMN
-    (22px diameter). Chip columns must reserve that clearance in the
-    column's own padding so tag text can never slide under the button —
-    independent of the chip's width or its own padding."""
+def test_chip_column_no_longer_reserves_x_clearance():
+    """#51 redesign: the × moved INSIDE the pill (token-field glyph), so
+    the chip column no longer reserves 30px of padding for it — that
+    dead space after every chip is gone. The clearance now lives in the
+    chip's own padding-right (see below)."""
     css, _ = _capture_library_css()
     assert css.count("{") == css.count("}")
-    rule = ('div[data-testid="stColumn"]:has(.lib-chip) {')
-    assert rule in css, "chip-column padding rule missing"
-    assert "padding-right: 30px !important;" in css
+    assert "padding-right: 30px" not in css, \
+        "stale column-padding × reservation still present"
 
 
-def test_chip_column_rule_is_chip_scoped():
-    """The column padding must only hit columns holding a chip — image
-    cards keep their inset × over the image corner."""
+def test_chip_x_rules_are_chip_scoped():
+    """The chip × centering/glyph rules must only hit columns holding a
+    chip — the :has(.lib-chip) scope is what keeps image-card columns on
+    their inset top-right × over the image corner."""
     css, _ = _capture_library_css()
-    # The :has(.lib-chip) scope is what keeps image-card columns out.
-    assert 'div[data-testid="stColumn"]:has(.lib-chip)' in css
-    # No blanket column padding that would shrink image cards.
-    assert 'div[data-testid="stColumn"] {\n        padding-right' not in css
+    assert 'div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])' in css
+    # No blanket × restyle that would also hit image cards.
+    assert 'div[data-testid="stColumn"]:has([data-marker="lib-x-r"])\n' \
+        '        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])\n' \
+        '        + div[data-testid="stElementContainer"] {\n' \
+        '        top: 50%' not in css
 
 
-def test_chip_own_padding_back_to_base():
-    """The chip itself no longer carries the × clearance (that was the
-    fragile 26px that the real render defeated); it keeps the base 12px
-    so the label has breathing room before the chip edge."""
+def test_chip_own_padding_clears_x_target():
+    """The pill's own padding-right must clear the 22px × target sitting
+    6px inside the pill edge: 34px = 22px + 6px inset + 6px breathing
+    room — tag text can never slide underneath the ×. This is the
+    #25/#26 no-truncation guarantee under the #51 design."""
     css, _ = _capture_library_css()
-    assert "padding-right: 26px" not in css, \
-        "stale chip-internal × clearance still present"
-    assert "padding-right: 12px !important;" in css
+    assert "padding-right: 34px !important;" in css
 
 
-def test_x_overlay_still_pins_to_column_corner():
-    """The × overlay behavior itself is unchanged: absolute, top-right of
-    the column, above content."""
+def test_image_card_x_overlay_unchanged():
+    """The image-card × overlay behavior itself is unchanged: absolute,
+    top-right corner of the column, above content — the generic rule the
+    chip-scoped #51 rules override only for chip columns."""
     css, _ = _capture_library_css()
     for needle in ("position: absolute", "z-index: 10", "top: 4px",
                    "right: 4px"):
