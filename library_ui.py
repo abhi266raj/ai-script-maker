@@ -2013,7 +2013,32 @@ def _whatsapp_app_installed() -> bool:
     return any(_os.path.isdir(p) for p in candidates)
 
 
-def _render_share_popover(story_id: str, share_text: str) -> None:
+def _whatsapp_video_path(story_id: str, meta: dict) -> Optional[str]:
+    """Return the absolute path of the story's attached video for WhatsApp sharing.
+
+    #150: WhatsApp's URL scheme (whatsapp://send?text= and wa.me/?text=)
+    only carries text — there is no media parameter, so a video file cannot
+    be attached via the deep link. The best feasible approach is to include
+    the video's file path in the share text and tell the user to attach it
+    manually in WhatsApp.
+
+    Returns the absolute video path as a string, or None if no video is
+    attached. Raises RuntimeError (fail loudly) if the metadata references
+    a video file that is missing from disk.
+    """
+    video_file = (meta.get("video_file") or "").strip()
+    if not video_file:
+        return None
+    vpath = lib.media_path(story_id, video_file)
+    if vpath is None:
+        raise RuntimeError(
+            f"Story references video '{video_file}' but the file is missing "
+            f"from the stories directory."
+        )
+    return str(vpath.resolve())
+
+
+def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
     """Share dropdown (native popover, macOS HIG): sub-actions for the
     story's news-links + hashtags share text.
 
@@ -2029,6 +2054,11 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
     server-side ``open`` of the whatsapp:// deep link (#139) — no browser
     tab involved (#95) — with a wa.me browser fallback when the app can't
     be opened (#144).
+
+    #150: if the story has a video attached, the video's file path is
+    appended to the WhatsApp share text (the URL scheme cannot carry media,
+    so the user attaches it manually in WhatsApp). A missing video file
+    fails loudly instead of sending without it.
     """
     with st.popover("", icon=_TB_ICON_SHARE, key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
@@ -2052,15 +2082,28 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
                     use_container_width=True,
                 ):
                     try:
-                        _how = _open_whatsapp_share(share_text)
+                        # #150: include the video path if attached. The
+                        # URL scheme can't carry media, so the path goes
+                        # in the text and the user attaches it manually.
+                        # A missing video file fails loudly — we do NOT
+                        # send the text without the video.
+                        vpath = _whatsapp_video_path(story_id, meta)
+                        wa_text = share_text
+                        if vpath:
+                            wa_text = f"{wa_text}\n\nVideo: {vpath}"
+                        _how = _open_whatsapp_share(wa_text)
                     except RuntimeError as e:
                         st.error(f"Couldn't share via WhatsApp: {e}")
                     else:
                         if _how == "app":
-                            st.toast("WhatsApp opened — pick a chat to send.")
+                            msg = "WhatsApp opened — pick a chat to send."
                         else:
-                            st.toast("Opening WhatsApp in your browser — "
-                                     "pick a chat to send.")
+                            msg = ("Opening WhatsApp in your browser — "
+                                   "pick a chat to send.")
+                        if vpath:
+                            msg += (f" Attach the video manually from:\n"
+                                    f"{vpath}")
+                        st.toast(msg)
             else:
                 # Fail loudly: never a dead link. The app may still open
                 # via the browser fallback when clicked.
@@ -2316,7 +2359,7 @@ def _render_story_detail(story_id: str) -> None:
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
         with ec3:
-            _render_share_popover(story_id, _share_text)
+            _render_share_popover(story_id, _share_text, meta)
         with ec4:
             _render_copy_popover(story_id, meta, script_md)
         with ec5:
@@ -2354,7 +2397,7 @@ def _render_story_detail(story_id: str) -> None:
             # while any kind runs (exclusive).
             _render_reset_popover(story_id, _busy_kinds, _ai_engine)
         with tc5:
-            _render_share_popover(story_id, _share_text)
+            _render_share_popover(story_id, _share_text, meta)
         with tc6:
             _render_copy_popover(story_id, meta, script_md)
         with tc7:

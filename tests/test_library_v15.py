@@ -1408,7 +1408,7 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     # #95: WhatsApp.app present -> direct deep link, no browser tab.
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
-    lui._render_share_popover("sid1", share_text)
+    lui._render_share_popover("sid1", share_text, {})
     # Popover trigger is the self-describing dropdown (#30): icon-only,
     # native material icon (#111).
     assert fake.popover_kwargs["label"] == ""
@@ -1439,7 +1439,7 @@ def test_share_popover_whatsapp_click_opens_with_exact_text(monkeypatch):
     monkeypatch.setattr(lui, "_open_whatsapp_share",
                         lambda text: opened.append(text) or "app")
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
-    lui._render_share_popover("sid1", share_text)
+    lui._render_share_popover("sid1", share_text, {})
     assert opened == [share_text]
     assert fake.toasts == [("WhatsApp opened \u2014 pick a chat to send.", None)]
     assert fake.errors == []
@@ -1452,7 +1452,7 @@ def test_share_popover_whatsapp_browser_fallback_toast(monkeypatch):
     monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share", lambda text: "browser")
-    lui._render_share_popover("sid1", "https://example.com/a")
+    lui._render_share_popover("sid1", "https://example.com/a", {})
     assert fake.toasts == [("Opening WhatsApp in your browser \u2014 "
                             "pick a chat to send.", None)]
     assert fake.errors == []
@@ -1467,12 +1467,80 @@ def test_share_popover_whatsapp_click_failure_is_loud(monkeypatch):
     monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share", _boom)
-    lui._render_share_popover("sid1", "https://example.com/a")
+    lui._render_share_popover("sid1", "https://example.com/a", {})
     assert fake.errors == [
         "Couldn't share via WhatsApp: app handoff and browser fallback "
         "both failed"]
     assert fake.toasts == []
 
+
+def test_whatsapp_video_path_returns_none_when_no_video():
+    # #150: no video attached -> None (text-only share unchanged).
+    lui, _fake = _ui_with_fake_st()
+    assert lui._whatsapp_video_path("sid1", {}) is None
+    assert lui._whatsapp_video_path("sid1", {"video_file": ""}) is None
+
+
+def test_whatsapp_video_path_returns_path_when_video_exists(monkeypatch, tmp_path):
+    # #150: video attached and file exists -> absolute path string.
+    lui, _fake = _ui_with_fake_st()
+    vid = tmp_path / "sid1.mp4"
+    vid.write_bytes(b"fake-video")
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: vid)
+    result = lui._whatsapp_video_path("sid1", {"video_file": "sid1.mp4"})
+    assert result == str(vid.resolve())
+
+
+def test_whatsapp_video_path_raises_when_video_missing(monkeypatch):
+    # #150: metadata references a video but the file is gone -> loud failure.
+    lui, _fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: None)
+    try:
+        lui._whatsapp_video_path("sid1", {"video_file": "sid1.mp4"})
+    except RuntimeError as e:
+        assert "missing" in str(e).lower()
+        assert "sid1.mp4" in str(e)
+    else:
+        raise AssertionError("expected RuntimeError for missing video file")
+
+
+def test_share_popover_whatsapp_includes_video_path(monkeypatch, tmp_path):
+    # #150: video attached -> video path appended to share text, toast
+    # tells the user to attach it manually (URL scheme can't carry media).
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    opened = []
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share",
+                        lambda text: opened.append(text) or "app")
+    vid = tmp_path / "sid1.mp4"
+    vid.write_bytes(b"fake-video")
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: vid)
+    share_text = "https://example.com/a\n\n#DogShowdown #Funny"
+    meta = {"video_file": "sid1.mp4"}
+    lui._render_share_popover("sid1", share_text, meta)
+    assert len(opened) == 1
+    assert opened[0].startswith(share_text)
+    assert "Video: %s" % vid.resolve() in opened[0]
+    assert len(fake.toasts) == 1
+    assert "attach the video manually" in fake.toasts[0][0].lower()
+    assert fake.errors == []
+
+
+def test_share_popover_whatsapp_video_missing_is_loud(monkeypatch):
+    # #150: video referenced but file missing -> loud error, no handoff.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    opened = []
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share",
+                        lambda text: opened.append(text) or "app")
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: None)
+    lui._render_share_popover("sid1", "https://example.com/a",
+                             {"video_file": "sid1.mp4"})
+    assert opened == []
+    assert any("couldn't share via whatsapp" in e.lower() for e in fake.errors)
+    assert fake.toasts == []
 
 def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
     lui, fake = _ui_with_fake_st()
@@ -1483,7 +1551,7 @@ def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
     # via the browser fallback when clicked.
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: False)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
-    lui._render_share_popover("sid1", share_text)
+    lui._render_share_popover("sid1", share_text, {})
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
     assert fake.link_buttons == []
     assert not any("whatsapp://" in m for m in fake.markup)
@@ -1768,7 +1836,7 @@ def test_share_popover_empty_state(monkeypatch):
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
-    lui._render_share_popover("sid1", "")
+    lui._render_share_popover("sid1", "", {})
     assert fake.popover_kwargs["label"] == ""
     assert fake.popover_kwargs["icon"] == lui._TB_ICON_SHARE
     assert fake.link_buttons == []
