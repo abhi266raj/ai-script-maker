@@ -466,6 +466,18 @@ def _inject_story_list_css() -> None:
         opacity: 0.55;
         margin: 2px 0 6px 2px;
     }
+    /* v1.6 (#24): the lib-danger-/lib-danger-pop- marker divs are
+       display:none themselves, but their stElementContainer wrapper still
+       occupies one inter-element gap in Streamlit's vertical block —
+       pushing the "Reset"/"Delete" popover triggers (and the red "Yes"
+       inside the popover) one gap lower than their plain-button siblings.
+       Collapse the wrapper: CSS `+` sibling combinators and :has() match
+       on DOM order regardless of display, so the red-trigger/red-button
+       rules below keep matching. Prefix-scoped: lib-x-/lib-actions/
+       lib-hscroll/lib-story-list markers are untouched. */
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {
+        display: none !important;
+    }
     /* Destructive actions: macOS system red text (graceful — plain button if unmatched) */
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {

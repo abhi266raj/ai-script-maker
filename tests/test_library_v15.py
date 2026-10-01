@@ -1493,3 +1493,98 @@ def test_actions_row_buttons_share_38px_height(monkeypatch):
             '        + div[data-testid="stLayoutWrapper"] [data-testid="stLinkButton"] a') in css
     assert "min-height: var(--lib-act-h)" in css
     assert lui._LIB_ACTION_BTN_H_PX == 38
+
+
+# ---------------------------------------------------------------------------
+# v1.6 (#24) — danger-marker containers collapsed: "Reset"/"Delete"
+# triggers and the red "Yes" must share the baseline of plain buttons.
+# ---------------------------------------------------------------------------
+
+def _capture_story_list_css(lui, monkeypatch):
+    """Capture the <style> HTML emitted by _inject_story_list_css (the
+    Library-view block holding the danger-marker / red-button rules)."""
+    chunks = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: chunks.append(a[0] if a else ""))
+    lui._inject_story_list_css()
+    return "\n".join(chunks)
+
+
+def test_danger_marker_containers_are_collapsed(monkeypatch):
+    """The hidden lib-danger-/lib-danger-pop- marker divs are display:none,
+    but their stElementContainer wrapper still occupies one inter-element
+    gap in Streamlit's vertical block — that gap pushed the
+    "Reset"/"Delete" triggers (and the red "Yes") lower than their
+    plain-button siblings. The wrapper must be collapsed out of flow."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_story_list_css(lui, monkeypatch)
+    assert css.count("{") == css.count("}")
+    # One rule covers both _danger_button (lib-danger-…) and the popover
+    # trigger (lib-danger-pop-…) markers; other markers are untouched.
+    assert ('div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {'
+            in css)
+    assert 'display: none !important;' in css
+    # The collapse must not have swallowed the neighbouring sidebar rules
+    # in the same block, and the selector must stay prefix-scoped.
+    assert '[data-marker="lib-story-list"]' in css
+    assert '[data-marker^="lib-"]' not in css  # never collapse all markers
+
+
+def test_danger_red_sibling_rules_survive_collapse(monkeypatch):
+    """display:none removes the marker container from layout but NOT from
+    the DOM, so the adjacent-sibling red rules (which match on DOM order)
+    must still be present: red destructive button and red popover
+    trigger, in both normal and :hover states."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_story_list_css(lui, monkeypatch)
+    red_btn = ('div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])\n'
+               '        + div[data-testid="stElementContainer"] [data-testid="stButton"] button')
+    assert red_btn in css
+    assert red_btn + ":hover" in css
+    red_trig = ('div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])\n'
+                '        + div[data-testid="stElementContainer"] [data-testid="stPopover"]'
+                ' [data-testid="stPopoverButton"]')
+    assert red_trig in css
+    assert red_trig + ":hover" in css
+    assert css.count("color: #FF3B30 !important;") == 4  # button + hover, trigger + hover
+
+
+def test_danger_button_marker_immediately_precedes_button(monkeypatch):
+    """DOM prerequisite for the red-button `+` rule: the marker must be
+    the immediate predecessor of the button element."""
+    lui, _fake = _ui_with_fake_st()
+    seq = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: seq.append(("md", a[0] if a else "")))
+    orig_button = lui.st.button
+
+    def rec_button(label, key=None, **k):
+        seq.append(("btn", label, key))
+        return orig_button(label, key=key, **k)
+
+    monkeypatch.setattr(lui.st, "button", rec_button)
+    assert lui._danger_button("Yes", key="dp-yes") is False
+    assert [s[0] for s in seq] == ["md", "btn"]
+    assert 'data-marker="lib-danger-dp-yes"' in seq[0][1]
+    assert seq[1][1:] == ("Yes", "dp-yes")
+
+
+def test_confirm_popover_marker_immediately_precedes_popover(monkeypatch):
+    """DOM prerequisite for the red-trigger `+` rule: the marker must be
+    the immediate predecessor of the popover element."""
+    lui, fake = _ui_with_fake_st()
+    seq = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: seq.append(("md", a[0] if a else "")))
+    orig_popover = lui.st.popover
+
+    def rec_popover(label, **k):
+        seq.append(("pop", label))
+        return orig_popover(label, **k)
+
+    monkeypatch.setattr(lui.st, "popover", rec_popover)
+    lui._confirm_popover(**_pop_kwargs(on_yes=lambda: None))
+    assert seq[0][0] == "md"
+    assert 'data-marker="lib-danger-pop-dp"' in seq[0][1]
+    assert seq[1] == ("pop", "Delete")
+    assert fake.popover_kwargs["key"] == "dp"
