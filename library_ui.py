@@ -283,9 +283,18 @@ def inject_library_css() -> None:
        pill's own padding-right carries the clearance: 34px = 22px
        target + 6px inset + 6px breathing room before the label. The
        #25/#26 no-truncation guarantee now lives here, in the chip —
-       the column no longer reserves padding for the × (rule removed). */
+       the column no longer reserves padding for the × (rule removed).
+       #68 ROOT CAUSE: this selector previously used a DESCENDANT
+       combinator after the marker container, but the real DOM has the
+       marker's stElementContainer as a SIBLING of
+       stLayoutWrapper > stHorizontalBlock (see the verified-DOM comment
+       above) — so the rule never matched, the pill kept only the base
+       12px right padding, and the × (positioned 6px from the column's
+       trailing edge, which hugs the pill after #56) landed on top of
+       the label. Every other marker-scoped rule uses the adjacent-
+       sibling form below; this one must too. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
-        [data-testid="stHorizontalBlock"] .lib-chip {
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] .lib-chip {
         padding-right: 34px !important;
         white-space: nowrap !important;
         width: fit-content !important;  /* #56: the pill hugs its label —
@@ -295,9 +304,11 @@ def inject_library_css() -> None:
         overflow: hidden;
         text-overflow: ellipsis;
     }
-    /* Links inside news chips inherit the themed chip color (theme-safe). */
+    /* Links inside news chips inherit the themed chip color (theme-safe).
+       #68: same sibling-combinator fix as the pill rule above — the
+       descendant form never matched the real DOM. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
-        [data-testid="stHorizontalBlock"] .lib-chip a {
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] .lib-chip a {
         color: inherit !important;
         text-decoration: underline;
     }
