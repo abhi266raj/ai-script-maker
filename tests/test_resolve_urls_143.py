@@ -107,7 +107,7 @@ _install_stubs()
 # test modules via sys.modules and change their behaviour.
 _pre_stub_module_keys = set(sys.modules)
 
-from tools.news_fetcher import NewsFetcher  # noqa: E402
+from tools.news_fetcher import NewsFetcher, publisher_name_from_url  # noqa: E402
 from core.models import NewsArticle  # noqa: E402
 
 # Restore the pristine import environment for the rest of the session.
@@ -273,6 +273,9 @@ class TestRepairNewsLinkUrls:
         # news_fetcher` at call time — inject a fake module.
         fake_mod = types.ModuleType("tools.news_fetcher")
         fake_mod.news_fetcher = fake_fetcher
+        # repair_news_link_urls also imports publisher_name_from_url
+        # (#153) — inject the real pure function.
+        fake_mod.publisher_name_from_url = publisher_name_from_url
         # _AGGREGATOR_REDIRECT_HOSTS is accessed as news_fetcher._AGGREGATOR_REDIRECT_HOSTS
         monkeypatch.setitem(sys.modules, "tools.news_fetcher", fake_mod)
         return lib, updated
@@ -321,9 +324,102 @@ class TestRepairNewsLinkUrls:
         })
         fake_mod = types.ModuleType("tools.news_fetcher")
         fake_mod.news_fetcher = fake_fetcher
+        fake_mod.publisher_name_from_url = publisher_name_from_url
         monkeypatch.setitem(sys.modules, "tools.news_fetcher", fake_mod)
 
         changed, note = lib.repair_news_link_urls("x")
         assert changed is False
         assert called == []
         assert "already final" in note
+
+
+class TestPublisherNameFromUrl:
+    """#153: publisher display names derived from the final URL's domain."""
+
+    def test_known_publisher(self):
+        assert publisher_name_from_url(
+            "https://indianexpress.com/article/cities/pune/x-10902805/") == "Indian Express"
+
+    def test_www_prefix_stripped(self):
+        assert publisher_name_from_url(
+            "https://www.mypunepulse.com/traders-call-off-x/") == "MyPunePulse"
+
+    def test_subdomain_publisher(self):
+        assert publisher_name_from_url(
+            "https://timesofindia.indiatimes.com/city/pune/x-123.cms") == "Times of India"
+
+    def test_unknown_host_title_cased(self):
+        assert publisher_name_from_url(
+            "https://some-new-portal.example.org/story") == "Some New Portal"
+
+    def test_empty_url_returns_empty(self):
+        assert publisher_name_from_url("") == ""
+        assert publisher_name_from_url("   ") == ""
+        assert publisher_name_from_url("not a url") == ""
+
+
+class TestSourceRefreshOnResolution:
+    """#153: resolving a URL must refresh the source label to the publisher."""
+
+    def test_fetch_time_source_updated_when_url_resolved(self):
+        f = _make_fetcher({
+            "https://www.bing.com/news/article/123":
+                "https://indianexpress.com/article/x-1/",
+        })
+        arts = [NewsArticle(title="T", link="https://www.bing.com/news/article/123",
+                            source="Bing News")]
+        kept, skipped = f._resolve_aggregator_links(arts)
+        assert skipped == 0
+        assert kept[0].link == "https://indianexpress.com/article/x-1/"
+        assert kept[0].source == "Indian Express"
+
+    def test_fetch_time_source_kept_when_url_unchanged(self):
+        f = _make_fetcher({
+            "https://indianexpress.com/article/x-1/":
+                "https://indianexpress.com/article/x-1/",
+        })
+        arts = [NewsArticle(title="T", link="https://indianexpress.com/article/x-1/",
+                            source="Indian Express")]
+        kept, _ = f._resolve_aggregator_links(arts)
+        assert kept[0].source == "Indian Express"
+
+    def test_repair_refreshes_source_when_url_resolved(self, monkeypatch):
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": "https://www.bing.com/news/article/123",
+              "source": "Bing News"}],
+            {"https://www.bing.com/news/article/123":
+                 "https://indianexpress.com/article/x-1/"})
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is True
+        lk = updated["news_links"][0]
+        assert lk["url"] == "https://indianexpress.com/article/x-1/"
+        assert lk["source"] == "Indian Express"
+        assert "refreshed 1 source label" in note
+
+    def test_repair_refreshes_stale_source_without_url_change(self, monkeypatch):
+        # Direct publisher URL whose stored source is still the aggregator.
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1",
+              "url": "https://www.mypunepulse.com/traders-call-off-x/",
+              "source": "DuckDuckGo"}],
+            {"https://www.mypunepulse.com/traders-call-off-x/":
+                 "https://www.mypunepulse.com/traders-call-off-x/"})
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is True
+        lk = updated["news_links"][0]
+        assert lk["url"] == "https://www.mypunepulse.com/traders-call-off-x/"
+        assert lk["source"] == "MyPunePulse"
+        assert "refreshed 1 source label" in note
+
+    def test_repair_keeps_good_source_when_url_unchanged(self, monkeypatch):
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": "https://indianexpress.com/article/x-1/",
+              "source": "Indian Express"}],
+            {"https://indianexpress.com/article/x-1/":
+                 "https://indianexpress.com/article/x-1/"})
+        changed, _ = lib.repair_news_link_urls("x")
+        assert changed is False
+        assert updated == {}

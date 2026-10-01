@@ -2327,7 +2327,11 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
 
     Repairs stories saved before universal redirect resolution: every
     stored news-link URL is followed through its full redirect chain
-    and updated when the final URL differs. Unresolvable redirect URLs
+    and updated when the final URL differs. #153: the source label is
+    refreshed to the final publisher's name whenever the URL changes
+    or the stored source is a stale aggregator name ("Bing News"/
+    "DuckDuckGo"/"News Wire"/"Live Wire") — the chip must show the
+    publisher, not the aggregator. Unresolvable redirect URLs
     (known aggregator hosts) are dropped loudly; other unresolvable
     URLs are kept (fail-open — likely direct links blocking bots).
 
@@ -2341,9 +2345,10 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
                 if isinstance(lk, dict) and lk.get("url")]
     if not existing:
         return False, "No stored news links to repair."
-    from tools.news_fetcher import news_fetcher
+    from tools.news_fetcher import news_fetcher, publisher_name_from_url
     repaired = 0
     dropped = 0
+    sources_refreshed = 0
     kept: List[Dict[str, str]] = []
     for lk in existing:
         url = (lk.get("url") or "").strip()
@@ -2352,10 +2357,16 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
             continue
         final = news_fetcher.resolve_final_url(url)
         if final:
-            if final != url:
-                lk = dict(lk, url=final)
+            url_changed = final != url
+            old_source = (lk.get("source") or "").strip()
+            new_source = old_source
+            if url_changed or old_source in _STALE_AGGREGATOR_SOURCES:
+                new_source = publisher_name_from_url(final) or old_source
+            if url_changed:
                 repaired += 1
-            kept.append(lk)
+            if new_source != old_source:
+                sources_refreshed += 1
+            kept.append(dict(lk, url=final, source=new_source))
             continue
         # Unresolvable: drop loudly only known redirect hosts (#143).
         try:
@@ -2366,15 +2377,25 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
             dropped += 1
         else:
             kept.append(lk)
-    if repaired or dropped:
+    if repaired or dropped or sources_refreshed:
         update_story_fields(story_id, news_links=kept)
     parts = []
     if repaired:
         parts.append(f"re-resolved {repaired} redirect URL(s) to final destinations")
+    if sources_refreshed:
+        parts.append(f"refreshed {sources_refreshed} source label(s) to final publishers")
     if dropped:
         parts.append(f"dropped {dropped} unresolvable redirect URL(s)")
     note = "; ".join(parts) if parts else "All stored news link URLs already final."
     return bool(parts), note
+
+
+# Fetch-time source labels that name the aggregator/search engine rather
+# than the publisher (#153). When a stored link carries one of these,
+# the source is refreshed from the (resolved) URL's domain.
+_STALE_AGGREGATOR_SOURCES = frozenset(
+    {"Bing News", "DuckDuckGo", "News Wire", "Live Wire"}
+)
 
 
 def _fetch_more_images(topic: str, existing_norm_urls: Set[str],
