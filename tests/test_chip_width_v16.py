@@ -170,14 +170,20 @@ def test_chip_col_weights_monotonic():
 def test_hashtag_row_uses_proportional_weights():
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    assert "_tcols = st.columns(_chip_col_weights(tags))" in src
+    # #107: the title rides in the first column; chips keep proportional
+    # weights (never equal-weighted).
+    assert '_tcols = st.columns([_section_title_weight("Hashtags")]' in src
+    assert "_chip_col_weights(tags)" in src
     assert "_tcols = st.columns(len(tags))" not in src
 
 
 def test_newslink_row_uses_proportional_weights():
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    assert "_lcols = st.columns(_chip_col_weights(_labels))" in src
+    # #107: the title rides in the first column; chips keep proportional
+    # weights (never equal-weighted).
+    assert '_lcols = st.columns([_section_title_weight("News Links")]' in src
+    assert "_chip_col_weights(_labels)" in src
     assert "_lcols = st.columns(len(links))" not in src
 
 

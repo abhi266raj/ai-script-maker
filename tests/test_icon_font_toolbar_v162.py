@@ -64,8 +64,10 @@ def test_all_seven_toolbar_controls_are_icon_only(monkeypatch):
     assert [b[0] for b in fake.buttons[:3]] == [
         lui._TB_ICON_TAG, lui._TB_ICON_IMAGE, lui._TB_ICON_NEWS]
     # Popovers: Reset, Share, Copy, Delete (#84 reverted the title popover —
-    # every popover here is a toolbar action).
-    pop_labels = [p["label"] for p in fake.popovers]
+    # every popover here is a toolbar action). #94: the "⬆" upload popover
+    # is not a toolbar control — it lives in the upload row, so it is
+    # excluded from the icon-only assertion.
+    pop_labels = [p["label"] for p in fake.popovers if p["label"] != "⬆"]
     assert pop_labels == [
         lui._TB_ICON_RESET, lui._TB_ICON_SHARE,
         lui._TB_ICON_COPY, lui._TB_ICON_DELETE]

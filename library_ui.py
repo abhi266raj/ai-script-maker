@@ -635,6 +635,21 @@ def inject_library_css() -> None:
         font-weight: 600;
         margin: var(--lib-row-space) 0 8px 0;
     }
+    /* #107: section titles that share their row with the content
+       (Hashtags / News Links). The title rides in the first column of
+       the chip row so it always sits on the same line as the chips.
+       Margins zeroed — the standalone .lib-section spacing would push
+       the row taller than one line — and the title column vertically
+       centered against the pills. */
+    .lib-section-inline {
+        margin: 0 !important;
+        white-space: nowrap;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        > div[data-testid="stColumn"]:has(.lib-section-inline) {
+        align-self: center !important;
+    }
     /* Quiet inline status line (replaces loud banners for background work) */
     .lib-quiet {
         text-align: center;
@@ -1171,6 +1186,16 @@ def _chip_col_weights(labels) -> list:
     Pure (no Streamlit) so it is unit-testable.
     """
     return [max(len(str(_l)), 4) + 7 for _l in labels]
+
+
+def _section_title_weight(title: str) -> int:
+    """#107: ``st.columns`` weight for a section title sharing its row
+    with chips (Hashtags / News Links). Compact — the CSS shrink-wrap
+    (``flex: 0 0 auto`` + ``width: fit-content`` on hscroll columns) is
+    the primary sizer; this is the proportional fallback so a missed
+    selector can only ever produce a proportionally sized column.
+    Pure (no Streamlit) so it is unit-testable."""
+    return max(len(str(title)), 4) + 2
 
 
 def _fm_warmup_button_props(state: dict) -> tuple:
@@ -1965,13 +1990,20 @@ def _render_story_detail(story_id: str) -> None:
                 st.rerun()
     # Hashtags: ONE horizontal scroll row. Every tag is a chip with a ×
     # that removes exactly that tag (fail loudly, rerun after).
+    # #107: the "Hashtags" title and the chips share ONE row — the title
+    # rides in the first column so it always sits on the same line as
+    # the chips. Chip rendering (weights, × overlay, clearance) is
+    # untouched.
     tags = [t for t in (meta.get("hashtags") or []) if t]
     if tags:
-        st.markdown('<div class="lib-section">Hashtags</div>', unsafe_allow_html=True)
         st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
                     unsafe_allow_html=True)
-        _tcols = st.columns(_chip_col_weights(tags))
-        for _i, (_tc, _tag) in enumerate(zip(_tcols, tags)):
+        _tcols = st.columns([_section_title_weight("Hashtags")]
+                            + _chip_col_weights(tags))
+        with _tcols[0]:
+            st.markdown('<div class="lib-section lib-section-inline">Hashtags</div>',
+                        unsafe_allow_html=True)
+        for _i, (_tc, _tag) in enumerate(zip(_tcols[1:], tags)):
             with _tc:
                 st.markdown(f'<span class="lib-chip">{_html.escape(_tag)}</span>',
                             unsafe_allow_html=True)
@@ -2065,14 +2097,19 @@ def _render_story_detail(story_id: str) -> None:
     # manual only (×). Reset re-runs the link verifier fresh for the topic.
     links = [lk for lk in (meta.get("news_links") or []) if isinstance(lk, dict)]
     if links:
-        st.markdown('<div class="lib-section">News Links</div>', unsafe_allow_html=True)
         st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
                     unsafe_allow_html=True)
+        # #107: "News Links" title and link chips share ONE row — same
+        # pattern as Hashtags above.
         _labels = [_news_chip_label((_lk.get("title") or "News link"),
-                                       (_lk.get("source") or ""))
+                                    (_lk.get("source") or ""))
                    for _lk in links]
-        _lcols = st.columns(_chip_col_weights(_labels))
-        for _i, (_lc, _lk, _label) in enumerate(zip(_lcols, links, _labels)):
+        _lcols = st.columns([_section_title_weight("News Links")]
+                            + _chip_col_weights(_labels))
+        with _lcols[0]:
+            st.markdown('<div class="lib-section lib-section-inline">News Links</div>',
+                        unsafe_allow_html=True)
+        for _i, (_lc, _lk, _label) in enumerate(zip(_lcols[1:], links, _labels)):
             _ltitle = _lk.get("title", "News link") or "News link"
             _lurl = (_lk.get("url") or "").strip()
             with _lc:
@@ -2161,39 +2198,53 @@ def _render_story_detail(story_id: str) -> None:
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
                     unsafe_allow_html=True)
 
-    # Video upload + playback
-    st.markdown('<div class="lib-section">Video</div>', unsafe_allow_html=True)
+    # Video playback — the attached video only. #94: the "Video" section
+    # title is gone; the upload affordance is the one-line row below.
     video_file = meta.get("video_file", "")
     vpath = lib.media_path(story_id, video_file) if video_file else None
     if vpath:
         st.video(str(vpath))
-    # Uploads: secondary actions must not dominate the layout (#66). Both
-    # file uploaders live inside a single collapsed expander — one quiet
-    # footer-level row. Streamlit's own size/format caption stays
-    # discoverable inside the expander; upload handling behavior is
-    # unchanged.
-    with st.expander("⬆ Upload media", expanded=False):
-        up_vid = st.file_uploader("Upload generated video", type=["mp4", "mov", "m4v", "webm"],
-                                  key=f"lib_video_{story_id}")
-        if up_vid is not None:
-            try:
-                stored = lib.store_video_upload(story_id, up_vid.getvalue(), up_vid.name)
-                st.success(f"Video attached: {stored}")
-                st.rerun()
-            except Exception as e:
-                st.error(f"Video upload failed: {e}")
-
-        # Manual image upload
-        up_imgs = st.file_uploader("Upload images manually", type=["png", "jpg", "jpeg", "webp", "gif"],
-                                   accept_multiple_files=True, key=f"lib_images_{story_id}")
-        if up_imgs:
-            for f in up_imgs:
-                try:
-                    lib.store_image_upload(story_id, f.getvalue(), f.name)
-                except Exception as e:
-                    st.error(f"Image upload failed ({f.name}): {e}")
-            st.success(f"Attached {len(up_imgs)} image(s).")
-            st.rerun()
+    # #94: one-line upload row — "Upload" title on the left, upload
+    # button on the right. Clicking the button opens a popover offering
+    # a Video / Image selection; the chosen uploader then runs the
+    # unchanged upload + processing flow (same widget keys, same
+    # store_video_upload / store_image_upload paths, same success/error
+    # handling). Uploads stay exempt from the #83 image cap and are
+    # never auto-removed.
+    _u1, _u2 = st.columns([11, 1], vertical_alignment="center")
+    with _u1:
+        st.markdown('<div class="lib-section lib-section-inline">Upload</div>',
+                    unsafe_allow_html=True)
+    with _u2:
+        with st.popover("⬆", help="Upload video or image"):
+            _up_kind = st.radio("Media type", ["Video", "Image"],
+                                key=f"lib_upkind_{story_id}")
+            if _up_kind == "Video":
+                up_vid = st.file_uploader("Upload generated video",
+                                          type=["mp4", "mov", "m4v", "webm"],
+                                          key=f"lib_video_{story_id}")
+                if up_vid is not None:
+                    try:
+                        stored = lib.store_video_upload(story_id, up_vid.getvalue(),
+                                                        up_vid.name)
+                        st.success(f"Video attached: {stored}")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Video upload failed: {e}")
+            else:
+                # Manual image upload
+                up_imgs = st.file_uploader("Upload images manually",
+                                           type=["png", "jpg", "jpeg", "webp", "gif"],
+                                           accept_multiple_files=True,
+                                           key=f"lib_images_{story_id}")
+                if up_imgs:
+                    for f in up_imgs:
+                        try:
+                            lib.store_image_upload(story_id, f.getvalue(), f.name)
+                        except Exception as e:
+                            st.error(f"Image upload failed ({f.name}): {e}")
+                    st.success(f"Attached {len(up_imgs)} image(s).")
+                    st.rerun()
 
     # (Refresh actions live in the detail toolbar at the top; Share/Copy
     # actions sit in the Actions row just below it.)
