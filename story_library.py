@@ -1241,6 +1241,13 @@ def _image_content_hash(url: str) -> str:
 _PHASH_DUP_THRESHOLD = 10
 
 
+# Max auto-fetched images kept per story (issue #83). Manually uploaded
+# images live in the separate ``uploaded_images`` field and are NEVER
+# capped — only fetched candidates pass through the cap. Callers that
+# must exceed the cap (e.g. "Load more", issue #91) omit it.
+_MAX_FETCHED_IMAGES = 5
+
+
 def _image_dhash(data: bytes, url: str) -> int:
     """64-bit difference-hash of raw image bytes — PIL only, no new deps.
 
@@ -1347,6 +1354,7 @@ def _merge_story_images(
     existing_hashes: Optional[List[str]],
     existing_phashes: Optional[List[str]],
     candidates,
+    cap: Optional[int] = None,
 ) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
     """Merge image candidates into a story's image list with full dedupe.
 
@@ -1377,10 +1385,17 @@ def _merge_story_images(
        (first occurrence wins); then each surviving fresh candidate is
        checked against everything kept. Undecodable image bytes raise
        :class:`ImageDedupeError` naming the URL — never silently skipped.
+    5. Cap (issue #83): only when ``cap`` is passed. After ALL dedupe,
+       the merged list is trimmed to ``cap`` entries — the first N are
+       kept (existing entries first, then fresh candidates in
+       publisher-declared order: og:image → twitter:image → JSON-LD →
+       in-article), so the tail is what goes. The trim count is
+       reported in ``stats["trimmed"]``.
 
     Returns ``(merged_urls, merged_hashes, merged_phashes, stats)``;
     ``stats`` counts ``added`` / ``dup_url`` / ``dup_content`` /
-    ``dup_visual`` / ``rejected_alt`` / ``removed_existing_dupes``.
+    ``dup_visual`` / ``rejected_alt`` / ``removed_existing_dupes`` /
+    ``trimmed``.
     Existing order is preserved; genuinely new images are appended.
     """
     from tools.story_link import image_alt_is_unwanted
@@ -1389,7 +1404,7 @@ def _merge_story_images(
     hashes = _align_hashes(existing_urls, existing_hashes)
     phashes = _align_hashes(existing_urls, existing_phashes)
     stats = {"added": 0, "dup_url": 0, "dup_content": 0, "dup_visual": 0,
-             "rejected_alt": 0, "removed_existing_dupes": 0}
+             "rejected_alt": 0, "removed_existing_dupes": 0, "trimmed": 0}
 
     # 1. Alt-text filter (primary signal).
     screened: List[str] = []
@@ -1475,12 +1490,10 @@ def _merge_story_images(
     merged_urls, merged_hashes, merged_phashes = vis_urls, vis_hashes, vis_phashes
     seen_hashes = set(merged_hashes)
 
-    if not fresh:
-        # No fresh candidates — but the existing-entries backfill and
-        # collapse above already ran, so stored duplicates are cleaned
-        # and missing hashes are backfilled (issue #57).
-        return merged_urls, merged_hashes, merged_phashes, stats
-
+    # Fresh candidates. The loop is a no-op when empty — but the
+    # existing-entries backfill + collapse above already ran, so stored
+    # duplicates are cleaned and missing hashes are backfilled even when
+    # the fetch found nothing new (issue #57).
     for url in fresh:
         h, ph = _image_fingerprints(url)
         if h in seen_hashes:
@@ -1496,6 +1509,18 @@ def _merge_story_images(
         merged_hashes.append(h)
         merged_phashes.append(_dhash_to_hex(ph))
         stats["added"] += 1
+
+    # 5. Cap (issue #83): after ALL dedupe, trim to the cap — the first N
+    #    are kept (existing entries first, fresh candidates appended in
+    #    publisher-declared order), so the tail is what goes. The trim
+    #    count is reported in stats["trimmed"] for an honest outcome
+    #    note. Only when `cap` is passed — "Load more" (issue #91)
+    #    omits it and bypasses the cap.
+    if cap is not None and len(merged_urls) > cap:
+        stats["trimmed"] = len(merged_urls) - cap
+        merged_urls = merged_urls[:cap]
+        merged_hashes = merged_hashes[:cap]
+        merged_phashes = merged_phashes[:cap]
     return merged_urls, merged_hashes, merged_phashes, stats
 
 
@@ -2078,7 +2103,8 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     # (issue #57). The collapse against stored hashes is pure; only the
     # backfill touches the network.
     merged_urls, merged_hashes, merged_phashes, stats = _merge_story_images(
-        existing, existing_hashes, existing_phashes, found)
+        existing, existing_hashes, existing_phashes, found,
+        cap=_MAX_FETCHED_IMAGES)
     added = stats["added"]
     aligned_hashes = _align_hashes(existing, existing_hashes)
     aligned_phashes = _align_hashes(existing, existing_phashes)
@@ -2099,6 +2125,10 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
         extras.append(f"Note: {_n} article page(s) had no identifiable story "
                       f"body — images were scanned page-wide and may "
                       f"include site images.")
+    if stats["trimmed"]:
+        extras.append(f"Capped fetched images at {_MAX_FETCHED_IMAGES} "
+                      f"({stats['trimmed']} extra not kept; "
+                      f"uploads are never capped).")
     extra = (" " + " ".join(extras)) if extras else ""
     if added or urls_changed or hashes_changed:
         update_story_fields(story_id, image_urls=merged_urls,
@@ -2474,8 +2504,9 @@ def _do_reset(story_id: str, topic: str,
     #    nothing is written. Alt-text filtering and content dedupe apply
     #    to the fresh list (issue #21); a hash-fetch failure raises
     #    ImageDedupeError and likewise fails loudly.
-    new_images, new_hashes, new_phashes, _ = _merge_story_images(
-        [], [], [], _fetch_images_for_story(story, topic) or [])
+    new_images, new_hashes, new_phashes, _img_stats = _merge_story_images(
+        [], [], [], _fetch_images_for_story(story, topic) or [],
+        cap=_MAX_FETCHED_IMAGES)
 
     # 3. News links: re-run the link verifier fresh for the topic.
     #    Best-effort by contract: [] on failure means an empty row.
@@ -2504,6 +2535,10 @@ def _do_reset(story_id: str, topic: str,
         parts.append("No hashtags found — row cleared.")
     if not new_images:
         parts.append("No images found — fetched row cleared (uploads kept).")
+    if _img_stats["trimmed"]:
+        parts.append(f"Capped fetched images at {_MAX_FETCHED_IMAGES} "
+                     f"({_img_stats['trimmed']} extra not kept; "
+                     f"uploads are never capped).")
     if not new_links:
         parts.append("No news links found — row cleared.")
     if not changed:
@@ -2557,7 +2592,7 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     # ImageDedupeError and fails the enrichment loudly.
     merged_imgs, merged_hashes, merged_phashes, _img_stats = _merge_story_images(
         meta.get("image_urls"), meta.get("image_hashes"),
-        meta.get("image_phashes"), image_urls)
+        meta.get("image_phashes"), image_urls, cap=_MAX_FETCHED_IMAGES)
     imgs_added = _img_stats["added"]
     links_added = 0 if verified_links else len(news_links)
     update_story_fields(
@@ -2574,6 +2609,10 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
                 if links_added else "Kept verified news links.")
     bits.append(img_note or (f"Added {imgs_added} image(s)."
                              if imgs_added else "No new images found."))
+    if _img_stats["trimmed"]:
+        bits.append(f"Capped fetched images at {_MAX_FETCHED_IMAGES} "
+                    f"({_img_stats['trimmed']} extra not kept; "
+                    f"uploads are never capped).")
     bits.append(f"Added {tags_added} hashtag(s)."
                 if tags_added else "No new hashtags found.")
     return changed, "Enrichment complete: " + " ".join(bits)

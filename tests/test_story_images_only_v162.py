@@ -204,9 +204,10 @@ def test_refresh_images_notes_unscoped_pages(monkeypatch):
     monkeypatch.setattr(lib, "_fetch_images_for_story", _fake_fetch)
     monkeypatch.setattr(
         lib, "_merge_story_images",
-        lambda e, eh, eph, found: ([], [], [], {
+        lambda e, eh, eph, found, cap=None: ([], [], [], {
             "added": 0, "rejected_alt": 0, "removed_existing_dupes": 0,
-            "dup_url": 0, "dup_content": 0, "dup_visual": 0}),
+            "dup_url": 0, "dup_content": 0, "dup_visual": 0,
+            "trimmed": 0}),
     )
     changed, note = lib.refresh_images("s1", "metro")
     assert "2 article page(s) had no identifiable story body" in note
@@ -228,9 +229,10 @@ def test_refresh_images_no_note_when_all_scoped(monkeypatch):
     monkeypatch.setattr(lib, "_fetch_images_for_story", _fake_fetch)
     monkeypatch.setattr(
         lib, "_merge_story_images",
-        lambda e, eh, eph, found: ([], [], [], {
+        lambda e, eh, eph, found, cap=None: ([], [], [], {
             "added": 0, "rejected_alt": 0, "removed_existing_dupes": 0,
-            "dup_url": 0, "dup_content": 0, "dup_visual": 0}),
+            "dup_url": 0, "dup_content": 0, "dup_visual": 0,
+            "trimmed": 0}),
     )
     changed, note = lib.refresh_images("s1", "metro")
     assert "no identifiable story body" not in note
