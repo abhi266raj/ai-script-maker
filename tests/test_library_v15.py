@@ -374,7 +374,7 @@ def test_fetch_images_for_story_tries_verified_links_first(libdir, monkeypatch):
     story = lib.load_story(sid)
     calls = []
 
-    def _grab(urls, tries=3):
+    def _grab(urls, tries=3, report=None):
         calls.append(list(urls))
         return ["https://img.example/hero.jpg"]
 
@@ -391,7 +391,7 @@ def test_fetch_images_for_story_falls_back_to_topic(libdir, monkeypatch):
     sid = _make_story()  # no verified links
     story = lib.load_story(sid)
     monkeypatch.setattr(lib, "_grab_article_images",
-                        lambda urls, tries=3: [])
+                        lambda urls, tries=3, report=None: [])
     monkeypatch.setattr(lib, "_fetch_article_images",
                         lambda articles, topic="", tries=3: ["https://img.example/t.jpg"])
     found = lib._fetch_images_for_story(story, "chubby dogs voting contest")
@@ -830,7 +830,7 @@ def test_refresh_images_timeout_keeps_existing_media(libdir, monkeypatch):
     sid = _make_story()
     lib.update_story_fields(sid, image_urls=["https://img.example/kept.jpg"])
 
-    def _hang(story, topic, tries=3):
+    def _hang(story, topic, tries=3, report=None):
         raise TimeoutError("article image fetch timed out after 40s")
 
     monkeypatch.setattr(lib, "_fetch_images_for_story", _hang)
