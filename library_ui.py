@@ -732,6 +732,28 @@ def _compose_share_text(meta: dict, script_md: str, with_media: bool, with_tags:
     return "\n\n".join(p for p in parts if p).strip()
 
 
+def _compose_news_tags_text(meta: dict) -> str:
+    """Share text: verified news link(s), one per line, then hashtags space-separated.
+
+    Formatted for pasting straight into a social-media post — links first,
+    hashtags after. Returns "" when the story has neither news links nor
+    hashtags, so the caller can say so plainly instead of copying nothing.
+    """
+    links = [
+        (lk.get("url") or "").strip()
+        for lk in (meta.get("news_links") or [])
+        if isinstance(lk, dict)
+    ]
+    links = [u for u in dict.fromkeys(links) if u]
+    tags = [t for t in (meta.get("hashtags") or []) if t]
+    parts = []
+    if links:
+        parts.append("\n".join(links))
+    if tags:
+        parts.append(" ".join(tags))
+    return "\n\n".join(parts)
+
+
 def _copy_button(label: str, text: str, key: str) -> None:
     """One-click copy-to-clipboard button (clipboard API with execCommand fallback)."""
     import html as _html
@@ -903,6 +925,15 @@ def _render_story_detail(story_id: str) -> None:
         st.markdown('<div style="text-align:center">' +
                     "".join(f'<span class="lib-chip">{t}</span>' for t in tags) +
                     '</div>', unsafe_allow_html=True)
+
+    # Share: verified news link(s) + hashtags, ready to paste into a post.
+    st.markdown('<div class="lib-section">Share</div>', unsafe_allow_html=True)
+    _share_text = _compose_news_tags_text(meta)
+    if _share_text:
+        _copy_button("Copy News Link + Hashtags", _share_text, f"n-{story_id}")
+        st.code(_share_text)
+    else:
+        st.caption("No news links or hashtags to copy yet.")
 
     # Copy options: the full final-stage script, pure — nothing added.
     if script_md:

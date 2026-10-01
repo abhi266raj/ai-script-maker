@@ -629,3 +629,51 @@ def test_resolve_engine_mode_prefers_persisted_label(libdir):
     assert lib._resolve_library_engine_mode("Nope") == "first_local_then_agy"
     lib.save_prefs({"library_ai_engine": "Grok Low"})
     assert lib._resolve_library_engine_mode(None) == "grok_low"
+
+
+# ---------------------------------------------------------------------------
+# Share text: news link(s) + hashtags (library_ui composer)
+# ---------------------------------------------------------------------------
+
+def _library_ui_module():
+    """Import library_ui with a stubbed streamlit (not installed in test env)."""
+    import types
+    for name in ("streamlit", "streamlit.components", "streamlit.components.v1"):
+        sys.modules.setdefault(name, types.ModuleType(name))
+    import library_ui
+    return library_ui
+
+
+def test_compose_news_tags_text_links_then_tags():
+    lui = _library_ui_module()
+    meta = {
+        "news_links": [
+            {"title": "T1", "url": "https://a.example/1", "source": "S1"},
+            {"title": "T2", "url": "https://b.example/2", "source": ""},
+        ],
+        "hashtags": ["#DogShowdown", "#Reel"],
+    }
+    assert lui._compose_news_tags_text(meta) == (
+        "https://a.example/1\nhttps://b.example/2\n\n#DogShowdown #Reel"
+    )
+
+
+def test_compose_news_tags_text_dedupes_and_skips_blanks():
+    lui = _library_ui_module()
+    meta = {
+        "news_links": [
+            {"url": "https://a.example/1"},
+            {"url": "https://a.example/1"},
+            {"url": ""},
+            {"url": "  https://b.example/2  "},
+        ],
+        "hashtags": [],
+    }
+    assert lui._compose_news_tags_text(meta) == "https://a.example/1\nhttps://b.example/2"
+
+
+def test_compose_news_tags_text_tags_only_and_empty():
+    lui = _library_ui_module()
+    assert lui._compose_news_tags_text({"hashtags": ["#Only"]}) == "#Only"
+    assert lui._compose_news_tags_text({}) == ""
+    assert lui._compose_news_tags_text({"news_links": [], "hashtags": []}) == ""
