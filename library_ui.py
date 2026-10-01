@@ -1367,7 +1367,10 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
                for _lk in links]
     _lcols = st.columns([_section_title_weight("News Links")]
                         + _chip_col_weights(_labels)
-                        + [_load_more_weight("Load more news")])
+                        + [_load_more_weight("Load more news")],
+                        # #162: vertically center title, chips and the
+                        # Load more button (columns top-align by default).
+                        vertical_alignment="center")
     with _lcols[0]:
         st.markdown('<div class="lib-section lib-section-inline">News Links</div>',
                     unsafe_allow_html=True)
@@ -1465,7 +1468,10 @@ def _render_hashtags_row(story_id: str, tags: list) -> None:
     st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
                 unsafe_allow_html=True)
     _tcols = st.columns([_section_title_weight("Hashtags")]
-                        + _chip_col_weights(tags))
+                        + _chip_col_weights(tags),
+                        # #162: vertically center title and chips
+                        # (columns top-align by default).
+                        vertical_alignment="center")
     with _tcols[0]:
         st.markdown('<div class="lib-section lib-section-inline">Hashtags</div>',
                     unsafe_allow_html=True)
@@ -1506,7 +1512,11 @@ def _render_images_row(story_id: str, img_urls: list, uploaded: list,
     # scroll row — same line as the thumbnails, inside the scroll
     # view — instead of an orphan row below.
     _icols = st.columns([1] * len(_cards)
-                        + [_load_more_weight("Load more images")])
+                        + [_load_more_weight("Load more images")],
+                        # #162: vertically center the Load more button
+                        # against the thumbnail cards (columns top-align
+                        # by default).
+                        vertical_alignment="center")
     for _ci, (_icol, (_kind, _ki, _ref)) in enumerate(zip(_icols[:-1], _cards)):
         with _icol:
             if _kind == "fetched":

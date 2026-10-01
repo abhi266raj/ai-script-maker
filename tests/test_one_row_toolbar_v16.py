@@ -28,10 +28,14 @@ class _RecordingSt(_FakeSt):
     def __init__(self, clicks=()):
         super().__init__(clicks)
         self.column_specs = []
+        # #162: record vertical_alignment per columns() call so tests
+        # can assert row components vertically center their content.
+        self.column_valigns = []
 
     def columns(self, spec, **k):
         self.column_specs.append(
             list(spec) if not isinstance(spec, int) else spec)
+        self.column_valigns.append(k.get("vertical_alignment"))
         return super().columns(spec)
 
     def image(self, *a, **k):
