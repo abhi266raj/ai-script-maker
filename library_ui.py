@@ -101,6 +101,15 @@ def inject_library_css() -> None:
         margin: 8px 0 16px 0;
         color: var(--lib-script-text);
     }
+    .lib-script-line { margin: 8px 0; }
+    .lib-dialogue-line {
+        background: var(--lib-dialogue-bg);
+        border-left: 4px solid var(--lib-dialogue-border);
+        color: var(--lib-dialogue-text);
+        border-radius: 6px;
+        padding: 8px 12px;
+        margin: 8px 0;
+    }
     .lib-chip {
         display: inline-block;
         background: var(--lib-chip-bg);
@@ -158,25 +167,20 @@ def render_tab_bar() -> str:
 # Auto-save hook (called from the Studio final-output view)
 # ---------------------------------------------------------------------------
 
-def _dialogue_markdown(script) -> str:
-    lines: list[str] = []
-    if getattr(script, "hook_hindi", ""):
-        lines.append(f"**Hook:** {script.hook_hindi}")
-    for sc in getattr(script, "scenes", []) or []:
-        speaker = getattr(sc, "character", "") or f"Scene {getattr(sc, 'scene_number', '?')}"
-        dialogue = (getattr(sc, "dialogue", "") or "").strip()
-        if dialogue:
-            lines.append(f"**{speaker}:** {dialogue}")
-    if getattr(script, "call_to_action", ""):
-        lines.append(f"**CTA:** {script.call_to_action}")
-    return "\n\n".join(lines)
-
-
 def _script_markdown(script) -> str:
+    """Full script as Markdown: hook, narration, per-scene blocks, CTA.
+
+    Dialogue lines are blockquotes (``> **Speaker:** line``) so the detail
+    view can highlight them in a distinct color inside the whole script.
+    """
     lines: list[str] = []
-    if getattr(script, "narration_hindi", ""):
-        lines.append(f"**Narration:** {script.narration_hindi}")
-    for sc in getattr(script, "scenes", []) or []:
+    hook = (getattr(script, "hook_hindi", "") or "").strip()
+    if hook:
+        lines.append(f"**Hook:** {hook}\n")
+    narration = (getattr(script, "narration_hindi", "") or "").strip()
+    if narration:
+        lines.append(f"**Narration:** {narration}\n")
+    for sc in getattr(script, "scenes", None) or []:
         n = getattr(sc, "scene_number", "?")
         parts: list[str] = [f"**Scene {n}**"]
         for label, attr in (
@@ -194,7 +198,15 @@ def _script_markdown(script) -> str:
         if props:
             parts.append("Props: " + ", ".join(props))
         lines.append(" — ".join(parts))
-    return "\n\n".join(lines)
+        dialogue = (getattr(sc, "dialogue", "") or "").strip()
+        if dialogue:
+            speaker = (getattr(sc, "character", "") or "").strip() or f"Scene {n}"
+            lines.append(f"> **{speaker}:** {dialogue}")
+        lines.append("")
+    cta = (getattr(script, "call_to_action", "") or "").strip()
+    if cta:
+        lines.append(f"**CTA:** {cta}")
+    return "\n".join(lines).strip()
 
 
 def maybe_autosave_story(batch_result, script) -> None:
@@ -231,11 +243,13 @@ def _save_current_story(batch_result, script) -> str:
     tone = st.session_state.get("chosen_tone", "") or ""
     topic = st.session_state.get("run_topic", "") or ""
     headline = st.session_state.get("selected_headline_title", "") or ""
+    # The story title is the news headline it was built from.
+    title = headline or topic or getattr(script, "title", "") or "Untitled Story"
     return lib.save_story(
-        title=getattr(script, "title", "") or topic or "Untitled Story",
+        title=title,
         tone=tone,
         hashtags=hashtags,
-        dialogue_md=_dialogue_markdown(script),
+        dialogue_md="",
         script_md=_script_markdown(script),
         source_topic=topic,
         source_headline=headline,
@@ -291,17 +305,15 @@ def render_library_page() -> None:
         st.info("No saved stories yet. Generate a reel in the Studio tab — it auto-saves here on completion.")
         return
 
-    master, detail = st.columns([2, 3])
+    master, detail = st.columns([1, 3])
     with master:
-        st.markdown("### Stories")
+        st.caption(f"**Stories** · {len(stories)}")
         for s in stories:
             sid = s.get("id", "")
-            title = s.get("title", "Untitled")
+            title = (s.get("title", "Untitled") or "Untitled")[:42]
             created = (s.get("created_at", "") or "")[:10]
-            tags = " ".join(f"`{t}`" for t in (s.get("hashtags") or [])[:3])
-            status = s.get("enrichment_status", "")
-            badge = " ⏳" if status == "pending" else ""
-            label = f"📄 {title}{badge}\n\n{created} {tags}"
+            badge = " ⏳" if s.get("enrichment_status") == "pending" else ""
+            label = f"📄 {title}{badge}\n\n{created}"
             if st.button(label, key=f"lib_story_{sid}", use_container_width=True):
                 st.session_state["lib_selected_story"] = sid
                 st.rerun()
@@ -310,6 +322,28 @@ def render_library_page() -> None:
             st.info("👈 Select a story to view it.")
             return
         _render_story_detail(selected)
+
+
+def _render_full_script(script_md: str) -> None:
+    """Render the whole script; ``> ...`` blockquote lines are highlighted as dialogue."""
+    import html as _html
+    import re as _re
+
+    def _inline(md: str) -> str:
+        s = _html.escape(md.strip())
+        return _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+
+    chunks: list[str] = []
+    for para in script_md.split("\n\n"):
+        para = para.strip()
+        if not para:
+            continue
+        if para.startswith(">"):
+            text = _inline(para.lstrip(">").strip())
+            chunks.append(f'<div class="lib-dialogue-line">{text}</div>')
+        else:
+            chunks.append(f'<div class="lib-script-line">{_inline(para)}</div>')
+    st.markdown("".join(chunks) or "<p>—</p>", unsafe_allow_html=True)
 
 
 def _render_story_detail(story_id: str) -> None:
@@ -334,26 +368,51 @@ def _render_story_detail(story_id: str) -> None:
     if meta.get("enrichment_status") == "pending":
         st.info("⏳ Fetching images & news links in the background…")
 
-    # Dialogue (color 1) vs Script (color 2)
-    if story["dialogue"].strip():
-        st.markdown("### 🗣️ Dialogue")
-        st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>', unsafe_allow_html=True)
-    if story["script"].strip():
-        st.markdown("### 🎬 Script / Scenes")
-        st.markdown(f'<div class="lib-script">{_md_to_html(story["script"])}</div>', unsafe_allow_html=True)
+    # Whole script; dialogue lines highlighted in a distinct color.
+    script_md = story["script"].strip()
+    if script_md:
+        st.markdown("### 🎬 Full Script")
+        if "\n>" in script_md or script_md.startswith(">"):
+            _render_full_script(script_md)
+        elif story["dialogue"].strip():
+            # Old-format files (saved before the blockquote change): two-box rendering.
+            st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
+                        unsafe_allow_html=True)
+            st.markdown(f'<div class="lib-script">{_md_to_html(script_md)}</div>',
+                        unsafe_allow_html=True)
+        else:
+            st.markdown(f'<div class="lib-script">{_md_to_html(script_md)}</div>',
+                        unsafe_allow_html=True)
 
     # Images + news links at the bottom
     st.markdown("### 🖼️ Media & Links")
     img_urls = meta.get("image_urls") or []
     uploaded = meta.get("uploaded_images") or []
-    local_imgs = [lib.media_path(story_id, f) for f in uploaded]
-    local_imgs = [p for p in local_imgs if p]
     if img_urls:
-        st.image(img_urls, width=220)
-    for p in local_imgs:
-        st.image(str(p), width=220)
-    if not img_urls and not local_imgs and meta.get("enrichment_status") != "pending":
-        st.caption("No images yet.")
+        st.caption("Auto-fetched from news — remove any to overwrite, or upload your own below.")
+        for i, url in enumerate(img_urls):
+            ic1, ic2 = st.columns([5, 1])
+            with ic1:
+                st.image(url, width=220)
+            with ic2:
+                if st.button("✕", key=f"lib_rmimg_{story_id}_{i}",
+                             help="Remove this fetched image"):
+                    lib.remove_fetched_image(story_id, url)
+                    st.rerun()
+    for i, f in enumerate(uploaded):
+        p = lib.media_path(story_id, f)
+        if not p:
+            continue
+        uc1, uc2 = st.columns([5, 1])
+        with uc1:
+            st.image(str(p), width=220)
+        with uc2:
+            if st.button("✕", key=f"lib_rmup_{story_id}_{i}",
+                         help="Remove this uploaded image"):
+                lib.remove_uploaded_image(story_id, f)
+                st.rerun()
+    if not img_urls and not uploaded and meta.get("enrichment_status") != "pending":
+        st.caption("No images yet — try ↻ Retry or upload manually below.")
     links = meta.get("news_links") or []
     if links:
         for lk in links:
@@ -393,9 +452,29 @@ def _render_story_detail(story_id: str) -> None:
         st.success(f"Attached {len(up_imgs)} image(s).")
         st.rerun()
 
-    # Retry enrichment + delete
-    b1, b2, b3 = st.columns(3)
-    with b1:
+    # Refresh / retry controls
+    r1, r2, r3 = st.columns(3)
+    with r1:
+        if st.button("#️⃣ Update hashtags", key=f"lib_tags_{story_id}",
+                     help="Find trending hashtags for this story's topic and add them"):
+            with st.spinner("Finding trending hashtags…"):
+                added = lib.refresh_hashtags(story_id)
+            if added:
+                st.toast("Hashtags updated.")
+                st.rerun()
+            else:
+                st.warning("No new trending hashtags found — kept the existing ones.")
+    with r2:
+        if st.button("🖼️ Update images", key=f"lib_imgs_{story_id}",
+                     help="Re-fetch news images for this story's topic"):
+            with st.spinner("Fetching images…"):
+                updated = lib.refresh_images(story_id)
+            if updated:
+                st.toast("Images updated.")
+                st.rerun()
+            else:
+                st.warning("No images found — kept the existing ones.")
+    with r3:
         if st.button("↻ Retry media fetch", key=f"lib_retry_{story_id}",
                      help="Re-run the hashtag + image fetch for this story"):
             if lib.retry_enrichment(story_id):
@@ -403,7 +482,10 @@ def _render_story_detail(story_id: str) -> None:
                 st.rerun()
             else:
                 st.error("Could not start the retry.")
-    with b2:
+
+    # Delete + back
+    d1, d2 = st.columns(2)
+    with d1:
         if not st.session_state.get(f"lib_confirm_del_{story_id}"):
             if st.button("🗑️ Delete story", key=f"lib_del_{story_id}"):
                 st.session_state[f"lib_confirm_del_{story_id}"] = True
@@ -415,7 +497,7 @@ def _render_story_detail(story_id: str) -> None:
                 st.session_state.pop("lib_selected_story", None)
                 st.success("Story deleted.")
                 st.rerun()
-    with b3:
+    with d2:
         if st.button("← Back to list", key=f"lib_back_{story_id}"):
             st.session_state.pop("lib_selected_story", None)
             st.rerun()

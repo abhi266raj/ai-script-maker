@@ -174,12 +174,12 @@ def _parse_frontmatter(text: str) -> tuple[Dict[str, Any], str]:
 def build_story_markdown(meta: Dict[str, Any], dialogue_md: str, script_md: str) -> str:
     """Assemble the full .md file content."""
     front = _dump_frontmatter(meta)
-    return (
-        f"{front}\n\n"
-        f"# {meta.get('title', 'Untitled Story')}\n\n"
-        f"## Dialogue\n\n{dialogue_md.strip()}\n\n"
-        f"## Script\n\n{script_md.strip()}\n"
-    )
+    dlg = dialogue_md.strip()
+    body = f"{front}\n\n# {meta.get('title', 'Untitled Story')}\n\n"
+    if dlg:
+        body += f"## Dialogue\n\n{dlg}\n\n"
+    body += f"## Script\n\n{script_md.strip()}\n"
+    return body
 
 
 def save_story(
@@ -359,6 +359,32 @@ def media_path(story_id: str, filename: str) -> Optional[Path]:
     return path if path.exists() else None
 
 
+def remove_fetched_image(story_id: str, url: str) -> bool:
+    """Remove one auto-fetched image URL (the overwrite control)."""
+    story = load_story(story_id)
+    if not story:
+        return False
+    urls = [u for u in (story["meta"].get("image_urls") or []) if u != url]
+    update_story_fields(story_id, image_urls=urls)
+    return True
+
+
+def remove_uploaded_image(story_id: str, filename: str) -> bool:
+    """Remove one manually uploaded image file and its frontmatter entry."""
+    story = load_story(story_id)
+    if not story:
+        return False
+    path = media_path(story_id, filename)
+    try:
+        if path:
+            path.unlink(missing_ok=True)
+    except OSError:
+        pass
+    uploaded = [f for f in (story["meta"].get("uploaded_images") or []) if f != filename]
+    update_story_fields(story_id, uploaded_images=uploaded)
+    return True
+
+
 # ---------------------------------------------------------------------------
 # Post-save enrichment (background threads; best-effort; never blocks save)
 # ---------------------------------------------------------------------------
@@ -379,6 +405,19 @@ def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
             if tag and tag.get("content"):
                 url = urljoin(article_url, tag["content"].strip())
                 if url.startswith(("http://", "https://")) and not url.startswith("data:"):
+                    return url
+        # Fallbacks some publishers use instead of og:image.
+        link_src = soup.find("link", rel="image_src")
+        if link_src and link_src.get("href"):
+            url = urljoin(article_url, link_src["href"].strip())
+            if url.startswith(("http://", "https://")):
+                return url
+        item = soup.find(attrs={"itemprop": "image"})
+        if item:
+            content = (item.get("content") or item.get("src") or "").strip()
+            if content:
+                url = urljoin(article_url, content)
+                if url.startswith(("http://", "https://")):
                     return url
     except Exception:
         pass
@@ -404,55 +443,124 @@ def _enrich_worker(story_id: str, topic: str) -> None:
         lock.release()
 
 
-def _do_enrich(story_id: str, topic: str) -> None:
+def _fetch_news_articles(topic: str, limit: int = 6):
+    """Best-effort news search; returns [] on any failure."""
     try:
         from tools.news_fetcher import news_fetcher
+        return news_fetcher.search_news(topic, limit=limit) or []
     except Exception:
-        return  # fetcher unavailable — status flip still happens in the caller
-    news_links: List[Dict[str, str]] = []
-    image_urls: List[str] = []
-    try:
-        articles = news_fetcher.search_news(topic, limit=6) or []
-        for a in articles[:6]:
-            news_links.append({
-                "title": getattr(a, "title", ""),
-                "url": getattr(a, "link", ""),
-                "source": getattr(a, "source", ""),
-            })
-        # og:image from the top articles, in parallel.
-        img_threads: List[threading.Thread] = []
-        found: List[str] = []
+        return []
 
-        def _grab(url: str) -> None:
-            img = _og_image(url)
-            if img and img not in found:
-                found.append(img)
 
-        for a in articles[:4]:
-            link = getattr(a, "link", "")
-            if link:
-                t = threading.Thread(target=_grab, args=(link,), daemon=True)
-                t.start()
-                img_threads.append(t)
-        for t in img_threads:
-            t.join(timeout=12.0)
-        image_urls = found[:6]
-    except Exception:
-        pass
-    # Trending hashtags relevant to the topic (best-effort).
-    new_tags: List[str] = []
+def _fetch_article_images(articles) -> List[str]:
+    """Best-effort og:image extraction from article pages, in parallel."""
+    found: List[str] = []
+    found_lock = threading.Lock()
+    threads: List[threading.Thread] = []
+
+    def _grab(url: str) -> None:
+        img = _og_image(url)
+        if img:
+            with found_lock:
+                if img not in found:
+                    found.append(img)
+
+    for a in articles[:4]:
+        link = getattr(a, "link", "")
+        if link:
+            t = threading.Thread(target=_grab, args=(link,), daemon=True)
+            t.start()
+            threads.append(t)
+    for t in threads:
+        t.join(timeout=12.0)
+    return found[:6]
+
+
+def _tag_words(tag: str) -> set:
+    """Word set for a hashtag, splitting camelCase so '#DelhiRain' → delhi, rain."""
+    words: set = set()
+    for token in re.findall(r"[A-Za-z]{4,}", tag):
+        words.add(token.lower())
+        for part in re.findall(r"[A-Z]?[a-z]+", token):
+            if len(part) >= 4:
+                words.add(part.lower())
+    return words
+
+
+def _fetch_trending_hashtags(topic: str) -> List[str]:
+    """Trending hashtags matching the topic's words (best-effort)."""
+    tags: List[str] = []
     try:
+        from tools.news_fetcher import news_fetcher
         trending = news_fetcher.fetch_famous_english_hashtags(limit=12) or []
         words = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", topic)}
         for entry in trending:
             tag = entry.get("tag", "") if isinstance(entry, dict) else str(entry)
-            tag_words = set(re.findall(r"[A-Za-z]{4,}", tag.lower()))
-            if words & tag_words and tag not in new_tags:
-                new_tags.append(tag)
-            if len(new_tags) >= 3:
+            if words & _tag_words(tag) and tag not in tags:
+                tags.append(tag)
+            if len(tags) >= 3:
                 break
     except Exception:
         pass
+    return tags
+
+
+def refresh_hashtags(story_id: str, topic: str = "") -> bool:
+    """Find trending hashtags for the story's topic and merge them in.
+
+    Returns True when at least one new hashtag was found and saved.
+    Never wipes the existing hashtags.
+    """
+    story = load_story(story_id)
+    if not story:
+        return False
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        return False
+    new_tags = _fetch_trending_hashtags(topic)
+    if not new_tags:
+        return False
+    merged = list(story["meta"].get("hashtags") or [])
+    added = False
+    for t in new_tags:
+        if t not in merged:
+            merged.append(t)
+            added = True
+    if added:
+        update_story_fields(story_id, hashtags=merged)
+    return added
+
+
+def refresh_images(story_id: str, topic: str = "") -> bool:
+    """Re-fetch news images for the story's topic and replace the fetched set.
+
+    Returns True when new images were found and saved. The existing fetched
+    set and manual uploads are kept when the fetch finds nothing.
+    """
+    story = load_story(story_id)
+    if not story:
+        return False
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        return False
+    found = _fetch_article_images(_fetch_news_articles(topic, limit=6))
+    if not found:
+        return False
+    update_story_fields(story_id, image_urls=found)
+    return True
+
+
+def _do_enrich(story_id: str, topic: str) -> None:
+    articles = _fetch_news_articles(topic, limit=6)
+    news_links: List[Dict[str, str]] = []
+    for a in articles[:6]:
+        news_links.append({
+            "title": getattr(a, "title", ""),
+            "url": getattr(a, "link", ""),
+            "source": getattr(a, "source", ""),
+        })
+    image_urls = _fetch_article_images(articles)
+    new_tags = _fetch_trending_hashtags(topic)
     story = load_story(story_id)
     if not story:
         return
