@@ -2012,6 +2012,7 @@ class DialogueNarrationAgent(BaseAgent):
             revision_directive=revision_directive,
             guidance=guidance,
             items_desc=items_desc,
+            num_scripts=len(items),
             sample_scenes=sample_scenes,
             tone=tone,
         )
@@ -2021,7 +2022,13 @@ class DialogueNarrationAgent(BaseAgent):
         # instruction. All creative decisions are LOCKED: same characters, same
         # count, same angle/hook meaning, same dialogue type, same word budget.
         # No narrative re-roll, no persona re-selection — a surgical refinement.
-        if previous_draft and previous_draft.strip():
+        # #138: the refine prompt is SINGLE-SCRIPT shaped (one angle/hook, no
+        # SCRIPT N headers). For multi-script batches it would collapse the
+        # batch — so it applies ONLY when len(items) == 1. Multi-script
+        # retries keep the batch generation prompt above, whose
+        # revision_directive already carries the previous draft + correction
+        # feedback (and which now mandates SCRIPT N headers + distinctness).
+        if previous_draft and previous_draft.strip() and len(items) == 1:
             if finalized_characters and len(finalized_characters) > 0:
                 speaker_names = [c.name for c in finalized_characters[:character_count]]
             else:
@@ -2232,6 +2239,46 @@ class DialogueNarrationAgent(BaseAgent):
                     f"Raw output snippet: {_snippet!r}",
                     partial_output=raw_output or "",
                 )
+
+        # === #138 DISTINCTNESS VALIDATION ===
+        # N requested scripts must be N DISTINCT scripts. The model sometimes
+        # returns the same content under every SCRIPT N header (laziness) —
+        # that must fail loudly here, never slip through as "4 scripts".
+        # Pairwise near-duplicate detection on normalized narration text:
+        # exact matches OR >90% token-sequence similarity.
+        def _norm_for_dup(text: str) -> str:
+            t = (text or "").lower()
+            t = re.sub(r"\s+", " ", t).strip()
+            return t
+
+        _normed = [_norm_for_dup(str(n)) for n in narrations]
+        for _a in range(len(_normed)):
+            for _b in range(_a + 1, len(_normed)):
+                _ta, _tb = _normed[_a], _normed[_b]
+                if not _ta or not _tb:
+                    continue
+                _dup = False
+                _sim = 0.0
+                if _ta == _tb:
+                    _dup = True
+                    _sim = 1.0
+                else:
+                    # Only run the O(n*m) comparison when lengths are close —
+                    # wildly different lengths cannot be near-duplicates.
+                    _la, _lb = len(_ta), len(_tb)
+                    if _la and _lb and 0.9 <= _la / _lb <= 1.1:
+                        import difflib
+                        _sim = difflib.SequenceMatcher(None, _ta, _tb).ratio()
+                        _dup = _sim > 0.90
+                if _dup:
+                    _snippet = (raw_output or "")[:500]
+                    raise ModelGenerationError(
+                        f"Stage 3 dialogue generation failed: Script {_a + 1} and "
+                        f"Script {_b + 1} of {len(items)} are duplicates "
+                        f"(similarity {_sim:.0%}) — every script must be distinct. "
+                        f"Raw output snippet: {_snippet!r}",
+                        partial_output=raw_output or "",
+                    )
 
         # === STAGE 3.x GENERATION STEP (3.1, 3.3, 3.5... odd numbers) ===
         # Record what went in and what came out for UI display.
