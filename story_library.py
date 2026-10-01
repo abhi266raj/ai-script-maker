@@ -612,6 +612,85 @@ def update_story_script(story_id: str, script_md: str) -> None:
         encoding="utf-8")
 
 
+# ---------------------------------------------------------------------------
+# Fine-tune history (#105)
+# ---------------------------------------------------------------------------
+# Every "Fine tune script" turn is recorded here so the conversation carries
+# across turns (the LLM sees all prior instructions + refined scripts) and so
+# script versioning (#104) can later adopt the history as versions.
+#
+# Stored as ``fine_tune_history`` frontmatter: a list of JSON strings, one
+# per turn, ``{"instruction": ..., "script": ...}`` — JSON-per-entry keeps
+# the hand-rolled frontmatter format honest (the same pattern as
+# ``refresh_outcome_pending``; JSON encoding protects newlines/quotes
+# through _yaml_escape/_unquote). Capped at _FINE_TUNE_HISTORY_MAX_TURNS
+# turns so frontmatter can't grow without bound.
+_FINE_TUNE_HISTORY_KEY = "fine_tune_history"
+_FINE_TUNE_HISTORY_MAX_TURNS = 20
+
+
+def get_fine_tune_history(story_id: str) -> List[Dict[str, str]]:
+    """Return the story's fine-tune turns, oldest first.
+
+    Each turn is ``{"instruction": str, "script": str}``. Malformed entries
+    are skipped (a corrupt entry must not brick the story view); the writer
+    (``record_fine_tune_turn``) validates strictly instead.
+
+    Raises FileNotFoundError if the story does not exist.
+    """
+    _check_id(story_id)
+    path = story_path(story_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Story not found: {story_id}")
+    meta, _body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+    turns: List[Dict[str, str]] = []
+    for entry in meta.get(_FINE_TUNE_HISTORY_KEY) or []:
+        if not isinstance(entry, str):
+            continue
+        try:
+            turn = json.loads(entry)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(turn, dict):
+            continue
+        instruction = turn.get("instruction")
+        script = turn.get("script")
+        if not isinstance(instruction, str) or not isinstance(script, str):
+            continue
+        if not instruction.strip() or not script.strip():
+            continue
+        turns.append({"instruction": instruction.strip(),
+                      "script": script.strip()})
+    return turns
+
+
+def record_fine_tune_turn(story_id: str, instruction: str,
+                          refined_script: str) -> None:
+    """Append a fine-tune turn and replace the story's script with the result.
+
+    The script is written FIRST: a recorded turn always reflects the stored
+    script — a turn is never recorded without its script landing.
+
+    Raises ValueError for blank instruction/script, FileNotFoundError if the
+    story does not exist. Any write error propagates — the caller must
+    surface it (fail loud), never pretend the refinement landed.
+    """
+    _check_id(story_id)
+    instruction_text = (instruction or "").strip()
+    if not instruction_text:
+        raise ValueError("Fine-tune instruction must not be empty.")
+    refined_text = (refined_script or "").strip()
+    if not refined_text:
+        raise ValueError("Refined script must not be empty.")
+    update_story_script(story_id, refined_text)
+    history = get_fine_tune_history(story_id)
+    history.append({"instruction": instruction_text, "script": refined_text})
+    del history[:-_FINE_TUNE_HISTORY_MAX_TURNS]
+    entries = [json.dumps(turn, ensure_ascii=False) for turn in history]
+    if not update_story_fields(story_id, **{_FINE_TUNE_HISTORY_KEY: entries}):
+        raise FileNotFoundError(f"Story not found: {story_id}")
+
+
 def delete_story(story_id: str) -> bool:
     """Delete a story and its media files. Returns True if anything was removed."""
     _check_id(story_id)
