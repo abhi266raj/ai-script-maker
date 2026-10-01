@@ -1794,6 +1794,144 @@ def start_refresh(story_id: str, kind: str,
         return False, f"Could not start refresh: {type(e).__name__}: {e}"
 
 
+# ---------------------------------------------------------------------------
+# On-device Apple FM warm-up (issue #37)
+# ---------------------------------------------------------------------------
+# Developer tool: manually trigger the #4 FM availability probe
+# (30s -> 30s -> 60s) ahead of time so the first real generation does not
+# pay the cold-start delay. Same daemon-thread + terminal-state pattern as
+# the refresh flow above: the worker always writes a terminal state, the UI
+# auto-polls while busy, and a stale "warming" state is recovered honestly.
+
+# Upper bound for one warm-up run: the #4 probe budget is 30+30+60 = 120s,
+# plus overhead. Anything still "warming" past this is orphaned (the app
+# restarted mid-run) and is recovered as interrupted, never left stuck.
+FM_WARMUP_STALE_SECONDS = 600.0
+
+
+def _warmup_state_path() -> Path:
+    """Mailbox file for the warm-up worker. Computed from LIBRARY_ROOT so
+    tests can redirect it by monkeypatching LIBRARY_ROOT."""
+    return LIBRARY_ROOT / "fm_warmup.json"
+
+
+def _write_fm_warmup_state(state: Dict[str, Any]) -> None:
+    """Write the warm-up mailbox atomically (tmp + rename). Never raises
+    to the worker: a failed write is printed, and the UI's staleness guard
+    recovers honestly on the next read."""
+    path = _warmup_state_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".tmp")
+        tmp.write_text(json.dumps(state), encoding="utf-8")
+        tmp.replace(path)
+    except Exception:
+        traceback.print_exc()
+
+
+def read_fm_warmup_state() -> Dict[str, Any]:
+    """Read the warm-up mailbox. Returns {} when idle/never run.
+
+    A "warming" state older than FM_WARMUP_STALE_SECONDS is orphaned (the
+    app died mid-run): it is rewritten as a failed/interrupted terminal
+    state with an honest note, so the button never stays stuck disabled.
+    """
+    path = _warmup_state_path()
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    if data.get("state") == "warming":
+        started = data.get("started_at") or 0.0
+        try:
+            age = time.time() - float(started)
+        except (TypeError, ValueError):
+            age = FM_WARMUP_STALE_SECONDS + 1.0
+        if age > FM_WARMUP_STALE_SECONDS:
+            recovered = {
+                "state": "failed",
+                "message": ("A previous warm-up was interrupted (the app "
+                            "restarted while it was running). Nothing was "
+                            "changed — try again."),
+                "seconds": 0.0,
+                "started_at": started,
+            }
+            _write_fm_warmup_state(recovered)
+            return recovered
+    return data
+
+
+def _fm_warmup_worker() -> None:
+    """Background worker: run the #4 FM availability probe. Never raises.
+
+    Uses ``dual_engine.check_status(force=True)`` — the exact probe with
+    the 30s -> 30s -> 60s retry budget — so a real ``fm respond`` call
+    initializes the on-device model. The outcome is recorded honestly:
+    "done" only when the probe reports the model available, otherwise
+    "failed" with the probe's own message verbatim (same messaging as #4).
+    """
+    started = time.time()
+    try:
+        from core.dual_engine import dual_engine
+        status = dual_engine.check_status(force=True, check_fm=True)
+        fm = (status or {}).get("fm", {}) or {}
+        secs = time.time() - started
+        if fm.get("available"):
+            _write_fm_warmup_state({
+                "state": "done",
+                "message": fm.get("message") or "Apple Foundation Model ready (On-Device)",
+                "seconds": secs,
+                "started_at": started,
+            })
+        else:
+            _write_fm_warmup_state({
+                "state": "failed",
+                "message": fm.get("message") or "Apple Foundation Model unavailable",
+                "seconds": secs,
+                "started_at": started,
+            })
+    except Exception as e:
+        _write_fm_warmup_state({
+            "state": "failed",
+            "message": f"Warm-up failed: {type(e).__name__}: {e}",
+            "seconds": time.time() - started,
+            "started_at": started,
+        })
+
+
+def start_fm_warmup() -> Tuple[bool, str]:
+    """Kick off a background on-device Apple FM warm-up probe. Never raises.
+
+    Returns (started, reason): ``reason`` is "" when the worker started,
+    otherwise a human-readable explanation of why it could not start
+    (e.g. a warm-up is already running).
+    """
+    try:
+        state = read_fm_warmup_state()
+        if state.get("state") == "warming":
+            # The button disables while busy, but a double-kick can still
+            # race here — refuse instead of starting a second worker.
+            return False, "A warm-up is already running — try again shortly."
+        _write_fm_warmup_state({
+            "state": "warming",
+            "message": "",
+            "seconds": 0.0,
+            "started_at": time.time(),
+        })
+        t = threading.Thread(target=_fm_warmup_worker, daemon=True,
+                             name="fm-warmup")
+        t.start()
+        return True, ""
+    except Exception as e:
+        return False, f"Could not start warm-up: {type(e).__name__}: {e}"
+
+
 def _do_reset(story_id: str, topic: str,
               ai_engine: Optional[str] = None) -> Tuple[bool, str]:
     """Destructive reset: discard ALL hashtags, fetched images and news
