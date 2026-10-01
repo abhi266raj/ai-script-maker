@@ -766,6 +766,14 @@ def _inject_story_list_css() -> None:
         transform: rotate(45deg) !important;
         pointer-events: none !important;
     }
+    /* #129: dialog/popover trigger icons must follow the theme. Streamlit's
+       native material icons use currentColor, so ensuring the icon inherits
+       the button's text color (which Streamlit themes) is enough — no fill
+       or stroke forcing, which would break Streamlit's icon rendering. */
+    [data-testid="stButton"] button,
+    [data-testid="stPopover"] button {
+        color: inherit;
+    }
 </style>
         """,
         unsafe_allow_html=True,
@@ -1953,30 +1961,59 @@ _LIB_ACTION_BTN_H_PX = 38
 
 
 def _copy_button(label: str, text: str, key: str) -> None:
-    """One-click copy-to-clipboard button (clipboard API with execCommand fallback)."""
+    """One-click copy-to-clipboard button (clipboard API with execCommand fallback).
+
+    #129: theme-aware — detects Streamlit's rendered theme (light/dark)
+    from the parent document and applies matching styles. Falls back to
+    the light appearance if theme detection fails (e.g. cross-origin).
+    Never hardcodes a single-theme color.
+    """
     import html as _html
     import json as _json
     import streamlit.components.v1 as components
     payload = _json.dumps(text)
     btn_id = f"libcp-{key}"
     components.html(
-        f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;box-sizing:border-box;padding:7px 4px;border:1px solid rgba(0,0,0,0.12);
-        border-radius:8px;background:rgba(255,255,255,0.72);color:#1d1d1f;cursor:pointer;font-size:13px;
+        f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;box-sizing:border-box;padding:7px 4px;
+        border-radius:8px;cursor:pointer;font-size:13px;
         font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;">{_html.escape(label)}</button>
         <script>
-        document.getElementById("{btn_id}").addEventListener("click", async () => {{
-            const t = {payload};
-            try {{ await navigator.clipboard.writeText(t); }}
-            catch (e) {{
-                const ta = document.createElement("textarea");
-                ta.value = t; document.body.appendChild(ta); ta.select();
-                try {{ document.execCommand("copy"); }} catch (_e) {{}}
-                ta.remove();
+        (function() {{
+            const btn = document.getElementById("{btn_id}");
+            function applyTheme() {{
+                let dark = false;
+                try {{
+                    dark = window.parent.document.body.getAttribute('data-theme') === 'dark';
+                }} catch (e) {{}}
+                if (dark) {{
+                    btn.style.background = 'rgba(255,255,255,0.10)';
+                    btn.style.color = '#FAF7F0';
+                    btn.style.border = '1px solid rgba(255,255,255,0.22)';
+                }} else {{
+                    btn.style.background = 'rgba(255,255,255,0.72)';
+                    btn.style.color = '#1d1d1f';
+                    btn.style.border = '1px solid rgba(0,0,0,0.12)';
+                }}
             }}
-            const b = document.getElementById("{btn_id}");
-            const old = b.textContent; b.textContent = "Copied \\u2713";
-            setTimeout(() => {{ b.textContent = old; }}, 1500);
-        }});
+            applyTheme();
+            try {{
+                new MutationObserver(applyTheme).observe(
+                    window.parent.document.body,
+                    {{attributes: true, attributeFilter: ['data-theme']}});
+            }} catch (e) {{}}
+            btn.addEventListener("click", async () => {{
+                const t = {payload};
+                try {{ await navigator.clipboard.writeText(t); }}
+                catch (e) {{
+                    const ta = document.createElement("textarea");
+                    ta.value = t; document.body.appendChild(ta); ta.select();
+                    try {{ document.execCommand("copy"); }} catch (_e) {{}}
+                    ta.remove();
+                }}
+                const old = btn.textContent; btn.textContent = "Copied \\u2713";
+                setTimeout(() => {{ btn.textContent = old; }}, 1500);
+            }});
+        }})();
         </script>""",
         height=_LIB_ACTION_BTN_H_PX,
     )
