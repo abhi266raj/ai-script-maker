@@ -7,11 +7,13 @@ the script (st.stop()) before any Studio code runs.
 
 from __future__ import annotations
 
+import base64 as _base64
 import html as _html
 import re as _re
 import time as _time
 from collections.abc import Callable
 from functools import lru_cache as _lru_cache
+from pathlib import Path as _Path
 
 import streamlit as st
 
@@ -42,9 +44,73 @@ def _library_ai_engine() -> str | None:
 # CSS (separate block — the app's main CSS block is untouched)
 # ---------------------------------------------------------------------------
 
+# v1.6.2 (#90): toolbar icon font. "LibToolbarIcons" is a 7-glyph subset
+# of Material Symbols Outlined (Apache License 2.0,
+# google/material-design-icons), self-hosted as a base64 data URI — no CDN,
+# so the app never needs the network for its own chrome. PUA codepoints
+# from the official .codepoints file; the subset is reproducible via
+# assets/fonts/build_toolbar_icons.sh (see assets/fonts/README.md for the
+# license note and the glyph map). Glyphs inherit currentColor, so they
+# follow the light/dark theme with no hard-coded color.
+_TB_FONT_FAMILY = "LibToolbarIcons"
+_TB_ICON_TAG = "\ue9ef"      # Update Hashtags
+_TB_ICON_IMAGE = "\ue3f4"    # Update Images
+_TB_ICON_NEWS = "\ueb81"     # Update News
+_TB_ICON_RESET = "\ue5d5"    # Reset
+_TB_ICON_SHARE = "\ue80d"    # Share
+_TB_ICON_COPY = "\ue14d"     # Copy
+_TB_ICON_DELETE = "\ue92e"   # Delete
+_TOOLBAR_FONT_FILE = (
+    _Path(__file__).resolve().parent / "assets" / "fonts" / "toolbar-icons.woff2"
+)
+_tb_font_b64: str | None = None
+
+
+def _toolbar_icon_font_b64() -> str:
+    """Base64 of the bundled toolbar icon font (#90).
+
+    Fail loudly: without the @font-face the toolbar buttons render as
+    tofu boxes, so a missing/empty asset raises instead of emitting CSS
+    that silently breaks every toolbar icon.
+    """
+    global _tb_font_b64
+    if _tb_font_b64 is None:
+        try:
+            raw = _TOOLBAR_FONT_FILE.read_bytes()
+        except OSError as exc:
+            raise RuntimeError(
+                f"toolbar icon font unreadable: {_TOOLBAR_FONT_FILE} ({exc})")
+        if not raw:
+            raise RuntimeError(
+                f"toolbar icon font is empty: {_TOOLBAR_FONT_FILE}")
+        _tb_font_b64 = _base64.b64encode(raw).decode("ascii")
+    return _tb_font_b64
+
+
+def _toolbar_font_face_css() -> str:
+    """The @font-face <style> block for the toolbar icon font (#90).
+
+    Its own <style> block so the data URI never touches the main CSS
+    literal in :func:`inject_library_css`.
+    """
+    return (
+        "<style>\n"
+        "@font-face {\n"
+        f'    font-family: "{_TB_FONT_FAMILY}";\n'
+        f"    src: url(data:font/woff2;base64,{_toolbar_icon_font_b64()})"
+        ' format("woff2");\n'
+        "    font-weight: 400;\n"
+        "    font-style: normal;\n"
+        "    font-display: block;\n"
+        "}\n"
+        "</style>\n"
+    )
+
+
 def inject_library_css() -> None:
     st.markdown(
-        """
+        _toolbar_font_face_css()
+        + """
 <style>
     :root,
     [data-theme="light"] {
@@ -539,6 +605,30 @@ def inject_library_css() -> None:
         border-radius: 50%;
         animation: lib-spin 0.9s linear infinite;
     }
+    /* v1.6.2 (#90): toolbar icon font. The seven story-detail toolbar
+       controls (Update Hashtags / Images / News, Reset, Share, Copy,
+       Delete) are icon-only — each emits a data-tbicon marker directly
+       before its element container, and these rules paint the icon font
+       on exactly those controls: plain buttons AND popover triggers
+       ([data-testid="stPopoverButton"] carries the label in a <p>, so it
+       needs its own line). Scoped: nothing else in the app uses the
+       marker, so no other button is touched — never a global rule.
+       Glyphs inherit currentColor, so they follow the light/dark theme
+       with no hard-coded color. The native popover chevron is Streamlit's
+       own SVG and is untouched (never force SVG fill/stroke). */
+    div[data-testid="stElementContainer"]:has([data-tbicon]) {
+        display: none !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-tbicon])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button,
+    div[data-testid="stElementContainer"]:has([data-tbicon])
+        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"],
+    div[data-testid="stElementContainer"]:has([data-tbicon])
+        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"] p {
+        font-family: "LibToolbarIcons", "Source Sans Pro", sans-serif !important;
+        font-size: 20px !important;
+        line-height: 1 !important;
+    }
     /* macOS HIG section header: plain semibold text, no emoji, no boxes */
     .lib-section {
         font-size: 15px;
@@ -734,7 +824,8 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
                      fail_label: str = "Confirm",
                      destructive_label: str,
                      disabled: bool = False,
-                     spin_marker: str = "") -> None:
+                     spin_marker: str = "",
+                     icon_trigger: bool = False) -> None:
     """Apple-style confirmation: native popover, explicit red destructive
     verb, standard Cancel. (#58)
 
@@ -768,19 +859,33 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
     is the same adjacent-sibling shape as the hashtag/image/news buttons
     (#81 — the old 3-hop selector through the danger-pop marker never
     matched the real DOM).
+
+    #90: ``icon_trigger`` marks the trigger for the toolbar icon font —
+    ``data-tbicon`` rides on the LAST marker emitted before the popover
+    trigger (the spin marker when one is given, else the danger-pop
+    marker), so the icon-font CSS uses the same adjacent-sibling anchor
+    as the spinner CSS. Both markers keep their own ``data-marker``
+    untouched — the #24 collapse and #53/#81 spin ``+`` chains keep
+    matching — and the caller passes an icon glyph as ``trigger_label``.
     """
     _go_key = f"{popover_key}-go"
     _err_key = f"{popover_key}-err"
     # Marker first: it must sit directly before the popover's element
     # container for the #24 collapse rule (the marker's wrapper would
     # otherwise push the trigger one gap lower than its siblings).
-    st.markdown(f'<div data-marker="lib-danger-pop-{popover_key}" style="display:none"></div>',
+    # #90: data-tbicon rides the LAST marker before the popover trigger
+    # (the spin marker when #81 emits one, else the danger-pop marker) —
+    # the icon-font CSS anchors on the immediate predecessor, exactly
+    # like the spinner CSS.
+    _tbicon_here = " data-tbicon" if (icon_trigger and not spin_marker) else ""
+    st.markdown(f'<div data-marker="lib-danger-pop-{popover_key}"{_tbicon_here} style="display:none"></div>',
                 unsafe_allow_html=True)
     if spin_marker:
         # #81: the spinner marker sits immediately before the popover's
         # element container — the #53 pattern the hashtag/image/news
         # spinners use, and the only shape whose CSS selector matches.
-        st.markdown(f'<div data-marker="{spin_marker}" style="display:none"></div>',
+        _tbicon_spin = " data-tbicon" if icon_trigger else ""
+        st.markdown(f'<div data-marker="{spin_marker}"{_tbicon_spin} style="display:none"></div>',
                     unsafe_allow_html=True)
     # Consume a previously armed confirmation *before* the popover
     # instantiates, so driving its key here is legal.
@@ -825,12 +930,14 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
                     message: str, on_yes: Callable[[], None],
                     trigger_help: str = "",
                     use_container_width: bool = False,
-                    destructive_label: str) -> None:
+                    destructive_label: str,
+                    icon_trigger: bool = False) -> None:
     """Apple-style delete confirmation: neutral trigger, red explicit
     destructive verb + Cancel inside (#58).
 
     Thin wrapper over :func:`_confirm_popover` with the failure label set
     to "Delete" (kept for the existing delete flows and their tests).
+    ``icon_trigger`` (#90) marks the trigger for the toolbar icon font.
     """
     _confirm_popover(
         trigger_label=trigger_label,
@@ -842,17 +949,19 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
         use_container_width=use_container_width,
         fail_label="Delete",
         destructive_label=destructive_label,
+        icon_trigger=icon_trigger,
     )
 
 
 def _render_kind_button(*, story_id: str, kind: str, label: str,
                        button_key: str, help_text: str, kick_label: str,
                        busy_kinds, ai_engine) -> None:
-    """One toolbar refresh button (#53/#54, #71, #80).
+    """One toolbar refresh button (#53/#54, #71, #80, #90).
 
-    #71/#80: the button is ICON-ONLY — the label is a glyph ("#" / "🖼" /
-    "📰") and the tooltip (``help_text``) carries the "Update Hashtags" /
-    "Update Images" / "Update News" label for discoverability. Tapping
+    #71/#80/#90: the button is ICON-ONLY — the label is a single PUA glyph
+    from the bundled "LibToolbarIcons" font (see _TB_ICON_*; #90) and the
+    tooltip (``help_text``) carries the "Update Hashtags" / "Update Images"
+    / "Update News" label for discoverability and accessibility. Tapping
     the icon triggers the refresh.
 
     The glyph label NEVER changes; while ``kind`` runs the button shows the
@@ -862,10 +971,17 @@ def _render_kind_button(*, story_id: str, kind: str, label: str,
     its neighbours. Each kind disables only while IT runs: hashtags,
     images and news are independent and stay clickable while the others
     run (#54, #80).
+
+    The ``data-tbicon`` marker rides on the same div as the spin marker
+    (when running) so both the spinner ``+`` rule and the icon-font ``+``
+    rule keep their required immediate-predecessor DOM order.
     """
     running = kind in busy_kinds
     if running:
-        st.markdown(f'<div data-marker="lib-spin-{kind}" style="display:none"></div>',
+        st.markdown(f'<div data-marker="lib-spin-{kind}" data-tbicon style="display:none"></div>',
+                    unsafe_allow_html=True)
+    else:
+        st.markdown('<div data-tbicon style="display:none"></div>',
                     unsafe_allow_html=True)
     if st.button(label, key=button_key, help=help_text,
                  disabled=running, use_container_width=True):
@@ -919,10 +1035,11 @@ def _render_load_more_button(*, story_id: str, kind: str, label: str,
 
 def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
     """Toolbar Reset: destructive confirm popover (red "Reset media" /
-    standard "Cancel", #58).
+    standard "Cancel", #58). #90: the trigger is icon-only (refresh glyph
+    from the toolbar icon font, tooltip keeps the label).
 
     #53 HIG progress: the trigger label NEVER changes — while resetting it
-    keeps "Reset", shows the CSS spinner (``lib-spin-reset`` marker) and
+    keeps the reset glyph, shows the CSS spinner (``lib-spin-reset`` marker) and
     stays disabled. #54: Reset is destructive and exclusive — the trigger
     also disables while any OTHER kind runs (no spinner then: it is
     blocked, not working). Confirming kicks a "reset" refresh — hashtags,
@@ -947,7 +1064,7 @@ def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
                 else "Could not start the reset.")
 
     _confirm_popover(
-        trigger_label="Reset",
+        trigger_label=_TB_ICON_RESET,
         popover_key=f"lib_resetpop_{story_id}",
         title="Reset media rows?",
         message=("Clears all hashtags, fetched images and news links, "
@@ -960,6 +1077,7 @@ def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
         use_container_width=True,
         disabled=resetting or blocked,
         spin_marker="lib-spin-reset" if resetting else "",
+        icon_trigger=True,
     )
 
 
@@ -1580,8 +1698,10 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
     """Share dropdown (native popover, macOS HIG): sub-actions for the
     story's news-links + hashtags share text.
 
-    The trigger label is plain "Share" — Streamlit's popover natively
-    renders its own chevron, so baking "⌄" into the label doubled it (#46).
+    #90: the trigger is icon-only (share glyph from the toolbar icon
+    font); the tooltip keeps the "Share" label. Streamlit's popover
+    natively renders its own chevron, so nothing is baked into the label
+    (#46).
 
     The redundant st.code(share_text) preview is gone (#27) — the dedicated
     Hashtags / News Links sections already show that content, and the text
@@ -1589,7 +1709,11 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
     deep-links straight into the installed WhatsApp Mac app (#28), with no
     browser tab involved (#95).
     """
-    with st.popover("Share", key=f"lib_sharepop_{story_id}",
+    # data-tbicon marker: must sit directly before the popover's element
+    # container for the icon-font `+` rule (same pattern as #24).
+    st.markdown('<div data-tbicon style="display:none"></div>',
+                unsafe_allow_html=True)
+    with st.popover(_TB_ICON_SHARE, key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
                      use_container_width=True):
         if share_text:
@@ -1619,11 +1743,18 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
 def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
     """Copy dropdown (native popover, macOS HIG): Script / Script + Tags /
     Script + Media / All — the same one-click copy texts as before, now
-    revealed as sub-actions. The trigger label is plain "Copy" (native
-    chevron only — no baked-in "⌄", #46). Each copy button owns its loading
-    state ("Copied ✓") via _copy_button — no second click.
+    revealed as sub-actions.
+
+    #90: the trigger is icon-only (copy glyph from the toolbar icon font);
+    the tooltip keeps the "Copy" label. Streamlit's native chevron is the
+    only indicator (#46). Each copy button owns its loading state
+    ("Copied ✓") via _copy_button — no second click.
     """
-    with st.popover("Copy", key=f"lib_copypop_{story_id}",
+    # data-tbicon marker: must sit directly before the popover's element
+    # container for the icon-font `+` rule (same pattern as #24).
+    st.markdown('<div data-tbicon style="display:none"></div>',
+                unsafe_allow_html=True)
+    with st.popover(_TB_ICON_COPY, key=f"lib_copypop_{story_id}",
                      help="Copy the screenplay in different formats",
                      use_container_width=True):
         if script_md:
@@ -1680,17 +1811,18 @@ def _copy_button(label: str, text: str, key: str) -> None:
     )
 
 
-# v1.6 (#38, #46, #53, #80): story-detail toolbar column weights. Streamlit
-# ellipsizes ("…") any button/popover label wider than its column, so every
-# action column is weighted to fit its label — #53: labels never change
-# mid-work (icon glyphs "#"/"🖼"/"📰", "Reset", "Delete" + chevron), so the
-# static labels are the longest state. Share / Copy are short native-popover
-# labels. #71: hashtags/images became icon-only buttons, so their columns
-# shrank to icon width and the freed weight moved to the spacer — the row
-# stays full-width with no dead space in the action area and Delete stays
-# visually trailing. #80: the news button is icon-only too (same 0.9 slot);
-# the spacer gives up 0.9 to keep the total unchanged (10.0) so the overall
-# layout is preserved and the #24 baseline alignment is untouched.
+# v1.6 (#38, #46, #53, #80) / v1.6.2 (#90): story-detail toolbar column
+# weights. Streamlit ellipsizes ("…") any button/popover label wider than
+# its column, so every action column is weighted to fit its label — #53:
+# labels never change mid-work. #90: ALL seven controls are icon-only
+# (icon-font glyphs for hashtags/images/news, Reset, Share, Copy, Delete),
+# so the static labels are the longest state. Share / Copy are short native-
+# popover labels. #71: hashtags/images became icon-only buttons, so their
+# columns shrank to icon width and the freed weight moved to the spacer —
+# the row stays full-width with no dead space in the action area and Delete
+# stays visually trailing. #80: the news button is icon-only too (same 0.9
+# slot); the spacer gives up 0.9 to keep the total unchanged (10.0) so the
+# overall layout is preserved and the #24 baseline alignment is untouched.
 _DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, 1.4, 1.1, 1.1, 2.0, 1.7]
 _TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
 
@@ -1706,9 +1838,11 @@ def _render_story_detail(story_id: str) -> None:
         meta, meta.get("title", "Untitled Story") or "Untitled Story")
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
-    # toolbar — hashtag/image/news refresh icons (#71, #80), Reset, Share,
-    # Copy — with Delete trailing (#46). The title carries its own inline
-    # ✏️ edit icon next to the centered title text.
+    # toolbar — hashtag/image/news refresh icons (#71, #80, #90), Reset,
+    # Share, Copy — with Delete trailing (#46). #90: all seven are
+    # icon-only, drawn from the single "LibToolbarIcons" icon font; the
+    # title carries its own inline ✏️ edit icon next to the centered
+    # title text.
     #
     # #53 HIG progress: a refresh button NEVER changes its label. While
     # its kind runs the button keeps its glyph label, shows a CSS spinner
@@ -1732,7 +1866,7 @@ def _render_story_detail(story_id: str) -> None:
         # user-editable, so _confirm_popover escapes Markdown specials.
         _story_title = meta.get("title", "Untitled Story") or "Untitled Story"
         _delete_popover(
-            trigger_label="Delete",
+            trigger_label=_TB_ICON_DELETE,
             popover_key=f"lib_delpop_{story_id}",
             title=f'Delete "{_story_title}"?',
             message="This can't be undone.",
@@ -1740,6 +1874,7 @@ def _render_story_detail(story_id: str) -> None:
             trigger_help="Delete this story",
             destructive_label="Delete story",
             use_container_width=True,
+            icon_trigger=True,
         )
 
     if _editing:
@@ -1767,13 +1902,13 @@ def _render_story_detail(story_id: str) -> None:
         tc1, tc2, tc3, tc4, tc5, tc6, _tsp, tc7 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
         with tc1:
             _render_kind_button(
-                story_id=story_id, kind="hashtags", label="#",
+                story_id=story_id, kind="hashtags", label=_TB_ICON_TAG,
                 button_key=f"lib_tags_{story_id}", kick_label="hashtag",
                 help_text="Update Hashtags",
                 busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc2:
             _render_kind_button(
-                story_id=story_id, kind="images", label="🖼",
+                story_id=story_id, kind="images", label=_TB_ICON_IMAGE,
                 button_key=f"lib_imgs_{story_id}", kick_label="image",
                 help_text="Update Images",
                 busy_kinds=_busy_kinds, ai_engine=_ai_engine)
@@ -1784,7 +1919,7 @@ def _render_story_detail(story_id: str) -> None:
             # label, lib-spin-news spinner while running, disables only
             # while its own kind runs, concurrent with hashtags/images.
             _render_kind_button(
-                story_id=story_id, kind="news", label="📰",
+                story_id=story_id, kind="news", label=_TB_ICON_NEWS,
                 button_key=f"lib_news_{story_id}", kick_label="news",
                 help_text="Update News",
                 busy_kinds=_busy_kinds, ai_engine=_ai_engine)
