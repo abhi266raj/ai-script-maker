@@ -1067,26 +1067,27 @@ def _ui_with_fake_st(clicks=()):
 
 def _pop_kwargs(**kw):
     d = dict(trigger_label="Delete", popover_key="dp",
-             title="Delete this story?", message="M")
+             title="Delete this story?", message="M",
+             destructive_label="Delete story")
     d.update(kw)
     return d
 
 
-def test_delete_popover_renders_yes_and_no():
+def test_delete_popover_renders_cancel_and_destructive_verb():
     lui, fake = _ui_with_fake_st()
     lui._delete_popover(**_pop_kwargs(on_yes=lambda: None))
     assert fake.popover_kwargs["label"] == "Delete"
     assert fake.popover_kwargs["key"] == "dp"
     assert fake.popover_kwargs["on_change"] == "rerun"
-    assert ("Yes", "dp-yes") in fake.buttons
-    assert ("No", "dp-no") in fake.buttons
+    # #58: explicit red verb + standard Cancel, never Yes/No. Cancel leads.
+    assert fake.buttons == [("Cancel", "dp-no"), ("Delete story", "dp-yes")]
 
 
-def test_delete_popover_yes_runs_callback_and_closes():
+def test_delete_popover_destructive_runs_callback_and_closes():
     lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
     fired = []
     kw = _pop_kwargs(on_yes=lambda: fired.append(1))
-    lui._delete_popover(**kw)  # run 1: Yes clicked -> close + go flags armed
+    lui._delete_popover(**kw)  # run 1: destructive clicked -> close + go flags armed
     assert fired == []
     assert fake.session_state["dp"] is False
     assert fake.session_state["dp-go"] is True
@@ -1097,7 +1098,7 @@ def test_delete_popover_yes_runs_callback_and_closes():
     assert fake.errors == []
 
 
-def test_delete_popover_no_dismisses_without_deleting():
+def test_delete_popover_cancel_dismisses_without_deleting():
     lui, fake = _ui_with_fake_st(clicks=("dp-no",))
     fired = []
     lui._delete_popover(**_pop_kwargs(on_yes=lambda: fired.append(1)))
@@ -1106,7 +1107,7 @@ def test_delete_popover_no_dismisses_without_deleting():
     assert "dp-go" not in fake.session_state
 
 
-def test_delete_popover_yes_failure_is_loud():
+def test_delete_popover_destructive_failure_is_loud():
     lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
 
     def _boom():
@@ -1358,7 +1359,7 @@ def test_confirm_popover_fail_label_is_used():
         raise RuntimeError("nope")
 
     kw = dict(trigger_label="Reset", popover_key="rp", title="T", message="M",
-              on_yes=_boom, fail_label="Reset")
+              on_yes=_boom, fail_label="Reset", destructive_label="Reset media")
     lui._confirm_popover(**kw)  # run 1: arm the confirmation
     fake._clicks.clear()
     lui._confirm_popover(**kw)  # run 2: on_yes raises -> loud error, reopened
@@ -1462,8 +1463,9 @@ def test_reset_popover_idle_wiring():
     assert fake.popover_kwargs["key"] == "lib_resetpop_sid1"
     assert fake.popover_kwargs["disabled"] is False
     assert fake.popover_kwargs["on_change"] == "rerun"
-    assert ("Yes", "lib_resetpop_sid1-yes") in fake.buttons
-    assert ("No", "lib_resetpop_sid1-no") in fake.buttons
+    # #58: explicit red verb + standard Cancel, never Yes/No.
+    assert ("Reset media", "lib_resetpop_sid1-yes") in fake.buttons
+    assert ("Cancel", "lib_resetpop_sid1-no") in fake.buttons
 
 
 def test_reset_popover_busy_shows_resetting_and_disabled():
@@ -1474,14 +1476,14 @@ def test_reset_popover_busy_shows_resetting_and_disabled():
     assert fake.popover_kwargs["disabled"] is True
 
 
-def test_reset_popover_yes_kicks_reset_refresh(monkeypatch):
+def test_reset_popover_destructive_kicks_reset_refresh(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_resetpop_sid1-yes",))
     calls = []
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (
                             calls.append((sid, kind, ai_engine)) or (True, "")))
     kw = dict(story_id="sid1", busy=False, refresh_kind="", ai_engine="eng1")
-    lui._render_reset_popover(**kw)  # run 1: Yes clicked -> flags armed
+    lui._render_reset_popover(**kw)  # run 1: destructive clicked -> flags armed
     fake._clicks.clear()
     lui._render_reset_popover(**kw)  # run 2: confirmation consumed
     assert calls == [("sid1", "reset", "eng1")]
@@ -1489,7 +1491,7 @@ def test_reset_popover_yes_kicks_reset_refresh(monkeypatch):
     assert fake.session_state.get("lib_resetpop_sid1") is not True
 
 
-def test_reset_popover_yes_failure_is_loud(monkeypatch):
+def test_reset_popover_destructive_failure_is_loud(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_resetpop_sid1-yes",))
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (False, "boom"))
@@ -1588,7 +1590,7 @@ def test_actions_row_buttons_share_38px_height(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # v1.6 (#24) — danger-marker containers collapsed: "Reset"/"Delete"
-# triggers and the red "Yes" must share the baseline of plain buttons.
+# triggers and the red destructive button must share the baseline of plain buttons.
 # ---------------------------------------------------------------------------
 
 def _capture_story_list_css(lui, monkeypatch):
@@ -1605,8 +1607,8 @@ def test_danger_marker_containers_are_collapsed(monkeypatch):
     """The hidden lib-danger-/lib-danger-pop- marker divs are display:none,
     but their stElementContainer wrapper still occupies one inter-element
     gap in Streamlit's vertical block — that gap pushed the
-    "Reset"/"Delete" triggers (and the red "Yes") lower than their
-    plain-button siblings. The wrapper must be collapsed out of flow."""
+    "Reset"/"Delete" triggers (and the red destructive button) lower than
+    their plain-button siblings. The wrapper must be collapsed out of flow."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_story_list_css(lui, monkeypatch)
     assert css.count("{") == css.count("}")
@@ -1621,23 +1623,24 @@ def test_danger_marker_containers_are_collapsed(monkeypatch):
     assert '[data-marker^="lib-"]' not in css  # never collapse all markers
 
 
-def test_danger_red_sibling_rules_survive_collapse(monkeypatch):
-    """display:none removes the marker container from layout but NOT from
-    the DOM, so the adjacent-sibling red rules (which match on DOM order)
-    must still be present: red destructive button and red popover
-    trigger, in both normal and :hover states."""
+def test_danger_red_button_rules_survive_collapse_trigger_is_neutral(monkeypatch):
+    """#58: macOS red lives ONLY on the explicit destructive button inside
+    the popover — the trigger is neutral (deliberate reversal of #38).
+
+    display:none removes the marker container from layout but NOT from
+    the DOM, so the adjacent-sibling red rule for the destructive button
+    (which matches on DOM order) must still be present in normal and
+    :hover states. The old red popover-TRIGGER rules must be gone."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_story_list_css(lui, monkeypatch)
     red_btn = ('div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])\n'
                '        + div[data-testid="stElementContainer"] [data-testid="stButton"] button')
     assert red_btn in css
     assert red_btn + ":hover" in css
-    red_trig = ('div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])\n'
-                '        + div[data-testid="stElementContainer"] [data-testid="stPopover"]'
-                ' [data-testid="stPopoverButton"]')
-    assert red_trig in css
-    assert red_trig + ":hover" in css
-    assert css.count("color: #FF3B30 !important;") == 4  # button + hover, trigger + hover
+    # The trigger is neutral now: no red popover-trigger selectors remain.
+    assert '[data-testid="stPopoverButton"]' not in css
+    # Exactly the destructive button + its hover carry the red.
+    assert css.count("color: #FF3B30 !important;") == 2
 
 
 def test_danger_button_marker_immediately_precedes_button(monkeypatch):
@@ -1654,10 +1657,10 @@ def test_danger_button_marker_immediately_precedes_button(monkeypatch):
         return orig_button(label, key=key, **k)
 
     monkeypatch.setattr(lui.st, "button", rec_button)
-    assert lui._danger_button("Yes", key="dp-yes") is False
+    assert lui._danger_button("Delete story", key="dp-yes") is False
     assert [s[0] for s in seq] == ["md", "btn"]
     assert 'data-marker="lib-danger-dp-yes"' in seq[0][1]
-    assert seq[1][1:] == ("Yes", "dp-yes")
+    assert seq[1][1:] == ("Delete story", "dp-yes")
 
 
 def test_confirm_popover_marker_immediately_precedes_popover(monkeypatch):
@@ -1721,8 +1724,9 @@ def test_destructive_popover_has_hig_anchor_caret(monkeypatch):
     assert 'transform: rotate(45deg) !important;' in css
     assert 'background: inherit !important;' in css
     # Theme-safe: the caret introduces no hard-coded surface color, and the
-    # #24 red rules are untouched (still exactly 4 red declarations).
-    assert css.count("color: #FF3B30 !important;") == 4
+    # #58 red rule set is exactly the destructive button + hover (the
+    # trigger is neutral now).
+    assert css.count("color: #FF3B30 !important;") == 2
 
 
 def test_confirm_popover_emits_body_anchor_marker_first(monkeypatch):
@@ -1747,6 +1751,88 @@ def test_confirm_popover_emits_body_anchor_marker_first(monkeypatch):
     # [0] trigger marker (outside), [1] body anchor marker (first inside).
     assert 'data-marker="lib-danger-pop-dp"' in md_calls[0]
     assert 'data-marker="lib-danger-pop-body"' in md_calls[1]
-    # The body marker must not disturb the Yes/No buttons or the red Yes.
-    assert ("Yes", "dp-yes") in fake.buttons
-    assert ("No", "dp-no") in fake.buttons
+    # The body marker must not disturb the Cancel/destructive buttons.
+    assert ("Cancel", "dp-no") in fake.buttons
+    assert ("Delete story", "dp-yes") in fake.buttons
+
+
+# ---------------------------------------------------------------------------
+# v1.6 (#58) — destructive popovers name the object and use explicit verbs:
+# Cancel + "Delete story" / "Delete all stories" / "Reset media" (red),
+# never Yes/No. Triggers are neutral; red lives only inside the popover.
+# ---------------------------------------------------------------------------
+
+def test_md_escape_neutralises_markdown_syntax():
+    lui, _fake = _ui_with_fake_st()
+    assert lui._md_escape('A *B* [C](http://x) `code`') == \
+        'A \\*B\\* \\[C\\]\\(http://x\\) \\`code\\`'
+    assert lui._md_escape('100% #hashtag _under_') == \
+        '100% \\#hashtag \\_under\\_'
+    assert lui._md_escape('back\\slash') == 'back\\\\slash'
+    assert lui._md_escape('') == ''
+    assert lui._md_escape(None) == ''
+    # Plain prose (the common case) passes through untouched.
+    assert lui._md_escape("Delete this story?") == "Delete this story?"
+
+
+def test_confirm_popover_escapes_markdown_in_title():
+    """#58: the title may carry a user-editable story name — Markdown
+    specials must render literally and must not break the bold wrapper
+    or inject a link."""
+    lui, fake = _ui_with_fake_st()
+    lui._confirm_popover(**_pop_kwargs(
+        title='Delete "A *B* [C]"?', on_yes=lambda: None))
+    title_md = [m for m in fake.markup if m.startswith("**")]
+    assert title_md == ['**Delete "A \\*B\\* \\[C\\]"?**']
+
+
+def test_confirm_popover_requires_destructive_label():
+    """#58: the explicit verb is mandatory — a missing destructive_label
+    fails loudly (TypeError), never renders a bare Yes."""
+    lui, _fake = _ui_with_fake_st()
+    kw = dict(_pop_kwargs(on_yes=lambda: None))
+    del kw["destructive_label"]
+    with pytest.raises(TypeError):
+        lui._confirm_popover(**kw)
+
+
+def test_delete_all_popover_uses_explicit_verb():
+    """#58: the library sidebar Delete-All confirmation uses the explicit
+    red verb "Delete all stories" (source-level: render_library_page is
+    too heavy for the fake streamlit harness)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    seg = src[src.index('popover_key="lib_delpop_all"'):]
+    seg = seg[:seg.index(")", seg.index("destructive_label"))]
+    assert 'destructive_label="Delete all stories"' in seg
+    assert 'title="Delete all stories?"' in seg
+
+
+def test_story_delete_popover_names_the_story():
+    """#58: the story-delete confirmation titles the popover with the
+    quoted story name and the explicit verb (source-level: the helper is
+    a closure inside _render_story_detail)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    seg = src[src.index("def _story_delete_popover"):]
+    seg = seg[:seg.index("def ", 10)]
+    assert 'title=f\'Delete "{_story_title}"?\'' in seg
+    assert 'destructive_label="Delete story"' in seg
+    # The title comes from meta (bound before the closure runs), with the
+    # same Untitled fallback the header uses.
+    assert 'meta.get("title", "Untitled Story") or "Untitled Story"' in seg
+
+
+def test_reset_popover_uses_explicit_verb_source():
+    """#58: the Reset confirmation's destructive verb is the explicit
+    "Reset media" (behavioral part is covered by
+    test_reset_popover_idle_wiring)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    seg = src[src.index("def _render_reset_popover"):]
+    seg = seg[:seg.index("\ndef ", 10)]
+    assert 'destructive_label="Reset media"' in seg
+    assert 'title="Reset media rows?"' in seg
