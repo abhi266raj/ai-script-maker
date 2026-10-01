@@ -1405,7 +1405,7 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: copies.append((label, text, key)))
-    # #95: WhatsApp.app present → direct deep link, no browser tab.
+    # #95: WhatsApp.app present -> direct deep link, no browser tab.
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
     lui._render_share_popover("sid1", share_text)
@@ -1414,29 +1414,49 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     assert fake.popover_kwargs["label"] == ""
     assert fake.popover_kwargs["icon"] == lui._TB_ICON_SHARE
     assert fake.popover_kwargs["key"] == "lib_sharepop_sid1"
-    # Copy button gets the exact share text…
+    # Copy button gets the exact share text...
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
-    # …and the WhatsApp anchor carries the exact same text, URL-encoded,
-    # deep-linking into the installed Mac app (#28) with NO target="_blank"
-    # (#95) — st.link_button's forced new tab defeats the deep link.
+    # #139: "Send via WhatsApp" is a REAL button now - the click hands the
+    # whatsapp:// deep link to macOS via `open` on the server. No anchor in
+    # the markup at all (the old plain-anchor approach depended on the
+    # browser routing the custom scheme, which proved unreliable).
     assert fake.link_buttons == []
-    # #111: no tbicon marker — the trigger is a native material icon;
-    # the only markup chunk is the WhatsApp anchor.
-    assert len(fake.markup) == 1
-    anchor = fake.markup[0]
-    assert 'class="lib-wa-direct"' in anchor
-    assert "target=" not in anchor
-    import re as _re
-    import html as _html
-    m = _re.search(r'href="([^"]+)"', anchor)
-    assert m and m.group(1).startswith("whatsapp://send?text=")
-    assert "wa.me" not in m.group(1)
-    import urllib.parse as up
-    sent = up.unquote(_html.unescape(m.group(1)).split("?text=", 1)[1])
-    assert sent == share_text
-    assert "Send via WhatsApp" in anchor
+    assert not any("whatsapp://" in m for m in fake.markup)
+    assert not any("lib-wa-direct" in m for m in fake.markup)
+    wa_buttons = [b for b in fake.buttons if b[0] == "Send via WhatsApp"]
+    assert wa_buttons == [("Send via WhatsApp", "lib_wa_sid1")]
     # No share-text preview block anymore (#27).
     assert fake.codes == []
+
+
+def test_share_popover_whatsapp_click_opens_with_exact_text(monkeypatch):
+    # #139: clicking "Send via WhatsApp" calls _open_whatsapp_share with the
+    # EXACT share text and toasts a confirmation.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    opened = []
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share",
+                        lambda text: opened.append(text))
+    share_text = "https://example.com/a\n\n#DogShowdown #Funny"
+    lui._render_share_popover("sid1", share_text)
+    assert opened == [share_text]
+    assert fake.toasts == [("WhatsApp opened \u2014 pick a chat to send.", None)]
+    assert fake.errors == []
+
+
+def test_share_popover_whatsapp_click_failure_is_loud(monkeypatch):
+    # #139: if the handoff fails, the error is loud - never silent.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    def _boom(text):
+        raise RuntimeError("no handler for whatsapp://")
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share", _boom)
+    lui._render_share_popover("sid1", "https://example.com/a")
+    assert fake.errors == [
+        "Couldn't open WhatsApp: no handler for whatsapp://"]
+    assert fake.toasts == []
 
 
 def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
@@ -1499,8 +1519,9 @@ def test_whatsapp_app_installed_is_cached(monkeypatch):
         monkeypatch.setattr("os.path.isdir", _counting)
         lui._whatsapp_app_installed()
         lui._whatsapp_app_installed()
-        # Four candidate paths checked once; the second call hits the cache.
-        assert len(calls) == 4
+        # Six candidate paths checked once (#139 added the sandbox/group
+        # containers); the second call hits the cache.
+        assert len(calls) == 6
     finally:
         lui._whatsapp_app_installed.cache_clear()
 
@@ -1554,6 +1575,116 @@ def test_whatsapp_app_installed_mdfind_failure_falls_back(monkeypatch):
         monkeypatch.setattr(_sp, "run", lambda _a, **_k: _Empty())
         monkeypatch.setattr("os.path.isdir", lambda p: False)
         assert lui._whatsapp_app_installed() is False
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+
+# ---------------------------------------------------------------------------
+# #139: server-side WhatsApp handoff via macOS `open`
+# ---------------------------------------------------------------------------
+
+def _darwin_platform(monkeypatch):
+    import platform as _plat
+    monkeypatch.setattr(_plat, "system", lambda: "Darwin")
+
+
+def test_open_whatsapp_share_calls_open_with_deep_link(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+    seen = {}
+
+    class _Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr(_shutil, "which",
+                        lambda cmd: "/usr/bin/open" if cmd == "open" else None)
+    monkeypatch.setattr(_sp, "run", _fake_run)
+    text = "https://example.com/a\n\n#DogShowdown #Funny"
+    lui._open_whatsapp_share(text)  # must not raise
+    assert seen["argv"][0] == "/usr/bin/open"
+    url = seen["argv"][1]
+    assert url.startswith("whatsapp://send?text=")
+    assert "wa.me" not in url
+    import urllib.parse as up
+    assert up.unquote(url.split("?text=", 1)[1]) == text
+
+
+def test_open_whatsapp_share_non_darwin_raises(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    import platform as _plat
+    monkeypatch.setattr(_plat, "system", lambda: "Linux")
+    import pytest as _pt
+    with _pt.raises(RuntimeError, match="needs macOS"):
+        lui._open_whatsapp_share("hi")
+
+
+def test_open_whatsapp_share_missing_open_raises(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    monkeypatch.setattr(_shutil, "which", lambda cmd: None)
+    import pytest as _pt
+    with _pt.raises(RuntimeError, match="not found on PATH"):
+        lui._open_whatsapp_share("hi")
+
+
+def test_open_whatsapp_share_open_failure_is_loud(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+
+    class _Result:
+        returncode = 1
+        stdout = ""
+        stderr = "The application does not exist."
+
+    monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
+    monkeypatch.setattr(_sp, "run", lambda argv, **kw: _Result())
+    import pytest as _pt
+    with _pt.raises(RuntimeError, match="The application does not exist"):
+        lui._open_whatsapp_share("hi")
+
+
+def test_open_whatsapp_share_timeout_is_loud(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+
+    def _slow(argv, **kwargs):
+        raise _sp.TimeoutExpired(cmd=argv, timeout=15)
+
+    monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
+    monkeypatch.setattr(_sp, "run", _slow)
+    import pytest as _pt
+    with _pt.raises(RuntimeError, match="timed out"):
+        lui._open_whatsapp_share("hi")
+
+
+def test_whatsapp_app_installed_group_container_signal(monkeypatch):
+    # #139: the Mac App Store build's group container counts as installed,
+    # even when mdfind is unavailable and the .app path is unknown.
+    lui, _fake = _ui_with_fake_st()
+    import os as _os
+    import shutil as _shutil
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr(_shutil, "which", lambda _cmd: None)
+        group = _os.path.expanduser(
+            "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared")
+        monkeypatch.setattr("os.path.isdir", lambda p: p == group)
+        assert lui._whatsapp_app_installed() is True
     finally:
         lui._whatsapp_app_installed.cache_clear()
 
