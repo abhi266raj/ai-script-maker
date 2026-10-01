@@ -40,7 +40,7 @@ Prompt rules are suggestions. Code validators are enforcement.
 
 ## 🌿 V3 Master Scriptwriting Specifications & Dynamic Pacing (Zero Rigid Word Limits)
 
-> **Authoritative Specification:** [`v3/V3.md`](file:///Users/abhiraj/Documents/news/agent/v3/V3.md) | **Execution Roadmap:** [`v3/README.md`](file:///Users/abhiraj/Documents/news/agent/v3/README.md) | **Sub-Features Matrix:** [`v3/SUB_FEATURES.md`](file:///Users/abhiraj/Documents/news/agent/v3/SUB_FEATURES.md)
+> **Authoritative Specification:** [Epic #7 — V3 Master Scriptwriting Guidelines](https://github.com/abhi266raj/ai-script-maker/issues/7) (sub-issues #8–#14) | **Refactor Epic:** [#6](https://github.com/abhi266raj/ai-script-maker/issues/6)
 
 ### 1. Spoken Dialogue Syntax & Speech Velocity Pacing
 * **Canonical Spoken Line Syntax:**
