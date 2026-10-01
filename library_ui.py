@@ -1821,27 +1821,33 @@ def _render_story_detail(story_id: str) -> None:
     vpath = lib.media_path(story_id, video_file) if video_file else None
     if vpath:
         st.video(str(vpath))
-    up_vid = st.file_uploader("Upload generated video", type=["mp4", "mov", "m4v", "webm"],
-                              key=f"lib_video_{story_id}")
-    if up_vid is not None:
-        try:
-            stored = lib.store_video_upload(story_id, up_vid.getvalue(), up_vid.name)
-            st.success(f"Video attached: {stored}")
-            st.rerun()
-        except Exception as e:
-            st.error(f"Video upload failed: {e}")
-
-    # Manual image upload
-    up_imgs = st.file_uploader("Upload images manually", type=["png", "jpg", "jpeg", "webp", "gif"],
-                               accept_multiple_files=True, key=f"lib_images_{story_id}")
-    if up_imgs:
-        for f in up_imgs:
+    # Uploads: secondary actions must not dominate the layout (#66). Both
+    # file uploaders live inside a single collapsed expander — one quiet
+    # footer-level row. Streamlit's own size/format caption stays
+    # discoverable inside the expander; upload handling behavior is
+    # unchanged.
+    with st.expander("⬆ Upload media", expanded=False):
+        up_vid = st.file_uploader("Upload generated video", type=["mp4", "mov", "m4v", "webm"],
+                                  key=f"lib_video_{story_id}")
+        if up_vid is not None:
             try:
-                lib.store_image_upload(story_id, f.getvalue(), f.name)
+                stored = lib.store_video_upload(story_id, up_vid.getvalue(), up_vid.name)
+                st.success(f"Video attached: {stored}")
+                st.rerun()
             except Exception as e:
-                st.error(f"Image upload failed ({f.name}): {e}")
-        st.success(f"Attached {len(up_imgs)} image(s).")
-        st.rerun()
+                st.error(f"Video upload failed: {e}")
+
+        # Manual image upload
+        up_imgs = st.file_uploader("Upload images manually", type=["png", "jpg", "jpeg", "webp", "gif"],
+                                   accept_multiple_files=True, key=f"lib_images_{story_id}")
+        if up_imgs:
+            for f in up_imgs:
+                try:
+                    lib.store_image_upload(story_id, f.getvalue(), f.name)
+                except Exception as e:
+                    st.error(f"Image upload failed ({f.name}): {e}")
+            st.success(f"Attached {len(up_imgs)} image(s).")
+            st.rerun()
 
     # (Refresh actions live in the detail toolbar at the top; Share/Copy
     # actions sit in the Actions row just below it.)
