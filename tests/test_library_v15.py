@@ -73,10 +73,21 @@ def _story():
     }
 
 
-def test_validate_ai_tags_keeps_grounded():
-    tags = lib._validate_ai_tags(["#ChubbyDogs", "#VotingContest", "#Park"], _story())
+def _topic_story():
+    return {"meta": {"title": "Dog Showdown Reel",
+                     "source_topic": "chubby dogs voting contest",
+                     "source_headline": "Chubby dogs battle in voting contest"},
+            "script": "[Format Requirement: 9:16 Vertical Reel]"}
+
+
+def test_validate_ai_tags_keeps_relevant():
+    # Relevance = topic/headline/title words. Script words never count:
+    # "#Park" appears only in the screenplay, so it is dropped.
+    tags = lib._validate_ai_tags(["#ChubbyDogs", "#VotingContest", "#Park"],
+                                 _topic_story())
     assert "#ChubbyDogs" in tags
     assert "#VotingContest" in tags
+    assert "#Park" not in tags
 
 
 def test_validate_ai_tags_drops_invented_and_malformed():
@@ -86,17 +97,21 @@ def test_validate_ai_tags_drops_invented_and_malformed():
          "#x",                # too short
          "#ChubbyDogs!!",     # malformed
          "#ChubbyDogs", "#ChubbyDogs"],  # dupes collapse
-        _story())
+        _topic_story())
     assert tags == ["#ChubbyDogs"]
 
 
-def test_suggest_hashtags_deterministic_when_ai_off(libdir):
+def test_suggest_hashtags_ai_is_primary_path(libdir, monkeypatch):
+    # The AI is always asked first — even with ai_engine=None. The engine
+    # resolves from the persisted label, falling back to the default.
     sid = _make_story()
     story = lib.load_story(sid)
-    tags, note = lib._suggest_hashtags(story, "chubby dogs voting contest", ai_engine=None)
-    assert note == ""
-    assert tags, "deterministic path must always produce tags"
-    assert all(t.startswith("#") for t in tags)
+    monkeypatch.setattr(lib, "_ai_hashtag_suggestions",
+                        lambda story, topic, mode: ["#ChubbyDogs"])
+    tags, note = lib._suggest_hashtags(story, "chubby dogs voting contest",
+                                      ai_engine=None)
+    assert tags == ["#ChubbyDogs"]
+    assert note == "Tags from AI-found trending hashtags."
 
 
 def test_suggest_hashtags_ai_failure_falls_back_loudly(libdir, monkeypatch):
@@ -107,11 +122,14 @@ def test_suggest_hashtags_ai_failure_falls_back_loudly(libdir, monkeypatch):
         raise RuntimeError("engine exploded")
 
     monkeypatch.setattr(lib, "_ai_hashtag_suggestions", _boom)
+    monkeypatch.setattr(lib, "_fetch_trending_hashtags",
+                        lambda topic, story=None: (["#ChubbyDogsVoting"], ""))
     tags, note = lib._suggest_hashtags(story, "chubby dogs voting contest",
                                       ai_engine="codex_only")
     assert tags, "deterministic fallback must still produce tags"
     assert "AI hashtag step failed" in note
     assert "engine exploded" in note
+    assert "deterministic fallback" in note
 
 
 def test_suggest_hashtags_ai_success_validated(libdir, monkeypatch):
@@ -120,8 +138,7 @@ def test_suggest_hashtags_ai_success_validated(libdir, monkeypatch):
     # _ai_hashtag_suggestions must drop the invented one.
     sid = _make_story()
     story = lib.load_story(sid)
-    import sys as _sys
-    de = _sys.modules["core.dual_engine"]  # the module, not the instance
+    de = _dual_engine_module()  # the module, not the instance
 
     class _FakeEngine:
         def generate(self, prompt="", instructions="", mode=""):
@@ -149,8 +166,8 @@ def test_ai_hashtag_rejects_unknown_engine(libdir):
 
 def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
-    monkeypatch.setattr(lib, "_fetch_trending_hashtags",
-                        lambda topic, story=None: ["#DogShowdown", "#ChubbyDogs"])
+    monkeypatch.setattr(lib, "_suggest_hashtags",
+                        lambda story, topic, ai_engine=None: (["#DogShowdown", "#ChubbyDogs"], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
     assert changed is True
     assert "Validated 1 existing hashtag(s)." in note
@@ -161,8 +178,8 @@ def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
 
 def test_refresh_hashtags_no_change_is_honest(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
-    monkeypatch.setattr(lib, "_fetch_trending_hashtags",
-                        lambda topic, story=None: ["#DogShowdown"])
+    monkeypatch.setattr(lib, "_suggest_hashtags",
+                        lambda story, topic, ai_engine=None: (["#DogShowdown"], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
     assert changed is False
     assert "Validated 1 existing hashtag(s)." in note
@@ -171,13 +188,15 @@ def test_refresh_hashtags_no_change_is_honest(libdir, monkeypatch):
 
 def test_refresh_hashtags_removes_invalid_existing(libdir, monkeypatch):
     # Stale/off-topic tags stored earlier are validated against the story's
-    # own content on refresh and removed — not silently kept.
-    sid = _make_story(hashtags=["#DogShowdown", "#RussiaKillsFour", "bogus"])
-    monkeypatch.setattr(lib, "_fetch_trending_hashtags",
-                        lambda topic, story=None: [])
+    # topic/headline on refresh and removed — not silently kept.
+    sid = _make_story(hashtags=["#DogShowdown", "#RussiaKillsFour",
+                               "#FormatRequirementVertical", "bogus"])
+    monkeypatch.setattr(lib, "_suggest_hashtags",
+                        lambda story, topic, ai_engine=None: ([], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest")
     assert changed is True
-    assert "Removed 2 invalid: #RussiaKillsFour, bogus." in note
+    assert ("Removed 3 not relevant to the story topic/headline: "
+            "#RussiaKillsFour, #FormatRequirementVertical, bogus.") in note
     remaining = lib.load_story(sid)["meta"]["hashtags"]
     assert remaining == ["#DogShowdown"]
 
@@ -451,3 +470,162 @@ def test_update_fetched_image_url_rejects_bad_index_and_story(libdir):
         pass
     else:
         raise AssertionError("expected ValueError for unknown story")
+
+
+# ---------------------------------------------------------------------------
+# Hashtag redesign: AI-found trending first, relevance standard, no script words
+# ---------------------------------------------------------------------------
+
+def _trend_story():
+    return {
+        "meta": {
+            "title": "Dog Showdown Reel",
+            "source_topic": "dog contest Delhi",
+            "source_headline": "64 Dogs Compete in Delhi Contest",
+            "news_links": [{"url": "https://example.com/dogs-delhi-contest"}],
+        },
+        "script": ("[Format Requirement: 9:16 Vertical Reel]\n"
+                   "AARAV: chubby dogs voting contest in the park"),
+    }
+
+
+def _dual_engine_module():
+    # The real submodule: ``core/__init__`` shadows the ``dual_engine``
+    # attribute with the instance, so grab the module from sys.modules
+    # after importing it for real.
+    import sys
+    import core.dual_engine  # noqa: F401
+    return sys.modules["core.dual_engine"]
+
+
+def _fake_trending(monkeypatch, tags=None, boom=False):
+    import sys
+    import tools.news_fetcher  # noqa: F401 (real submodule, not the instance)
+    nf = sys.modules["tools.news_fetcher"]
+    if boom:
+        def _raise(limit=12):
+            raise RuntimeError("net down")
+        monkeypatch.setattr(nf.news_fetcher, "fetch_famous_english_hashtags",
+                            _raise)
+    else:
+        monkeypatch.setattr(nf.news_fetcher, "fetch_famous_english_hashtags",
+                            lambda limit=12: tags or [])
+
+
+def test_no_tag_from_raw_script_keywords(libdir, monkeypatch):
+    # Script-only words (Aarav, park) must never seed or validate a tag —
+    # a trending tag built from screenplay internals is dropped.
+    _fake_trending(monkeypatch, tags=[{"tag": "#AaravParkScene"}])
+    tags, note = lib._fetch_trending_hashtags("dog contest Delhi",
+                                              _trend_story())
+    joined = " ".join(tags).lower()
+    assert "aarav" not in joined and "park" not in joined
+    assert "fallback" in note  # nothing relevant -> headline/topic fallback
+
+
+def test_trending_tag_kept_only_when_relevant(libdir, monkeypatch):
+    _fake_trending(monkeypatch, tags=[{"tag": "#DelhiDogContest"},
+                                      {"tag": "#ViralCelebrityGossip"}])
+    tags, note = lib._fetch_trending_hashtags("dog contest Delhi",
+                                              _trend_story())
+    assert "#DelhiDogContest" in tags
+    assert "#ViralCelebrityGossip" not in tags
+    assert note == "", "trending path used: nothing to report"
+
+
+def test_trending_lookup_failure_degrades_loudly(libdir, monkeypatch):
+    _fake_trending(monkeypatch, boom=True)
+    tags, note = lib._fetch_trending_hashtags("dog contest Delhi",
+                                              _trend_story())
+    assert tags, "fallback must still produce tags"
+    assert "Trending-hashtag lookup failed" in note
+    assert "fallback" in note
+
+
+def test_fallback_never_leaves_story_hashtag_less(libdir, monkeypatch):
+    _fake_trending(monkeypatch, tags=[])
+    tags, _note = lib._fetch_trending_hashtags("", None)
+    assert tags == ["#HindiReelStudio"]
+    tags2, _ = lib._fetch_trending_hashtags("dog contest Delhi", None)
+    assert tags2 and all(t.startswith("#") for t in tags2)
+
+
+def test_ai_finds_trending_tags_with_news_link_context(libdir, monkeypatch):
+    # The AI gets the topic, headline/title, AND the verified news link(s)
+    # so it can find what is genuinely trending for this story.
+    de = _dual_engine_module()
+    seen = {}
+
+    class _FakeEngine:
+        def generate(self, prompt="", instructions="", mode=""):
+            seen["prompt"] = prompt
+            seen["mode"] = mode
+            return "#DelhiDogShow\n#DogContestDelhi\n", "fake-engine"
+
+    monkeypatch.setattr(de, "dual_engine", _FakeEngine())
+    tags = lib._ai_hashtag_suggestions(_trend_story(), "dog contest Delhi",
+                                       "codex_only")
+    assert seen["mode"] == "codex_only"
+    assert "STORY LINKS:" in seen["prompt"]
+    assert "https://example.com/dogs-delhi-contest" in seen["prompt"]
+    assert "dog contest Delhi" in seen["prompt"]
+    assert "64 Dogs Compete in Delhi Contest" in seen["prompt"]
+    assert "#DelhiDogShow" in tags
+    assert "#DogContestDelhi" in tags
+
+
+def test_ai_irrelevant_tags_dropped_however_trending(libdir, monkeypatch):
+    de = _dual_engine_module()
+
+    class _FakeEngine:
+        def generate(self, prompt="", instructions="", mode=""):
+            return "#DelhiDogShow\n#CryptoMoonShot\n", "fake-engine"
+
+    monkeypatch.setattr(de, "dual_engine", _FakeEngine())
+    tags = lib._ai_hashtag_suggestions(_trend_story(), "dog contest Delhi",
+                                       "codex_only")
+    assert "#DelhiDogShow" in tags
+    assert "#CryptoMoonShot" not in tags
+
+
+def test_ai_empty_result_falls_back_and_note_says_so(libdir, monkeypatch):
+    # The AI runs but every suggestion fails relevance -> deterministic
+    # fallback, and the note says so.
+    de = _dual_engine_module()
+
+    class _FakeEngine:
+        def generate(self, prompt="", instructions="", mode=""):
+            return "#CryptoMoonShot\n", "fake-engine"
+
+    monkeypatch.setattr(de, "dual_engine", _FakeEngine())
+    monkeypatch.setattr(lib, "_fetch_trending_hashtags",
+                        lambda topic, story=None: (["#DogContestDelhi"], ""))
+    sid = _make_story()
+    story = lib.load_story(sid)
+    tags, note = lib._suggest_hashtags(story, "dog contest Delhi")
+    assert tags == ["#DogContestDelhi"]
+    assert "deterministic fallback" in note
+
+
+def test_suggest_hashtags_note_states_ai_path(libdir, monkeypatch):
+    de = _dual_engine_module()
+
+    class _FakeEngine:
+        def generate(self, prompt="", instructions="", mode=""):
+            return "#DelhiDogShow\n", "fake-engine"
+
+    monkeypatch.setattr(de, "dual_engine", _FakeEngine())
+    sid = _make_story(source_topic="dog contest Delhi",
+                      source_headline="64 Dogs Compete in Delhi Contest")
+    story = lib.load_story(sid)
+    tags, note = lib._suggest_hashtags(story, "dog contest Delhi")
+    assert "#DelhiDogShow" in tags
+    assert note == "Tags from AI-found trending hashtags."
+
+
+def test_resolve_engine_mode_prefers_persisted_label(libdir):
+    assert lib._resolve_library_engine_mode(None) == "first_local_then_agy"
+    assert lib._resolve_library_engine_mode("codex_only") == "codex_only"
+    assert lib._resolve_library_engine_mode("Nope") == "first_local_then_agy"
+    lib.save_prefs({"library_ai_engine": "Grok Low"})
+    assert lib._resolve_library_engine_mode(None) == "grok_low"

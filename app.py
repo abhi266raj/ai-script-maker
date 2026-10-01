@@ -791,6 +791,20 @@ st.markdown(
         opacity: 1 !important;
     }
 
+    /* Hashtag dropdowns: option labels show the FULL headline — they wrap
+       instead of truncating with an ellipsis. The open option list is
+       scrollable, so long headlines stay fully readable. The closed
+       selectbox keeps its native single-line behavior. */
+    div[data-testid="stSelectboxVirtualDropdown"] li,
+    div[data-testid="stSelectboxVirtualDropdown"] li div,
+    div[data-testid="stSelectboxVirtualDropdown"] li p,
+    div[data-testid="stSelectboxVirtualDropdown"] li span {
+        white-space: normal !important;
+        overflow: visible !important;
+        text-overflow: clip !important;
+        overflow-wrap: anywhere !important;
+    }
+
     /* Popover outer container & overlay portal: transparent wrapper */
     [data-baseweb="popover"],
     [data-baseweb="popover"] > div,
@@ -1632,8 +1646,8 @@ with col_settings:
                         })
                 return entries[:12]
             def _hashtag_label(entry):
-                _hl = entry["headline"]
-                return f"{entry['tag']} — {_hl[:70]}{'…' if len(_hl) > 70 else ''}"
+                _hl = (entry["headline"] or "").strip()
+                return f"{entry['tag']} — {_hl}" if _hl else entry["tag"]
             # Real-time verification: warn about content issues BEFORE selection.
             # Returns (severity, message): severity is "error" (blocks generation)
             # or "warning" (advisory) or "" (OK).
@@ -2779,7 +2793,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             # 2.1 Generate Characters — AI generation (ALL characters and cast options INSIDE here)
             with st.expander("2.1 Generate Characters — 🤖 AI generation", expanded=True):
                 st.markdown("**📥 Input:**")
-                st.caption(f"News: {(_news[:100] + '...') if len(_news) > 100 else _news}")
+                st.caption(f"News: {_news}")
                 st.caption(f"Vibe: {_tone} | Requested Count: {len(_chars) or step_state.get('character_count', 2)}")
                 st.markdown("**📤 Output (Generated Characters):**")
 

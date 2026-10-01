@@ -798,79 +798,87 @@ def _camel_tag(words: List[str], max_words: int = 3) -> str:
     return tag if len(tag) > 4 else ""
 
 
-def _story_content_texts(story: Optional[Dict[str, Any]]) -> List[str]:
-    """The story's own words, most specific first: headline, title, topic, script."""
-    if not story:
-        return []
-    meta = story.get("meta") or {}
-    return [
+def _relevance_words(story: Optional[Dict[str, Any]], topic: str = "") -> set:
+    """Words a hashtag must relate to: the story's topic + headline + title.
+
+    The script's words are deliberately excluded — hashtags describe the
+    story for discovery; they are never built from screenplay internals,
+    and screenplay wording must never validate a tag as "relevant".
+    """
+    meta = (story.get("meta") or {}) if story else {}
+    texts = [
+        topic or meta.get("source_topic") or "",
         meta.get("source_headline") or "",
         meta.get("title") or "",
-        meta.get("source_topic") or "",
-        story.get("script") or "",
     ]
+    words = {w.lower() for t in texts for w in re.findall(r"[A-Za-z]{4,}", t)}
+    return words - _HASHTAG_STOPWORDS
 
 
-def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None) -> List[str]:
-    """Content-first hashtag discovery. Always returns at least one tag.
+def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None) -> Tuple[List[str], str]:
+    """Deterministic hashtag discovery: trending tags, then headline/topic fallback.
 
-    1. Tags built from the story's own content (headline/title/topic/script).
-    2. Trending hashtags whose words overlap the story's content words.
-    3. A tag derived from the topic itself.
-    4. Guaranteed fallback so a story never ends up hashtag-less.
+    Primary: hashtags trending on social media (X trends + Google Trends via
+    ``news_fetcher``) — only tags whose words overlap the story's
+    topic/headline/title words are kept. Fewer relevant tags beat many
+    irrelevant ones. No tag is ever invented from raw script keywords.
 
-    Live article titles are deliberately NOT used: they come from whatever
-    a news search happens to return and produce random, off-content tags.
+    Fallback (clearly reported in the note): when no trending tag is
+    relevant or the lookup fails, deterministic tags built from the
+    headline/topic words, so a story is never left hashtag-less.
+
+    Returns (tags, note). The note is empty when trending tags were used;
+    otherwise it says why the fallback fired (fail loudly, never silently).
+    Live article titles are deliberately NOT a tag source: they come from
+    whatever a news search happens to return and produce random tags.
     """
     tags: List[str] = []
-    texts = [t for t in _story_content_texts(story) if t] or [topic]
-    content = " ".join(texts)
-    content_words = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", content)}
-    content_words -= _HASHTAG_STOPWORDS
-    # 1. from the story's own words (headline first — it names the story)
-    for text in texts:
-        t = _camel_tag(_keyword_list(text))
-        if t and t not in tags:
-            tags.append(t)
-        if len(tags) >= 4:
-            break
-    # 2. trending tags that actually match the story's content
+    relevance = _relevance_words(story, topic)
+    note = ""
     try:
         from tools.news_fetcher import news_fetcher
         trending = news_fetcher.fetch_famous_english_hashtags(limit=12) or []
-        for entry in trending:
-            tag = entry.get("tag", "") if isinstance(entry, dict) else str(entry)
-            if tag and (content_words & _tag_words(tag)) and tag not in tags:
-                tags.append(tag)
-            if len(tags) >= 8:
-                break
-    except Exception:
-        pass
-    # 3. derive from the topic itself
-    t = _camel_tag(_keyword_list(topic))
-    if t and t not in tags and len(tags) < 8:
-        tags.append(t)
-    # 4. guarantee: never return empty
+    except Exception as e:
+        trending = []
+        note = (f"Trending-hashtag lookup failed ({type(e).__name__}: {e}); "
+                "used headline/topic fallback tags instead.")
+    for entry in trending:
+        tag = entry.get("tag", "") if isinstance(entry, dict) else str(entry)
+        if tag and (relevance & _tag_words(tag)) and tag not in tags:
+            tags.append(tag)
+        if len(tags) >= 6:
+            break
+    if tags:
+        return tags[:6], note
+    # Fallback: deterministic tags from the headline/topic words.
+    meta = (story.get("meta") or {}) if story else {}
+    for text in (meta.get("source_headline") or "", topic):
+        t = _camel_tag(_keyword_list(text))
+        if t and t not in tags:
+            tags.append(t)
     if not tags:
         words = re.findall(r"[A-Za-z]{3,}", topic)
         if words:
             tags.append("#" + "".join(w.capitalize() for w in words[:3]))
         else:
             tags.append("#HindiReelStudio")
-    return tags[:8]
+    if not note:
+        note = ("No trending hashtags relevant to this story; "
+                "used fallback tags from the story headline/topic.")
+    return tags, note
 
 
 def _validate_ai_tags(raw_tags: List[str],
                       story: Optional[Dict[str, Any]]) -> List[str]:
-    """Keep only AI-suggested tags that are well-formed and story-grounded.
+    """Keep only well-formed tags relevant to the story's topic/headline/title.
 
     A tag survives only if it looks like #CamelCase and at least one of its
-    words appears in the story's own content words. This keeps the AI honest:
-    it may rank and rephrase, but it cannot invent off-topic tags.
+    words appears in the story's topic, headline, or title words. Script
+    words do NOT count: a tag built from screenplay internals is not
+    relevant to the story for discovery purposes, however trending it
+    claims to be.
     """
-    content_words = {w.lower()
-                     for w in re.findall(r"[A-Za-z]{4,}", " ".join(_story_content_texts(story)))}
-    content_words -= _HASHTAG_STOPWORDS
+    relevance = _relevance_words(story)
     out: List[str] = []
     for t in raw_tags or []:
         t = (t or "").strip()
@@ -878,7 +886,7 @@ def _validate_ai_tags(raw_tags: List[str],
             continue
         if t in out:
             continue
-        if content_words & _tag_words(t):
+        if relevance & _tag_words(t):
             out.append(t)
         if len(out) >= 8:
             break
@@ -887,37 +895,44 @@ def _validate_ai_tags(raw_tags: List[str],
 
 def _ai_hashtag_suggestions(story: Dict[str, Any], topic: str,
                             engine_mode: str) -> List[str]:
-    """Ask the selected engine for content-aware hashtag suggestions.
+    """Ask the AI for recently trending hashtags for the story's topic.
 
-    Constrained by design: the model only suggests hashtags built from the
-    story's own content, and every suggestion is validated against the
-    story's words before use. Raises on engine failure (fail loudly — the
-    caller decides the fallback). Never touches the story content, the
-    screenplay, verified links, or images.
+    The model may use its own knowledge of what is currently trending on
+    social media — it is NOT restricted to the story's words for discovery.
+    Every suggestion is still validated for relevance to the topic/headline
+    before use, so an irrelevant tag is dropped however trending it claims
+    to be. Raises on engine failure (fail loudly — the caller decides the
+    fallback). Never touches the story content, the screenplay, verified
+    links, or images.
     """
     if engine_mode not in LIBRARY_ENGINE_MODES:
         raise ValueError(f"Unknown AI engine mode: {engine_mode!r}")
     from core.dual_engine import dual_engine, ModelGenerationError
 
-    texts = _story_content_texts(story)
-    headline = texts[0] if len(texts) > 0 else ""
-    title = texts[1] if len(texts) > 1 else ""
-    script_excerpt = (texts[3] if len(texts) > 3 else "")[:1500]
+    meta = story.get("meta") or {}
+    headline = meta.get("source_headline") or ""
+    title = meta.get("title") or ""
+    links = _story_direct_link_urls(story)
+    link_lines = "\n".join(f"- {u}" for u in links[:4]) or "- (none)"
     prompt = (
-        "Suggest hashtags for a short news video. Use ONLY words from the "
-        "story below; do not invent names, places, or topics not present in it.\n\n"
+        "Find recent trending hashtags for the news topic below. Use your "
+        "own knowledge of what is currently trending on social media; do "
+        "not limit yourself to the words in the headline — but every "
+        "hashtag you return must be genuinely relevant to this topic.\n\n"
+        f"TOPIC: {topic}\n"
         f"HEADLINE: {headline}\n"
         f"TITLE: {title}\n"
-        f"TOPIC: {topic}\n"
-        f"SCRIPT EXCERPT:\n{script_excerpt}\n\n"
-        "Return 4 to 8 hashtags, one per line, each like #CamelCaseWords. "
+        f"STORY LINKS:\n{link_lines}\n\n"
+        "Return only hashtags, one per line, each like #CamelCaseWords. "
         "No other text."
     )
     try:
         raw, _engine_used = dual_engine.generate(
             prompt=prompt,
-            instructions=("You suggest hashtags grounded strictly in the provided "
-                          "story content. Never invent facts, names, or topics."),
+            instructions=("You find hashtags that are genuinely trending on "
+                          "social media for the given news topic. Every tag "
+                          "must be relevant to the topic; never invent "
+                          "unrelated trends."),
             mode=engine_mode,
         )
     except ModelGenerationError:
@@ -929,39 +944,72 @@ def _ai_hashtag_suggestions(story: Dict[str, Any], topic: str,
     tags = _validate_ai_tags(candidates, story)
     if not tags:
         raise RuntimeError(
-            "AI returned no usable hashtags grounded in the story content.")
+            "AI returned no usable hashtags relevant to the story topic.")
     return tags
+
+
+def _resolve_library_engine_mode(preferred: Optional[str] = None) -> str:
+    """Engine mode for AI hashtag discovery.
+
+    ``preferred`` may be a mode or a label (explicit callers pass modes).
+    Otherwise the persisted ``library_ai_engine`` label is used, falling
+    back to ``DEFAULT_LIBRARY_AI_ENGINE`` when nothing is persisted. An
+    unknown label also falls back to the default — never raises, so a bad
+    pref can never break hashtag discovery.
+    """
+    if preferred in LIBRARY_ENGINE_MODES:
+        return preferred  # already a mode
+    label = preferred if preferred in LIBRARY_ENGINE_OPTIONS else None
+    if label is None:
+        try:
+            label = (load_prefs().get("library_ai_engine")
+                     or DEFAULT_LIBRARY_AI_ENGINE)
+        except Exception:
+            label = DEFAULT_LIBRARY_AI_ENGINE
+    return LIBRARY_ENGINE_OPTIONS.get(
+        label, LIBRARY_ENGINE_OPTIONS[DEFAULT_LIBRARY_AI_ENGINE])
 
 
 def _suggest_hashtags(story: Dict[str, Any], topic: str,
                       ai_engine: Optional[str] = None) -> Tuple[List[str], str]:
-    """Hashtag candidates for a refresh: AI first (when enabled), then deterministic.
+    """Hashtag candidates: AI-found trending first, deterministic fallback.
 
-    Returns (tags, note). When ``ai_engine`` is set and the AI call fails,
-    the deterministic path still runs and the failure is reported in the
-    note — fail loudly, never silently. The AI never alters content, links,
-    or images; it only suggests tags, each validated against the story.
+    The AI is always asked first (engine: explicit ``ai_engine``, else the
+    persisted ``library_ai_engine`` label, else the default engine). When
+    the AI call fails or yields nothing usable, the deterministic path runs
+    instead.
+
+    Returns (tags, note). The note states which path produced the tags —
+    fail loudly, never silently. Neither path alters content, links, or
+    images; every tag is validated for relevance to the topic/headline.
     """
-    ai_note = ""
-    ai_tags: List[str] = []
-    if ai_engine:
-        try:
-            ai_tags = _ai_hashtag_suggestions(story, topic, ai_engine)
-        except Exception as e:
-            ai_note = f"AI hashtag step failed ({e}); used deterministic tags instead."
-    det_tags = _fetch_trending_hashtags(topic, story)
-    tags = list(ai_tags)
-    for t in det_tags:
-        if t not in tags:
-            tags.append(t)
-    return tags[:10], ai_note
+    mode = _resolve_library_engine_mode(ai_engine)
+    try:
+        ai_tags = _ai_hashtag_suggestions(story, topic, mode)
+    except Exception as e:
+        ai_tags = []
+        failure_note = (f"AI hashtag step failed ({e}); "
+                        "used deterministic fallback instead.")
+    else:
+        failure_note = ""
+    if ai_tags:
+        return ai_tags[:10], "Tags from AI-found trending hashtags."
+    det_tags, det_note = _fetch_trending_hashtags(topic, story)
+    notes = [failure_note] if failure_note else [
+        "AI returned no usable trending hashtags; "
+        "used deterministic fallback instead."]
+    if det_note:
+        notes.append(det_note)
+    return det_tags[:10], " ".join(n for n in notes if n)
 
 
 def refresh_hashtags(story_id: str, topic: str = "",
                      ai_engine: Optional[str] = None) -> Tuple[bool, str]:
-    """Validate every stored hashtag against the story's own content, drop
-    the invalid ones, and merge in fresh grounded suggestions.
+    """Validate every stored hashtag against the story's topic/headline/title,
+    drop the ones that are not relevant, and merge in fresh suggestions.
 
+    Suggestions come from AI-found trending hashtags first, with a
+    deterministic fallback; the note states which path produced them.
     Returns (changed, note). `changed` is True when any tag was added or
     removed; the note honestly reports what was validated, removed, and
     added. Never touches the story content, screenplay, verified links,
@@ -974,8 +1022,8 @@ def refresh_hashtags(story_id: str, topic: str = "",
     if not topic:
         return False, "No topic to find hashtags for."
 
-    # 1. Validate ALL existing hashtags against the story's own content —
-    # stale or off-topic tags are removed, not silently kept.
+    # 1. Validate ALL existing hashtags against the story's topic/headline —
+    # stale or irrelevant tags are removed, not silently kept.
     existing = [h for h in (story["meta"].get("hashtags") or []) if h]
     valid_existing = _validate_ai_tags(existing, story)
     removed = [h for h in existing if h not in valid_existing]
@@ -992,7 +1040,8 @@ def refresh_hashtags(story_id: str, topic: str = "",
 
     parts = [f"Validated {len(existing)} existing hashtag(s)."]
     if removed:
-        parts.append(f"Removed {len(removed)} invalid: {', '.join(removed)}.")
+        parts.append(f"Removed {len(removed)} not relevant to the story topic/headline: "
+                     f"{', '.join(removed)}.")
     if added:
         parts.append(f"Added {len(added)}: {', '.join(added)}.")
     if not removed and not added:
@@ -1161,7 +1210,7 @@ def _do_enrich(story_id: str, topic: str) -> None:
     if not story:
         return
     image_urls = _fetch_images_for_story(story, topic)
-    new_tags = _fetch_trending_hashtags(topic, story)
+    new_tags, _det_note = _fetch_trending_hashtags(topic, story)
     meta = story["meta"]
     merged_tags = list(meta.get("hashtags") or [])
     for t in new_tags:

@@ -771,8 +771,9 @@ def _render_story_detail(story_id: str) -> None:
     meta = story["meta"]
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
-    # toolbar — Edit, Update Hashtags, Update Images, Retry Media — with
-    # Delete trailing. Progress lives inside the initiating button
+    # toolbar — Update Hashtags, Update Images, Retry Media — with Delete
+    # trailing. The title carries its own inline ✏️ edit icon next to the
+    # centered title text. Progress lives inside the initiating button
     # (in-button loader); there are no detached progress messages.
     # Refreshes run in daemon threads, so tab switches never interrupt them.
     _status = meta.get("enrichment_status")
@@ -827,12 +828,7 @@ def _render_story_detail(story_id: str) -> None:
         with ec3:
             _delete_first_step()
     else:
-        tc1, tc2, tc3, tc4, _tsp, tc5 = st.columns([0.9, 1.7, 1.6, 1.3, 3.5, 1.0])
-        with tc1:
-            if st.button("Edit", key=f"lib_title_edit_{story_id}", help="Edit title",
-                         disabled=_busy):
-                st.session_state[f"lib_edit_title_{story_id}"] = True
-                st.rerun()
+        tc2, tc3, tc4, _tsp, tc5 = st.columns([1.7, 1.6, 1.3, 4.4, 1.0])
         with tc2:
             _loading = _refresh_kind == "hashtags"
             if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
@@ -861,15 +857,23 @@ def _render_story_detail(story_id: str) -> None:
             _delete_first_step()
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
 
-    # Title at top: big, multiline, centered. While editing, a borderless
-    # editor takes its place (Save/Cancel live in the toolbar above).
+    # Title at top: big, multiline, centered, with a small inline edit icon.
+    # While editing, a borderless editor takes its place (Save/Cancel live
+    # in the toolbar above).
     title = meta.get("title", "Untitled Story") or "Untitled Story"
     if _editing:
         st.text_area("", value=title, key=f"lib_title_{story_id}",
                      height=80, label_visibility="collapsed")
     else:
-        st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
-                    unsafe_allow_html=True)
+        _tt1, _tt2, _tt3 = st.columns([1, 8, 1], vertical_alignment="center")
+        with _tt2:
+            st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
+                        unsafe_allow_html=True)
+        with _tt3:
+            if st.button("✏️", key=f"lib_title_edit_{story_id}",
+                         help="Edit title", disabled=_busy):
+                st.session_state[f"lib_edit_title_{story_id}"] = True
+                st.rerun()
     created = (meta.get("created_at", "") or "").replace("T", " ")
     _sub = f"Created {created}" + (f" · Tone: {meta.get('tone')}" if meta.get("tone") else "")
     st.markdown(f"<div style='text-align:center' class='stCaption'>{_html.escape(_sub)}</div>",
