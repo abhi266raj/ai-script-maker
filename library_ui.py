@@ -608,10 +608,11 @@ def inject_library_css() -> None:
         opacity: 0.65;
         margin: 2px 0 10px 0;
     }
-    /* macOS HIG: document title centered, multiline, theme-safe (#84
-       reverts #60 — the full title text is back as an h2). */
+    /* macOS HIG: document title left-aligned, multiline, theme-safe (#84
+       reverts #60 — the full title text is back as an h2; #120 moves it
+       from centered to left-aligned). */
     .lib-doc-title {
-        text-align: center;
+        text-align: left;
         font-size: 30px;
         font-weight: 700;
         line-height: 1.25;
@@ -625,6 +626,36 @@ def inject_library_css() -> None:
        screenshot showed the icon on it). The anchor stays hidden. */
     .lib-doc-title a {
         display: none !important;
+    }
+    /* #120: the title edit button is a quiet icon action hugging the
+       title — NOT a bordered box. Borderless, transparent, theme-safe
+       icon color (inherits, like the other toolbar icons); subtle on
+       hover. The marker div sits directly before the button's element
+       container, same proven pattern as the chip × buttons. If the
+       selector ever misses it degrades to a normal small button. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-title-edit"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        color: inherit !important;
+        opacity: 0.55 !important;
+        padding: 6px 8px !important;
+        min-height: 0 !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-title-edit"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover:not(:disabled) {
+        opacity: 1 !important;
+        background: rgba(128, 128, 128, 0.18) !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-title-edit"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:disabled {
+        opacity: 0.35 !important;
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
     .lib-empty {
         text-align: center;
@@ -1859,9 +1890,9 @@ def _render_story_detail(story_id: str) -> None:
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
     # toolbar — hashtag/image/news refresh icons (#71, #80, #90), Reset,
     # Share, Copy — with Delete trailing (#46). #90: all seven are
-    # icon-only, drawn from the single "LibToolbarIcons" icon font; the
-    # title carries its own inline ✏️ edit icon next to the centered
-    # title text.
+    # icon-only, drawn from Streamlit's native material icons (#111);
+    # the title carries its own quiet borderless edit icon hugging the
+    # left-aligned title text (#120).
     #
     # #53 HIG progress: a refresh button NEVER changes its text label
     # (always empty). While its kind runs the button shows Streamlit's
@@ -1962,11 +1993,13 @@ def _render_story_detail(story_id: str) -> None:
     _fire_refresh_toasts(story_id, meta)
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
 
-    # Title at top: big, multiline, centered, with a small inline edit icon.
+    # Title at top: big, multiline, LEFT-aligned (#120 — was centered),
+    # with a quiet borderless edit icon hugging the title row so it
+    # reads as part of the title, not a bolted-on boxed widget.
     # While editing, a borderless editor takes its place (Save/Cancel live
     # in the toolbar above). #84 reverts #60: the full title text is back
     # as an h2 — the #79 `.lib-doc-title a { display:none }` guard keeps
-    # Streamlit's heading-anchor 🔗 icon off it. The ✏️ edit flow and the
+    # Streamlit's heading-anchor 🔗 icon off it. The edit flow and the
     # delete popover's meta.get("title") naming (#58) are untouched; no
     # recency caption is emitted ("Edited … ago" stays removed).
     title = meta.get("title", "Untitled Story") or "Untitled Story"
@@ -1974,11 +2007,17 @@ def _render_story_detail(story_id: str) -> None:
         st.text_area("", value=title, key=f"lib_title_{story_id}",
                      height=80, label_visibility="collapsed")
     else:
-        _tt1, _tt2, _tt3 = st.columns([1, 8, 1], vertical_alignment="center")
-        with _tt2:
+        # #120: [11, 1] — title fills the row left-aligned; the edit
+        # icon-button rides in the narrow trailing column, vertically
+        # centered, styled borderless via the lib-title-edit marker so it
+        # feels part of the title itself.
+        _tt1, _tt2 = st.columns([11, 1], vertical_alignment="center")
+        with _tt1:
             st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
                         unsafe_allow_html=True)
-        with _tt3:
+        with _tt2:
+            st.markdown('<div data-marker="lib-title-edit" style="display:none"></div>',
+                        unsafe_allow_html=True)
             if st.button("", icon=_TB_ICON_EDIT, key=f"lib_title_edit_{story_id}",
                          help="Edit title", disabled=_busy):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
