@@ -2140,6 +2140,71 @@ def _copy_button(label: str, text: str, key: str) -> None:
 _DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, 1.4, 1.1, 1.1, 2.0, 1.7]
 _TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
 
+
+def _reset_file_uploader(key: str) -> None:
+    """Reset a file_uploader widget so its file is never processed twice.
+
+    Widget values persist in session state across reruns. Deleting the key
+    is the documented reset (allowed even after the widget was instantiated
+    this run). Without this, an upload followed by st.rerun() would re-store
+    the same file on every subsequent run — an endless rerun loop for video,
+    unbounded duplicate images for images (#145).
+    """
+    if key in st.session_state:
+        del st.session_state[key]
+
+
+def _render_upload_popover(story_id: str) -> None:
+    """Body of the Upload popover: Video/Image radio + file uploader.
+
+    On upload the file is stored via lib.store_video_upload /
+    lib.store_image_upload, the uploader is reset (see _reset_file_uploader)
+    so the file is never stored twice, and the page reruns on success.
+    Failures surface via st.error / st.warning; the uploader is still reset
+    so a bad file is never silently retried on every later interaction.
+    """
+    _up_kind = st.radio("Media type", ["Video", "Image"],
+                        key=f"lib_upkind_{story_id}")
+    if _up_kind == "Video":
+        up_vid = st.file_uploader("Upload generated video",
+                                  type=["mp4", "mov", "m4v", "webm"],
+                                  key=f"lib_video_{story_id}")
+        if up_vid is not None:
+            _up_ok = False
+            try:
+                stored = lib.store_video_upload(story_id, up_vid.getvalue(),
+                                                up_vid.name)
+            except Exception as e:
+                st.error(f"Video upload failed: {e}")
+            else:
+                _up_ok = True
+                st.success(f"Video attached: {stored}")
+            _reset_file_uploader(f"lib_video_{story_id}")
+            if _up_ok:
+                st.rerun()
+    else:
+        # Manual image upload
+        up_imgs = st.file_uploader("Upload images manually",
+                                   type=["png", "jpg", "jpeg", "webp", "gif"],
+                                   accept_multiple_files=True,
+                                   key=f"lib_images_{story_id}")
+        if up_imgs:
+            _up_failed = 0
+            for f in up_imgs:
+                try:
+                    lib.store_image_upload(story_id, f.getvalue(), f.name)
+                except Exception as e:
+                    _up_failed += 1
+                    st.error(f"Image upload failed ({f.name}): {e}")
+            _reset_file_uploader(f"lib_images_{story_id}")
+            if _up_failed:
+                st.warning(f"Attached {len(up_imgs) - _up_failed} of "
+                           f"{len(up_imgs)} image(s).")
+            else:
+                st.success(f"Attached {len(up_imgs)} image(s).")
+                st.rerun()
+
+
 def _render_story_detail(story_id: str) -> None:
     story = lib.load_story(story_id)
     if not story:
@@ -2532,10 +2597,12 @@ def _render_story_detail(story_id: str) -> None:
     # #94: one-line upload row — "Upload" title on the left, upload
     # button on the right. Clicking the button opens a popover offering
     # a Video / Image selection; the chosen uploader then runs the
-    # unchanged upload + processing flow (same widget keys, same
+    # upload + processing flow (same widget keys, same
     # store_video_upload / store_image_upload paths, same success/error
-    # handling). Uploads stay exempt from the #83 image cap and are
-    # never auto-removed.
+    # handling, popover body in _render_upload_popover). Uploads stay
+    # exempt from the #83 image cap and are never auto-removed.
+    # #145: the uploader is reset after every upload so the same file is
+    # never stored twice (widget values persist across reruns).
     # #114: the trigger is icon-only (native material upload glyph, no
     # "⬆" text/emoji) with a visible theme-safe border (see CSS marker
     # rule below); the popover body carries the upload affordance
@@ -2549,34 +2616,7 @@ def _render_story_detail(story_id: str) -> None:
         st.markdown('<div data-marker="lib-upload-btn" style="display:none"></div>',
                     unsafe_allow_html=True)
         with st.popover("", icon=_TB_ICON_UPLOAD, help="Upload video or image"):
-            _up_kind = st.radio("Media type", ["Video", "Image"],
-                                key=f"lib_upkind_{story_id}")
-            if _up_kind == "Video":
-                up_vid = st.file_uploader("Upload generated video",
-                                          type=["mp4", "mov", "m4v", "webm"],
-                                          key=f"lib_video_{story_id}")
-                if up_vid is not None:
-                    try:
-                        stored = lib.store_video_upload(story_id, up_vid.getvalue(),
-                                                        up_vid.name)
-                        st.success(f"Video attached: {stored}")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Video upload failed: {e}")
-            else:
-                # Manual image upload
-                up_imgs = st.file_uploader("Upload images manually",
-                                           type=["png", "jpg", "jpeg", "webp", "gif"],
-                                           accept_multiple_files=True,
-                                           key=f"lib_images_{story_id}")
-                if up_imgs:
-                    for f in up_imgs:
-                        try:
-                            lib.store_image_upload(story_id, f.getvalue(), f.name)
-                        except Exception as e:
-                            st.error(f"Image upload failed ({f.name}): {e}")
-                    st.success(f"Attached {len(up_imgs)} image(s).")
-                    st.rerun()
+            _render_upload_popover(story_id)
 
     # (Refresh actions live in the detail toolbar at the top; Share/Copy
     # actions sit in the Actions row just below it.)
