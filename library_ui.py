@@ -60,8 +60,11 @@ def inject_library_css() -> None:
         --lib-script-bg: #EFF4FF;
         --lib-script-border: #6B8DD6;
         --lib-script-text: #1E3A6E;
-        --lib-chip-bg: #F0E9DB;
-        --lib-chip-text: #6B5433;
+        /* Chips: warm pill, hairline edge for definition (HIG: flat,
+           bordered pills, no shadow). Text contrast ≥ 7:1 both themes. */
+        --lib-chip-bg: #F0E7D5;
+        --lib-chip-text: #5A4227;
+        --lib-chip-border: rgba(90, 66, 39, 0.28);
         /* IDE-style token colors for the full script view */
         --lib-spk: #1D4ED8;
         --lib-said: #047857;
@@ -84,8 +87,11 @@ def inject_library_css() -> None:
         --lib-script-bg: #1E2A44;
         --lib-script-border: #5B7BC0;
         --lib-script-text: #C9D9F5;
-        --lib-chip-bg: #3A3129;
-        --lib-chip-text: #D8C49A;
+        /* Chips (dark): lifted warm surface replaces the muddy flat
+           fill; hairline edge keeps the pill defined on dark trays. */
+        --lib-chip-bg: #4A4034;
+        --lib-chip-text: #F2E4C2;
+        --lib-chip-border: rgba(242, 228, 194, 0.22);
         /* IDE-style token colors for the full script view */
         --lib-spk: #93C5FD;
         --lib-said: #6EE7B7;
@@ -228,9 +234,11 @@ def inject_library_css() -> None:
     .lib-chip {
         display: inline-flex;
         align-items: center;
+        box-sizing: border-box;  /* border must not grow the 30px pill */
         min-height: var(--lib-chip-h);
         background: var(--lib-chip-bg);
         color: var(--lib-chip-text);
+        border: 1px solid var(--lib-chip-border);
         border-radius: 999px;
         padding: 3px 12px;
         margin: 2px 4px 2px 0;
