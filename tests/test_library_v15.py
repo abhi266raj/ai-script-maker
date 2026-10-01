@@ -11,7 +11,9 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 import story_library as lib  # noqa: E402
+from _fake_images import fetch_for  # noqa: E402
 
 
 @pytest.fixture
@@ -429,10 +431,8 @@ def test_refresh_images_merges_not_replaces(libdir, monkeypatch):
         lib, "_fetch_images_for_story",
         lambda story, topic, **k: ["https://img.example/old.jpg",
                                   "https://img.example/new.jpg"])
-    # Content-hash dedupe fetches image bytes: distinct bytes per URL.
-    monkeypatch.setattr(
-        lib, "_fetch_image_bytes",
-        lambda url, **k: b"bytes-for-" + url.encode())
+    # Image fetches feed the content/visual dedupe: distinct bytes per URL.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
     assert changed is True
     meta = lib.load_story(sid)["meta"]
@@ -442,6 +442,9 @@ def test_refresh_images_merges_not_replaces(libdir, monkeypatch):
     # Content hashes are persisted alongside, aligned by position.
     assert len(meta["image_hashes"]) == 2
     assert meta["image_hashes"][0] != meta["image_hashes"][1]
+    # Perceptual hashes ride alongside, aligned by position as well.
+    assert len(meta["image_phashes"]) == 2
+    assert all(meta["image_phashes"])
     assert "Added 1 new image(s)" in note and "kept 1 existing" in note
 
 
@@ -1208,8 +1211,7 @@ def _reset_mocks(monkeypatch, tags, images, articles):
     monkeypatch.setattr(lib, "_fetch_news_articles",
                         lambda topic, limit=6: articles)
     # Reset now content-hashes fresh images: distinct bytes per URL.
-    monkeypatch.setattr(lib, "_fetch_image_bytes",
-                        lambda url, **k: b"bytes-for-" + str(url).encode())
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
 
 
 def test_do_reset_clears_and_refetches_all_rows(libdir, monkeypatch):
@@ -1238,6 +1240,8 @@ def test_do_reset_clears_and_refetches_all_rows(libdir, monkeypatch):
     assert meta["news_links"] == [{"title": "New story",
                                    "url": "https://example.com/new",
                                    "source": "Ex"}]
+    # The reset also stored the fresh image's perceptual hash.
+    assert len(meta["image_phashes"]) == 1 and all(meta["image_phashes"])
     # Never touched: manual uploads, screenplay, story content.
     assert meta["uploaded_images"] == ["upload1.png"]
     assert "AARAV: hello" in story["script"]
