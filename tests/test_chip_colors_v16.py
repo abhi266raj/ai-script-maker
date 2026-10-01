@@ -113,7 +113,9 @@ def test_x_clearance_rules_untouched():
     user asked for more space for the ×) — the × sits inside the
     pill, so tag text can never slide underneath it."""
     css = _capture_library_css()
-    assert 'div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])' in css
+    # #134: news links are native st.link_button (no .lib-chip span), so
+    # the chip × scope covers both .lib-chip and link-button columns.
+    assert 'div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])' in css
     assert "padding-right: 44px !important;" in css
     assert "padding-right: 30px" not in css
     assert "padding-right: 26px" not in css

@@ -99,13 +99,14 @@ def test_x_marker_wrapper_collapses():
 
 def test_chip_x_vertical_centering_declarations():
     """The chip × rule keeps the #51 vertical-centering contract:
-    top: 50% + translateY(-50%), scoped to columns holding a chip."""
+    top: 50% + translateY(-50%), scoped to columns holding a chip.
+    #134: the scope is :has(.lib-chip, [data-testid="stLinkButton"])."""
     css, _ = _capture_library_css()
     clean = _css_no_comments(css)
     found = False
     for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", clean):
         sel, body = m.group(1), m.group(2)
-        if ":has(.lib-chip)" in sel and "lib-x-r" in sel \
+        if ":has(.lib-chip" in sel and "lib-x-r" in sel \
                 and "top: 50% !important;" in body \
                 and "translateY(-50%) !important;" in body:
             found = True
@@ -134,7 +135,8 @@ def test_image_card_x_overlay_still_top_pinned():
     for m in re.finditer(r"([^{}]+)\{([^{}]*)\}", clean):
         sel, body = m.group(1), m.group(2)
         # generic (non-chip-scoped) × rule: top: 4px, no .lib-chip :has.
-        if "lib-x-r" in sel and ":has(.lib-chip)" not in sel \
+        # (#134: chip scope is :has(.lib-chip, ...).)
+        if "lib-x-r" in sel and ":has(.lib-chip" not in sel \
                 and "top: 4px !important;" in body:
             top_pinned = True
             break

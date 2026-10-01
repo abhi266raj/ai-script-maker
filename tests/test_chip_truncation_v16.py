@@ -57,9 +57,11 @@ def test_chip_column_no_longer_reserves_x_clearance():
 def test_chip_x_rules_are_chip_scoped():
     """The chip × centering/glyph rules must only hit columns holding a
     chip — the :has(.lib-chip) scope is what keeps image-card columns on
-    their inset top-right × over the image corner."""
+    their inset top-right × over the image corner.
+    #134: the scope also covers stLinkButton columns (news links are
+    native link buttons now)."""
     css, _ = _capture_library_css()
-    assert 'div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])' in css
+    assert 'div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])' in css
     # No blanket × restyle that would also hit image cards.
     assert 'div[data-testid="stColumn"]:has([data-marker="lib-x-r"])\n' \
         '        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])\n' \

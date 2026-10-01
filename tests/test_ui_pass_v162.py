@@ -68,6 +68,11 @@ class _FakeSt(types.ModuleType):
         self.events.append(("button", label, key, kwargs))
         return False
 
+    def link_button(self, label, url, **kwargs):
+        # #134: news links are native st.link_button; record for assertions.
+        self.events.append(("link_button", label, url, kwargs))
+        return False
+
     def radio(self, label, options, key=None, **kwargs):
         self.events.append(("radio", label, list(options), key))
         return options[0]

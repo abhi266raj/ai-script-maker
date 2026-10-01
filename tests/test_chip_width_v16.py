@@ -109,7 +109,7 @@ def test_chip_clearance_44px_preserved():
 
 def test_chip_x_centering_preserved():
     _, css = _load_lui()
-    anchor = ('div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])')
+    anchor = ('div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])')
     block = _block(css, anchor)
     for needle in ("top: 50% !important;",
                    "transform: translateY(-50%) !important;",
@@ -119,7 +119,7 @@ def test_chip_x_centering_preserved():
 
 def test_chip_x_token_field_look_preserved():
     _, css = _load_lui()
-    anchor = ('div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])')
+    anchor = ('div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])')
     idx = css.find(anchor)
     btn_block = _block(css[idx:], '[data-testid="stButton"] button {')
     assert "background: transparent !important;" in btn_block

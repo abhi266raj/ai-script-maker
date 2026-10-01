@@ -339,6 +339,51 @@ def inject_library_css() -> None:
         color: inherit !important;
         text-decoration: underline;
     }
+    /* #134: news-link chips are NATIVE st.link_button — raw-HTML anchors
+       inside st.markdown get neutered by Streamlit's markdown pipeline
+       (clicks do nothing), while st.link_button forces a new browser tab
+       (the same guarantee the #95 WhatsApp comment relies on). The
+       button's <a> is styled as the chip pill so the one-row chip design
+       is preserved; the × overlay keeps working via the updated
+       :has(.lib-chip, [data-testid="stLinkButton"]) selectors above.
+       Scoped to hscroll columns holding a link button — hashtag chips
+       (plain .lib-chip spans) are untouched. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has([data-testid="stLinkButton"])
+        [data-testid="stLinkButton"] {
+        width: fit-content !important;
+        max-width: 100% !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has([data-testid="stLinkButton"])
+        [data-testid="stLinkButton"] a {
+        display: inline-flex !important;
+        align-items: center !important;
+        box-sizing: border-box !important;
+        min-height: var(--lib-chip-h) !important;
+        background: var(--lib-chip-bg) !important;
+        color: var(--lib-chip-text) !important;
+        border: 1px solid var(--lib-chip-border) !important;
+        border-radius: 999px !important;
+        padding: 3px 44px 3px 12px !important;
+        margin: 2px 4px 2px 0 !important;
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        white-space: nowrap !important;
+        max-width: 340px !important;
+        text-decoration: none !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has([data-testid="stLinkButton"])
+        [data-testid="stLinkButton"] a span {
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
+        max-width: 100% !important;
+    }
     /* Image cards: one uniform size so every card in the row shares a
        baseline. Columns holding an image become fixed 180px cards; the
        image covers a 120px-tall frame (cropped, never distorted) with
@@ -443,14 +488,16 @@ def inject_library_css() -> None:
        selector). The triggers now share the toolbar's own gap/alignment. */
     /* #51: the chip × becomes a macOS token-field remove glyph, centered
        inside the pill. Chip-scoped: columns holding a chip
-       (:has(.lib-chip)) with the lib-x-r marker. Image cards have no
+       (:has(.lib-chip)) — or a news-link button (#134: raw-HTML anchors
+       were replaced by native st.link_button, which has no .lib-chip
+       span) — with the lib-x-r marker. Image cards have no
        .lib-chip, so their top-right corner × over the image is untouched;
-       the ✎ is lib-x-l, also untouched. The extra :has(.lib-chip) makes
+       the ✎ is lib-x-l, also untouched. The extra :has(...) makes
        these selectors strictly more specific than the generic × rules
        above, so they win without touching them. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
-        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])
         div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
         + div[data-testid="stElementContainer"] {
         top: 50% !important;
@@ -459,7 +506,7 @@ def inject_library_css() -> None:
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
-        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])
         div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
         background: transparent !important;
@@ -473,7 +520,7 @@ def inject_library_css() -> None:
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
-        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])
         div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
         opacity: 1 !important;
@@ -1265,6 +1312,23 @@ def _news_chip_label(title: str, source: str) -> str:
     title = (title or "").strip() or "News link"
     source = (source or "").strip()
     return source if source else title
+
+
+def _is_openable_article_url(url: str) -> bool:
+    """#134: fail-loud gate for news-link chips.
+
+    A news chip must open its article when clicked, so only http(s) URLs
+    with a host are rendered as link buttons. Anything else (empty,
+    javascript:, redirect wrappers that slipped through, etc.) is
+    rejected — the call site surfaces it via st.error instead of
+    rendering a dead chip.
+    """
+    try:
+        from urllib.parse import urlparse as _urlparse
+        _p = _urlparse(url or "")
+        return _p.scheme in ("http", "https") and bool(_p.hostname)
+    except Exception:
+        return False
 
 
 def _chip_col_weights(labels) -> list:
@@ -2315,11 +2379,25 @@ def _render_story_detail(story_id: str) -> None:
             _ltitle = _lk.get("title", "News link") or "News link"
             _lurl = (_lk.get("url") or "").strip()
             with _lc:
-                st.markdown(
-                    f'<span class="lib-chip"><a href="{_html.escape(_lurl, quote=True)}" '
-                    f'target="_blank" rel="noopener" '
-                    f'title="{_html.escape(_ltitle, quote=True)}">{_html.escape(_label)}</a></span>',
-                    unsafe_allow_html=True)
+                # #134: news links are NATIVE st.link_button, not raw-HTML
+                # <a> inside st.markdown — Streamlit's markdown pipeline
+                # neuters the anchor (clicks do nothing). st.link_button
+                # forces a new browser tab (the same guarantee the #95
+                # WhatsApp comment relies on) and is styled as the chip
+                # pill by the marker-scoped CSS. Malformed URLs fail
+                # loudly instead of rendering a dead chip; the × still
+                # removes the bad link.
+                if not _is_openable_article_url(_lurl):
+                    st.error(
+                        f"News link \u201c{_ltitle}\u201d has an invalid URL "
+                        f"and was not rendered as a link.")
+                else:
+                    st.link_button(
+                        _label,
+                        _lurl,
+                        help=_ltitle,
+                        key=f"lib_newslink_{story_id}_{_i}",
+                    )
                 if _overlay_button("lib-x-r", f"lib_xlink_{story_id}_{_i}", "×",
                                    help="Remove this news link"):
                     try:
