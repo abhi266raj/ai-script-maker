@@ -488,8 +488,14 @@ def inject_library_css() -> None:
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
     div[data-testid="stElementContainer"]:has([data-marker="lib-spin-news"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
+    /* #81: the reset spinner selector is the SAME adjacent-sibling shape as
+       hashtags/images/news — the lib-spin-reset marker's container
+       immediately followed by the popover trigger's container. The old
+       3-hop selector routed through the lib-danger-pop- marker, which
+       never matched the real DOM, so the spinner silently never painted.
+       _render_reset_popover emits lib-spin-reset immediately before the
+       popover (see _confirm_popover's spin_marker param). */
     div[data-testid="stElementContainer"]:has([data-marker="lib-spin-reset"])
-        + div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
         + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"]::before {
         content: "";
         display: inline-block;
@@ -603,16 +609,20 @@ def _inject_story_list_css() -> None:
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {
         display: none !important;
     }
-    /* Destructive actions: macOS system red text (graceful — plain button if unmatched) */
+    /* Destructive actions (#87): solid macOS system red fill with white
+       text — like Apple's destructive alert buttons. Legible on both
+       themes. Graceful — plain button if unmatched. */
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
-        color: #FF3B30 !important;
-        border-color: rgba(255, 59, 48, 0.35) !important;
+        background-color: #FF3B30 !important;
+        color: #FFFFFF !important;
+        border-color: #FF3B30 !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
-        color: #FF3B30 !important;
-        border-color: rgba(255, 59, 48, 0.6) !important;
+        background-color: #D92D20 !important;
+        color: #FFFFFF !important;
+        border-color: #D92D20 !important;
     }
     /* v1.6 (#58): destructive popover triggers are NEUTRAL — they read as
        plain buttons like their neighbours (see the approved screenshot).
@@ -659,7 +669,7 @@ def _md_escape(text: str) -> str:
 
 
 def _danger_button(label: str, key: str, **kwargs) -> bool:
-    """Mac-style destructive button: red text via a marker-scoped rule.
+    """Mac-style destructive button: solid system-red fill, white text (#87).
 
     The marker div sits directly before the button so the CSS can target
     exactly this button. If the selector ever misses, it degrades to a
@@ -693,7 +703,8 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
                      use_container_width: bool = False,
                      fail_label: str = "Confirm",
                      destructive_label: str,
-                     disabled: bool = False) -> None:
+                     disabled: bool = False,
+                     spin_marker: str = "") -> None:
     """Apple-style confirmation: native popover, explicit red destructive
     verb, standard Cancel. (#58)
 
@@ -721,7 +732,12 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
     button verb (e.g. "Delete story", "Reset media"). ``disabled`` disables
     the trigger (e.g. while its work is running). Per the HIG progress
     contract (#53) the trigger label NEVER changes to show progress — a
-    separate marker carries the spinner while the work runs.
+    separate marker carries the spinner while the work runs. ``spin_marker``
+    names that marker's data-marker (e.g. "lib-spin-reset"); when given it
+    is emitted IMMEDIATELY before the popover trigger, so the spinner CSS
+    is the same adjacent-sibling shape as the hashtag/image/news buttons
+    (#81 — the old 3-hop selector through the danger-pop marker never
+    matched the real DOM).
     """
     _go_key = f"{popover_key}-go"
     _err_key = f"{popover_key}-err"
@@ -730,6 +746,12 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
     # otherwise push the trigger one gap lower than its siblings).
     st.markdown(f'<div data-marker="lib-danger-pop-{popover_key}" style="display:none"></div>',
                 unsafe_allow_html=True)
+    if spin_marker:
+        # #81: the spinner marker sits immediately before the popover's
+        # element container — the #53 pattern the hashtag/image/news
+        # spinners use, and the only shape whose CSS selector matches.
+        st.markdown(f'<div data-marker="{spin_marker}" style="display:none"></div>',
+                    unsafe_allow_html=True)
     # Consume a previously armed confirmation *before* the popover
     # instantiates, so driving its key here is legal.
     if st.session_state.pop(_go_key, False):
@@ -837,14 +859,12 @@ def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
     fetched images and news links are discarded and re-fetched fresh
     (uploads and the screenplay are never touched).
 
-    The spin marker is emitted BEFORE _confirm_popover's danger marker so
-    the danger trigger's ``+`` sibling selectors keep matching.
+    The spin marker is emitted INSIDE _confirm_popover immediately before the
+    popover trigger (spin_marker param), so the spinner selector is the
+    proven marker-then-trigger adjacent-sibling shape (#81).
     """
     resetting = "reset" in busy_kinds
     blocked = bool(set(busy_kinds) - {"reset"})
-    if resetting:
-        st.markdown('<div data-marker="lib-spin-reset" style="display:none"></div>',
-                    unsafe_allow_html=True)
 
     def _on_reset_yes() -> None:
         # Raises loudly on failure: the popover shows it and stays open.
@@ -869,6 +889,7 @@ def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
         destructive_label="Reset media",
         use_container_width=True,
         disabled=resetting or blocked,
+        spin_marker="lib-spin-reset" if resetting else "",
     )
 
 

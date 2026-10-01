@@ -5,6 +5,7 @@ verified-links-first media fetch.
 Run: python -m pytest tests/test_library_v15.py -q
 """
 import sys
+import re
 import threading
 from pathlib import Path
 
@@ -1695,6 +1696,8 @@ def test_danger_marker_containers_are_collapsed(monkeypatch):
 def test_danger_red_button_rules_survive_collapse_trigger_is_neutral(monkeypatch):
     """#58: macOS red lives ONLY on the explicit destructive button inside
     the popover — the trigger is neutral (deliberate reversal of #38).
+    #87: the red is a SOLID fill with white text (Apple destructive
+    alert-button style), not red text + red border.
 
     display:none removes the marker container from layout but NOT from
     the DOM, so the adjacent-sibling red rule for the destructive button
@@ -1708,8 +1711,14 @@ def test_danger_red_button_rules_survive_collapse_trigger_is_neutral(monkeypatch
     assert red_btn + ":hover" in css
     # The trigger is neutral now: no red popover-trigger selectors remain.
     assert '[data-testid="stPopoverButton"]' not in css
-    # Exactly the destructive button + its hover carry the red.
-    assert css.count("color: #FF3B30 !important;") == 2
+    # #87: exactly the destructive button carries the solid red fill
+    # (base) + white text (base and hover); hover darkens the fill.
+    assert css.count("background-color: #FF3B30 !important;") == 1
+    assert css.count("color: #FFFFFF !important;") == 2
+    assert css.count("background-color: #D92D20 !important;") == 1
+    # No standalone red-text declaration survives (the lookbehind skips
+    # background-color:/border-color:, which legitimately carry the red).
+    assert not re.search(r"(?<![a-z-])color: #FF3B30 !important;", css)
 
 
 def test_danger_button_marker_immediately_precedes_button(monkeypatch):
@@ -1797,9 +1806,10 @@ def test_destructive_popover_has_hig_anchor_caret(monkeypatch):
     assert 'transform: rotate(45deg) !important;' in css
     assert 'background: inherit !important;' in css
     # Theme-safe: the caret introduces no hard-coded surface color, and the
-    # #58 red rule set is exactly the destructive button + hover (the
-    # trigger is neutral now).
-    assert css.count("color: #FF3B30 !important;") == 2
+    # destructive-button red rule set is exactly the solid-red button + hover
+    # (#87; the trigger is neutral).
+    assert css.count("background-color: #FF3B30 !important;") == 1
+    assert not re.search(r"(?<![a-z-])color: #FF3B30 !important;", css)
 
 
 def test_confirm_popover_emits_body_anchor_marker_first(monkeypatch):
