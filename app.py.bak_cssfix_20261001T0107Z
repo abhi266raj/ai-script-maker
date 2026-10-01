@@ -528,12 +528,10 @@ st.markdown(
     }
 
     /* — Universal Button Styles — */
-    /* NOTE: never force fill/stroke on SVG paths. Streamlit/Material icons use
-       fill="none" background rects; overriding them paints solid blocks. Icons
-       inherit color from the button, and their native paint attributes handle
-       the rest. */
-    button svg {
-        color: inherit;
+    button svg,
+    button path {
+        fill: currentColor !important;
+        stroke: currentColor !important;
     }
 
     /* Primary buttons */
@@ -723,8 +721,13 @@ st.markdown(
     [data-baseweb="select"] [role="button"] svg,
     [data-baseweb="select"] [role="button"] path,
     [data-baseweb="input"] svg,
+    [data-baseweb="input"] path,
     [data-baseweb="base-input"] svg,
-    [data-testid="stSelectbox"] svg {
+    [data-baseweb="base-input"] path,
+    [data-testid="stSelectbox"] svg,
+    [data-testid="stSelectbox"] path {
+        fill: currentColor !important;
+        stroke: currentColor !important;
         color: var(--ink) !important;
     }
     /* Selectbox dropdown right arrow, button trigger, and icons */
@@ -742,26 +745,33 @@ st.markdown(
         box-shadow: none !important;
         color: var(--ink) !important;
     }
-    /* Chevron / dropdown icons: color only. Native SVG paint attributes
-       (fill="none" backdrop, fill="currentColor" glyph) must be left alone,
-       otherwise the transparent backdrop paints as a solid block. */
     [data-baseweb="select"] button svg,
     [data-baseweb="select"] [role="button"] svg,
     [data-testid="stSelectbox"] button svg,
     [data-testid="stSelectbox"] div[class*="e1fp86qc2"] svg,
     [data-testid="stSelectbox"] [aria-label="Open"] svg {
+        fill: var(--ink) !important;
+        stroke: var(--ink) !important;
         color: var(--ink) !important;
     }
 
     /* Clear (cross) icon in selectbox and input */
     [data-baseweb="select"] [role="button"] svg,
+    [data-baseweb="select"] [role="button"] path,
     [data-baseweb="select"] [data-icon="clear"],
-    [data-baseweb="input"] [role="button"] svg {
+    [data-baseweb="input"] [role="button"] svg,
+    [data-baseweb="input"] [role="button"] path {
+        fill: var(--muted) !important;
+        stroke: var(--muted) !important;
         color: var(--muted) !important;
         opacity: 0.8 !important;
     }
     [data-baseweb="select"] [role="button"]:hover svg,
-    [data-baseweb="input"] [role="button"]:hover svg {
+    [data-baseweb="select"] [role="button"]:hover path,
+    [data-baseweb="input"] [role="button"]:hover svg,
+    [data-baseweb="input"] [role="button"]:hover path {
+        fill: var(--orange) !important;
+        stroke: var(--orange) !important;
         color: var(--orange) !important;
         opacity: 1 !important;
     }
@@ -800,10 +810,13 @@ st.markdown(
         -webkit-overflow-scrolling: touch !important;
     }
 
-    /* Popover body text inherits color from the body card above; per-element
-       overrides are set on the elements that need them (buttons, code).
-       A blanket `*` color force here would let text and background split
-       across different theme sources, so it is intentionally absent. */
+    /* All content inside popover body */
+    [data-testid="stPopoverBody"] *,
+    div[class*="ecfxx9g0"] *,
+    div[data-st-overlay-root="true"] * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
 
     [data-testid="stPopoverBody"] code,
     div[class*="ecfxx9g0"] code {
@@ -879,6 +892,7 @@ st.markdown(
         color: var(--ink) !important;
     }
     [data-testid="stExpander"] summary svg {
+        fill: var(--ink) !important;
         color: var(--ink) !important;
     }
 
@@ -1113,15 +1127,14 @@ st.markdown(
     }
 
     /* — Stepper and NumberInput styling (Duration, Scripts, Retries, Characters) — */
-    /* The ONLY bordered box is the real input container. It spans the full
-       widget width, so the (+) sits flush against its right edge with no dead
-       space after it. Intermediate wrappers are neutralized (transparent, no
-       border) so they cannot paint a second, wider box. */
     [data-testid="stNumberInput"] {
         width: 100% !important;
     }
-    [data-testid="stNumberInputContainer"] {
-        width: 100% !important;
+    [data-testid="stNumberInput"] > div,
+    [data-testid="stNumberInput"] [data-testid="stWidgetLabel"] + div,
+    [data-testid="stNumberInput"] [data-testid="stNumberInputContainer"],
+    [data-testid="stNumberInput"] div[class*="e1rv0tzo0"],
+    [data-testid="stNumberInput"] div[data-baseweb="input"] {
         background-color: var(--field) !important;
         background: var(--field) !important;
         border: 1px solid var(--line) !important;
@@ -1132,27 +1145,13 @@ st.markdown(
         box-sizing: border-box !important;
         display: flex !important;
         flex-direction: row !important;
-        align-items: stretch !important;
+        align-items: center !important;
         overflow: hidden !important;
         padding: 0 !important;
-        margin: 0 !important;
-    }
-    /* Neutralize every wrapper between the widget root and the container:
-       no background, no border, no extra box. */
-    [data-testid="stNumberInput"] > div {
-        background: transparent !important;
-        background-color: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        padding: 0 !important;
-        margin: 0 !important;
-        min-height: 0 !important;
+        position: relative !important;
     }
 
-    /* Flatten the step-button wrapper so (-), field, (+) lay out as direct
-       flex items of the container. Structural selector first, generated class
-       as fallback. */
-    [data-testid="stNumberInputContainer"] > div:has(> button[data-testid="stNumberInputStepDown"]),
+    /* Make button wrapper participate directly in the parent flex row */
     [data-testid="stNumberInput"] div[class*="e1rv0tzo1"] {
         display: contents !important;
     }
@@ -1160,7 +1159,8 @@ st.markdown(
     /* Left Stepper Button: Decrement (-) */
     [data-testid="stNumberInput"] button[data-testid="stNumberInputStepDown"],
     [data-testid="stNumberInput"] button[aria-label*="decrease" i],
-    [data-testid="stNumberInput"] button[aria-label*="decrement" i] {
+    [data-testid="stNumberInput"] button[aria-label*="decrement" i],
+    [data-testid="stNumberInput"] div[class*="e1rv0tzo1"] button:first-child {
         order: 1 !important;
         border-right: 1px solid var(--line) !important;
         border-left: none !important;
@@ -1168,14 +1168,13 @@ st.markdown(
         border-bottom: none !important;
     }
 
-    /* Central Input Field: flexible, centered text between the buttons.
-       flex:1 absorbs all free space; no width:100% (that fights the flex). */
+    /* Central Input Field: transparent background and centered text between buttons */
+    [data-testid="stNumberInput"] input,
     [data-testid="stNumberInput"] input[data-testid="stNumberInputField"],
-    [data-testid="stNumberInput"] input {
+    .stNumberInput input {
         order: 2 !important;
         flex: 1 1 0% !important;
         min-width: 0 !important;
-        width: auto !important;
         color: var(--ink) !important;
         -webkit-text-fill-color: var(--ink) !important;
         caret-color: var(--ink) !important;
@@ -1192,15 +1191,16 @@ st.markdown(
         min-height: 38px !important;
         padding: 0 4px !important;
         margin: 0 !important;
+        width: 100% !important;
     }
 
-    /* Right Stepper Button: Increment (+) pinned flush to the container's
-       right edge. The flexible input pushes it there; nothing may extend
-       past it. */
+    /* Right Stepper Button: Increment (+) pinned to rightmost edge */
     [data-testid="stNumberInput"] button[data-testid="stNumberInputStepUp"],
     [data-testid="stNumberInput"] button[aria-label*="increase" i],
-    [data-testid="stNumberInput"] button[aria-label*="increment" i] {
+    [data-testid="stNumberInput"] button[aria-label*="increment" i],
+    [data-testid="stNumberInput"] div[class*="e1rv0tzo1"] button:last-child {
         order: 3 !important;
+        margin-left: auto !important;
         border-left: 1px solid var(--line) !important;
         border-right: none !important;
         border-top: none !important;
@@ -1236,7 +1236,10 @@ st.markdown(
         color: var(--orange) !important;
         -webkit-text-fill-color: var(--orange) !important;
     }
-    [data-testid="stNumberInput"] button svg {
+    [data-testid="stNumberInput"] button svg,
+    [data-testid="stNumberInput"] button path {
+        fill: currentColor !important;
+        stroke: currentColor !important;
         color: inherit !important;
     }
 
@@ -1320,51 +1323,32 @@ st.html(
         setupAccordion();
     }
 
-    /* Custom CSS tokens must follow the theme Streamlit is ACTUALLY rendering,
-       not the OS preference: the user can set Streamlit to Dark while the OS
-       is Light (or vice versa), and any mismatch paints unreadable widgets
-       (e.g. white-on-white popover buttons). Streamlit 1.64 does not persist
-       a 'stActiveTheme' localStorage key, so the reliable signal is the
-       computed background of .stApp itself. */
+    /* Streamlit stores Light / Dark / System in localStorage and does not
+       set data-theme on html. Detect both explicit theme choice and system
+       preference, and mirror onto document.documentElement, body, and .stApp. */
     function studioSyncTheme() {
         var dark = false;
-        var detected = false;
-        /* 1) Read Streamlit's rendered theme from .stApp's background. */
+        var foundExplicit = false;
         try {
-            var stAppEl = document.querySelector('.stApp');
-            if (stAppEl) {
-                var bg = window.getComputedStyle(stAppEl).backgroundColor || '';
-                var m = bg.match(/[\\d.]+/g);
-                if (m && m.length >= 3) {
-                    var lum = (0.299 * parseFloat(m[0]) + 0.587 * parseFloat(m[1]) + 0.114 * parseFloat(m[2])) / 255;
-                    dark = lum < 0.5;
-                    detected = true;
-                }
-            }
-        } catch (err) {}
-        /* 2) Explicit stored theme choice (future-proof; absent in 1.64). */
-        if (!detected) {
-            try {
-                for (var i = 0; i < localStorage.length; i++) {
-                    var k = localStorage.key(i);
-                    if (k && k.indexOf('stActiveTheme') !== -1) {
-                        var raw = localStorage.getItem(k);
-                        if (raw) {
-                            var val = JSON.parse(raw);
-                            if (typeof val === 'string') {
-                                if (val === 'Dark') { dark = true; detected = true; }
-                                else if (val === 'Light') { dark = false; detected = true; }
-                            } else if (val && typeof val === 'object' && val.name) {
-                                if (val.name.indexOf('Dark') !== -1) { dark = true; detected = true; }
-                                else if (val.name.indexOf('Light') !== -1) { dark = false; detected = true; }
-                            }
+            for (var i = 0; i < localStorage.length; i++) {
+                var k = localStorage.key(i);
+                if (k && k.indexOf('stActiveTheme') !== -1) {
+                    var raw = localStorage.getItem(k);
+                    if (raw) {
+                        var val = JSON.parse(raw);
+                        if (typeof val === 'string') {
+                            if (val === 'Dark') { dark = true; foundExplicit = true; }
+                            else if (val === 'Light') { dark = false; foundExplicit = true; }
+                        } else if (val && typeof val === 'object' && val.name) {
+                            if (val.name.indexOf('Dark') !== -1) { dark = true; foundExplicit = true; }
+                            else if (val.name.indexOf('Light') !== -1) { dark = false; foundExplicit = true; }
                         }
                     }
                 }
-            } catch (err2) {}
-        }
-        /* 3) Last resort: OS preference. */
-        if (!detected) {
+            }
+        } catch (err) {}
+
+        if (!foundExplicit) {
             dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
         }
 
