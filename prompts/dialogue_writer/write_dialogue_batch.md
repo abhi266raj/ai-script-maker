@@ -133,18 +133,19 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
     - Do NOT use mismatched Audio/SFX: music and sound effects must match the tone and news. No comedic sounds (party horns, slide whistles) in serious/dramatic stories. No sad music in funny stories. SFX must enhance the scene's mood — dramatic beats for tension, natural ambience for realism, silence where it hits harder.
 
 # TASK
-Write the spoken Hindi dialogue for each script beat-by-beat (EXACTLY {actual_scenes} beats).
+Write the spoken Hindi dialogue for EACH of the {num_scripts} scripts listed under "Scripts to Write" above — beat-by-beat (EXACTLY {actual_scenes} beats per script).
 
 # OUTPUT FORMAT
 [Format Requirement: All scene descriptions in English, Dialogues strictly in Hindi]
 
-Structure your output EXACTLY like this. Beats run in order — do NOT write timestamps, timing is handled downstream:
+Structure your output EXACTLY like this — one clearly separated block per script, each starting with its SCRIPT header. Beats run in order — do NOT write timestamps, timing is handled downstream:
 
+SCRIPT 1:
 SCENE DETAIL:
 ⚬ <1-2 English lines: the location, vibe and energy of this reel>
 
 CHARACTERS & CLOTHING:
-⚬ <NAME (role): English clothing/appearance description — one line per character. MUST use the situation-specific attire from Stage 2 (job + news situation + scene). NEVER write generic "everyday wear," "casual clothes," "t-shirt and jeans," or "street casual wear." Be specific: colors, fabric, accessories, job-related gear.>
+⚬ <NAME (role): English clothing/appearance description — one line per character>
 
 BEAT 1:
 Camera Focus & Action: <English: camera movement + what the character physically does>
@@ -153,13 +154,19 @@ Text Overlay (Optional): <short punchy ENGLISH popup text — only when it adds 
 VIKRAM: "<pure Hindi spoken line in Devanagari>"
 
 BEAT 2:
-Camera Focus & Action: <English camera + action>
-Audio/SFX: <English SFX — background music + ambient sounds + laughter where fitting>
-RAJESH: "<pure Hindi spoken line in Devanagari>"
+...
 
-(Repeat for all {actual_scenes} beats. Speaker label is the bare character name in CAPS followed by the Hindi line in double quotes.)
+SCRIPT 2:
+SCENE DETAIL:
+...
 
-Concrete example:
+(Repeat the full SCRIPT N: block — SCENE DETAIL, CHARACTERS & CLOTHING, BEAT 1..{actual_scenes} — for every script, up to SCRIPT {num_scripts}:)
+
+CRITICAL — EVERY SCRIPT MUST BE DISTINCT:
+- Each SCRIPT N is a STANDALONE script expressing ONLY its own angle from "Scripts to Write". Never copy, repeat, or lightly rephrase another script's beats, lines, or situations into a different script.
+- A script that duplicates (or near-duplicates) another script's content FAILS the output — the whole batch is rejected.
+
+Concrete example (one script's beat structure — repeat per SCRIPT N: block):
 {sample_scenes}
 
 OUTPUT BANS (a violation fails the output): the word limits in INPUT are generation constraints — NEVER print word counts, budgets, timings, telemetry, character profiles, attire notes outside the CHARACTERS & CLOTHING block, emotional-stance notes, emojis, bracketed instructions, or any metadata in the output. Spoken lines must be a common person's Hindi — formal/linguistic/shuddh Hindi vocabulary is BANNED. Scene descriptions, camera, action, SFX and overlays are ENGLISH ONLY. ONLY the quoted speaker lines are Hindi (Devanagari).

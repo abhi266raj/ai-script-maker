@@ -17,7 +17,8 @@ Fix (defense in depth):
    columns — hard caps that hold even if the row is not a flex
    container (``width: auto`` would fill a grid track).
 3. #51 × centering (``top: 50%`` + ``translateY(-50%)``) untouched and
-   still winning the cascade; #25/#26 34px clearance, #45 colors kept.
+   still winning the cascade; #25/#26 44px clearance (#68 follow-up:
+   user asked for more × breathing room), #45 colors kept.
 
 Run: python -m pytest tests/test_chip_width_v16.py -q
 """
@@ -96,17 +97,19 @@ def test_image_cards_keep_fixed_180px_width():
 # CSS: #25/#26, #45, #51 guarantees preserved
 # ---------------------------------------------------------------------------
 
-def test_chip_clearance_34px_preserved():
+def test_chip_clearance_44px_preserved():
     _, css = _load_lui()
     block = _block(css, '[data-testid="stHorizontalBlock"] .lib-chip {')
-    assert "padding-right: 34px !important;" in block, \
+    # #68 follow-up: user asked for MORE space for the × — 44px
+    # (22px target + 6px inset + 16px breathing room).
+    assert "padding-right: 44px !important;" in block, \
         "#25/#26: label must never slide under the ×"
     assert "white-space: nowrap !important;" in block
 
 
 def test_chip_x_centering_preserved():
     _, css = _load_lui()
-    anchor = ('div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])')
+    anchor = ('div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])')
     block = _block(css, anchor)
     for needle in ("top: 50% !important;",
                    "transform: translateY(-50%) !important;",
@@ -116,7 +119,7 @@ def test_chip_x_centering_preserved():
 
 def test_chip_x_token_field_look_preserved():
     _, css = _load_lui()
-    anchor = ('div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])')
+    anchor = ('div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])')
     idx = css.find(anchor)
     btn_block = _block(css[idx:], '[data-testid="stButton"] button {')
     assert "background: transparent !important;" in btn_block
@@ -145,13 +148,14 @@ def test_chip_col_weights_proportional_to_label_length():
 
 def test_chip_col_weights_include_padding_allowance():
     lui, _ = _load_lui()
-    # 6-char label + ~6 chars for the pill's fixed 46px horizontal padding.
-    assert lui._chip_col_weights(["#abcde"]) == [12]
+    # 6-char label + ~7 chars for the pill's fixed 56px horizontal padding
+    # (#68 follow-up: clearance grew 34px → 44px for more × breathing room).
+    assert lui._chip_col_weights(["#abcde"]) == [13]
 
 
 def test_chip_col_weights_floor_keeps_tiny_labels_tappable():
     lui, _ = _load_lui()
-    assert lui._chip_col_weights(["#a"]) == [10]
+    assert lui._chip_col_weights(["#a"]) == [11]
     assert lui._chip_col_weights([]) == []
 
 
@@ -166,14 +170,20 @@ def test_chip_col_weights_monotonic():
 def test_hashtag_row_uses_proportional_weights():
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    assert "_tcols = st.columns(_chip_col_weights(tags))" in src
+    # #107: the title rides in the first column; chips keep proportional
+    # weights (never equal-weighted).
+    assert '_tcols = st.columns([_section_title_weight("Hashtags")]' in src
+    assert "_chip_col_weights(tags)" in src
     assert "_tcols = st.columns(len(tags))" not in src
 
 
 def test_newslink_row_uses_proportional_weights():
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    assert "_lcols = st.columns(_chip_col_weights(_labels))" in src
+    # #107: the title rides in the first column; chips keep proportional
+    # weights (never equal-weighted).
+    assert '_lcols = st.columns([_section_title_weight("News Links")]' in src
+    assert "_chip_col_weights(_labels)" in src
     assert "_lcols = st.columns(len(links))" not in src
 
 

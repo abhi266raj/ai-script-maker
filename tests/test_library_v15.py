@@ -5,6 +5,7 @@ verified-links-first media fetch.
 Run: python -m pytest tests/test_library_v15.py -q
 """
 import sys
+import re
 import threading
 from pathlib import Path
 
@@ -374,7 +375,7 @@ def test_fetch_images_for_story_tries_verified_links_first(libdir, monkeypatch):
     story = lib.load_story(sid)
     calls = []
 
-    def _grab(urls, tries=3):
+    def _grab(urls, tries=3, report=None):
         calls.append(list(urls))
         return ["https://img.example/hero.jpg"]
 
@@ -391,7 +392,7 @@ def test_fetch_images_for_story_falls_back_to_topic(libdir, monkeypatch):
     sid = _make_story()  # no verified links
     story = lib.load_story(sid)
     monkeypatch.setattr(lib, "_grab_article_images",
-                        lambda urls, tries=3: [])
+                        lambda urls, tries=3, report=None: [])
     monkeypatch.setattr(lib, "_fetch_article_images",
                         lambda articles, topic="", tries=3: ["https://img.example/t.jpg"])
     found = lib._fetch_images_for_story(story, "chubby dogs voting contest")
@@ -733,7 +734,7 @@ def _library_ui_module():
     return library_ui
 
 
-def test_compose_news_tags_text_links_then_tags():
+def test_compose_news_tags_text_title_then_tags_then_links():
     lui = _library_ui_module()
     meta = {
         "news_links": [
@@ -742,8 +743,9 @@ def test_compose_news_tags_text_links_then_tags():
         ],
         "hashtags": ["#DogShowdown", "#Reel"],
     }
-    assert lui._compose_news_tags_text(meta) == (
-        "https://a.example/1\nhttps://b.example/2\n\n#DogShowdown #Reel"
+    assert lui._compose_news_tags_text(meta, "My Story Title") == (
+        "My Story Title\n#DogShowdown #Reel\n\n"
+        "S1: https://a.example/1\nb.example: https://b.example/2"
     )
 
 
@@ -758,14 +760,34 @@ def test_compose_news_tags_text_dedupes_and_skips_blanks():
         ],
         "hashtags": [],
     }
-    assert lui._compose_news_tags_text(meta) == "https://a.example/1\nhttps://b.example/2"
+    assert lui._compose_news_tags_text(meta, "T") == (
+        "T\n\na.example: https://a.example/1\nb.example: https://b.example/2"
+    )
+
+
+def test_compose_news_tags_text_source_fallback_never_blank():  # #151
+    lui = _library_ui_module()
+    meta = {
+        "news_links": [
+            {"url": "https://www.mypunepulse.com/story", "source": ""},
+            {"url": "https://indianexpress.com/story", "source": "Indian Express"},
+            {"url": "not-a-url", "source": ""},
+        ],
+    }
+    assert lui._compose_news_tags_text(meta, "T") == (
+        "T\n\n"
+        "www.mypunepulse.com: https://www.mypunepulse.com/story\n"
+        "Indian Express: https://indianexpress.com/story\n"
+        "not-a-url: not-a-url"
+    )
 
 
 def test_compose_news_tags_text_tags_only_and_empty():
     lui = _library_ui_module()
+    assert lui._compose_news_tags_text({"hashtags": ["#Only"]}, "T") == "T\n#Only"
+    assert lui._compose_news_tags_text({}, "") == ""
+    assert lui._compose_news_tags_text({"news_links": [], "hashtags": []}, "") == ""
     assert lui._compose_news_tags_text({"hashtags": ["#Only"]}) == "#Only"
-    assert lui._compose_news_tags_text({}) == ""
-    assert lui._compose_news_tags_text({"news_links": [], "hashtags": []}) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -830,7 +852,7 @@ def test_refresh_images_timeout_keeps_existing_media(libdir, monkeypatch):
     sid = _make_story()
     lib.update_story_fields(sid, image_urls=["https://img.example/kept.jpg"])
 
-    def _hang(story, topic, tries=3):
+    def _hang(story, topic, tries=3, report=None):
         raise TimeoutError("article image fetch timed out after 40s")
 
     monkeypatch.setattr(lib, "_fetch_images_for_story", _hang)
@@ -1037,18 +1059,21 @@ class _FakeSt:
         self.reran = False
         self.popover_kwargs = None
         self.popovers = []  # every popover's kwargs, in render order
+        self.dialogs = []  # every dialog's kwargs, in render order (#119)
+        self.expanders = []  # every expander's kwargs, in render order (#66)
         self.buttons = []  # (label, key) in render order
         self.button_kwargs = []  # full kwargs per button, in render order
         self.link_buttons = []  # (label, url) in render order
         self.codes = []
         self.markup = []  # raw markdown html, in render order
+        self.captions = []  # caption text, in render order (#95)
         self.toasts = []  # (message, icon) in render order
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
 
     def caption(self, *a, **k):
-        pass
+        self.captions.append(a[0] if a else "")
 
     def success(self, msg):
         self.successes.append(msg)
@@ -1080,6 +1105,24 @@ class _FakeSt:
         self.popovers.append(self.popover_kwargs)
         return _FakeCtx()
 
+    def dialog(self, title, **k):
+        # #119/#130: st.dialog is a decorator at import time. The returned
+        # wrapper records the title when the dialog is actually INVOKED
+        # (not when decorated) — this lets tests assert the single-dialog
+        # invariant (#130).
+        def _deco(fn):
+            def _wrapper(*a, **kw):
+                self.dialogs.append(title)
+                return fn(*a, **kw)
+            return _wrapper
+
+        return _deco
+
+    def expander(self, label, expanded=False, **k):
+        # #66: the story-detail uploaders live in a collapsed expander.
+        self.expanders.append({"label": label, "expanded": expanded})
+        return _FakeCtx()
+
     def link_button(self, label, url, **k):
         self.link_buttons.append((label, url))
         return False
@@ -1096,8 +1139,8 @@ def _ui_with_fake_st(clicks=()):
     try:
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
-                     "button", "columns", "popover", "link_button", "code",
-                     "toast"):
+                     "button", "columns", "popover", "dialog", "expander",
+                     "link_button", "code", "toast"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -1117,52 +1160,6 @@ def _pop_kwargs(**kw):
     return d
 
 
-def test_delete_popover_renders_cancel_and_destructive_verb():
-    lui, fake = _ui_with_fake_st()
-    lui._delete_popover(**_pop_kwargs(on_yes=lambda: None))
-    assert fake.popover_kwargs["label"] == "Delete"
-    assert fake.popover_kwargs["key"] == "dp"
-    assert fake.popover_kwargs["on_change"] == "rerun"
-    # #58: explicit red verb + standard Cancel, never Yes/No. Cancel leads.
-    assert fake.buttons == [("Cancel", "dp-no"), ("Delete story", "dp-yes")]
-
-
-def test_delete_popover_destructive_runs_callback_and_closes():
-    lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
-    fired = []
-    kw = _pop_kwargs(on_yes=lambda: fired.append(1))
-    lui._delete_popover(**kw)  # run 1: destructive clicked -> close + go flags armed
-    assert fired == []
-    assert fake.session_state["dp"] is False
-    assert fake.session_state["dp-go"] is True
-    fake._clicks.clear()
-    lui._delete_popover(**kw)  # run 2: armed flag consumed -> on_yes runs
-    assert fired == [1]
-    assert fake.session_state.get("dp") is False
-    assert fake.errors == []
-
-
-def test_delete_popover_cancel_dismisses_without_deleting():
-    lui, fake = _ui_with_fake_st(clicks=("dp-no",))
-    fired = []
-    lui._delete_popover(**_pop_kwargs(on_yes=lambda: fired.append(1)))
-    assert fired == []
-    assert fake.session_state["dp"] is False
-    assert "dp-go" not in fake.session_state
-
-
-def test_delete_popover_destructive_failure_is_loud():
-    lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
-
-    def _boom():
-        raise RuntimeError("disk gone")
-
-    kw = _pop_kwargs(on_yes=_boom)
-    lui._delete_popover(**kw)  # run 1: arm the confirmation
-    fake._clicks.clear()
-    lui._delete_popover(**kw)  # run 2: on_yes raises -> loud error, popover reopened
-    assert fake.errors == ["Delete failed: disk gone"]
-    assert fake.session_state.get("dp") is True
 
 
 def test_confirm_delete_story_deletes_and_cleans_session(libdir):
@@ -1264,8 +1261,13 @@ def _reset_mocks(monkeypatch, tags, images, articles):
                         lambda story, topic, ai_engine=None: (tags, "AI tags."))
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: images)
-    monkeypatch.setattr(lib, "_fetch_news_articles",
-                        lambda topic, limit=6: articles)
+    # _do_reset fetches news via _fetch_news_link_candidates (#82),
+    # which returns link dicts (not article objects).
+    monkeypatch.setattr(
+        lib, "_fetch_news_link_candidates",
+        lambda topic, count=5, exclude_urls=(): [
+            {"title": a.title, "url": a.link, "source": a.source}
+            for a in articles][:count])
     # Reset now content-hashes fresh images: distinct bytes per URL.
     monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
 
@@ -1422,23 +1424,430 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: copies.append((label, text, key)))
+    # #95: WhatsApp.app present -> direct deep link, no browser tab.
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
-    lui._render_share_popover("sid1", share_text)
-    # Popover trigger is the self-describing dropdown (#30).
-    assert fake.popover_kwargs["label"] == "Share"
+    lui._render_share_popover("sid1", share_text, {})
+    # Popover trigger is the self-describing dropdown (#30): icon-only,
+    # native material icon (#111).
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_SHARE
     assert fake.popover_kwargs["key"] == "lib_sharepop_sid1"
-    # Copy button gets the exact share text…
+    # Copy button gets the exact share text...
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
-    # …and the WhatsApp link carries the exact same text, URL-encoded,
-    # deep-linking into the installed Mac app (#28).
-    assert fake.link_buttons == [("Send via WhatsApp",
-                                  lui._whatsapp_share_url(share_text))]
-    assert fake.link_buttons[0][1].startswith("whatsapp://send?text=")
-    import urllib.parse as up
-    sent = up.unquote(fake.link_buttons[0][1].split("?text=", 1)[1])
-    assert sent == share_text
+    # #139: "Send via WhatsApp" is a REAL button now - the click hands the
+    # whatsapp:// deep link to macOS via `open` on the server. No anchor in
+    # the markup at all (the old plain-anchor approach depended on the
+    # browser routing the custom scheme, which proved unreliable).
+    assert fake.link_buttons == []
+    assert not any("whatsapp://" in m for m in fake.markup)
+    assert not any("lib-wa-direct" in m for m in fake.markup)
+    wa_buttons = [b for b in fake.buttons if b[0] == "Send via WhatsApp"]
+    assert wa_buttons == [("Send via WhatsApp", "lib_wa_sid1")]
     # No share-text preview block anymore (#27).
     assert fake.codes == []
+
+
+def test_share_popover_whatsapp_click_opens_with_exact_text(monkeypatch):
+    # #139: clicking "Send via WhatsApp" calls _open_whatsapp_share with the
+    # EXACT share text and toasts a confirmation.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    opened = []
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share",
+                        lambda text: opened.append(text) or "app")
+    share_text = "https://example.com/a\n\n#DogShowdown #Funny"
+    lui._render_share_popover("sid1", share_text, {})
+    assert opened == [share_text]
+    assert fake.toasts == [("WhatsApp opened \u2014 pick a chat to send.", None)]
+    assert fake.errors == []
+
+
+def test_share_popover_whatsapp_browser_fallback_toast(monkeypatch):
+    # #144: when the app path fails and the browser fallback is used, the
+    # toast says so honestly instead of claiming the app opened.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share", lambda text: "browser")
+    lui._render_share_popover("sid1", "https://example.com/a", {})
+    assert fake.toasts == [("Opening WhatsApp in your browser \u2014 "
+                            "pick a chat to send.", None)]
+    assert fake.errors == []
+
+
+def test_share_popover_whatsapp_click_failure_is_loud(monkeypatch):
+    # #139/#144: if both the app handoff and the browser fallback fail,
+    # the error is loud - never silent.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    def _boom(text):
+        raise RuntimeError("app handoff and browser fallback both failed")
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share", _boom)
+    lui._render_share_popover("sid1", "https://example.com/a", {})
+    assert fake.errors == [
+        "Couldn't share via WhatsApp: app handoff and browser fallback "
+        "both failed"]
+    assert fake.toasts == []
+
+
+def test_whatsapp_video_path_returns_none_when_no_video():
+    # #150: no video attached -> None (text-only share unchanged).
+    lui, _fake = _ui_with_fake_st()
+    assert lui._whatsapp_video_path("sid1", {}) is None
+    assert lui._whatsapp_video_path("sid1", {"video_file": ""}) is None
+
+
+def test_whatsapp_video_path_returns_path_when_video_exists(monkeypatch, tmp_path):
+    # #150: video attached and file exists -> absolute path string.
+    lui, _fake = _ui_with_fake_st()
+    vid = tmp_path / "sid1.mp4"
+    vid.write_bytes(b"fake-video")
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: vid)
+    result = lui._whatsapp_video_path("sid1", {"video_file": "sid1.mp4"})
+    assert result == str(vid.resolve())
+
+
+def test_whatsapp_video_path_raises_when_video_missing(monkeypatch):
+    # #150: metadata references a video but the file is gone -> loud failure.
+    lui, _fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: None)
+    try:
+        lui._whatsapp_video_path("sid1", {"video_file": "sid1.mp4"})
+    except RuntimeError as e:
+        assert "missing" in str(e).lower()
+        assert "sid1.mp4" in str(e)
+    else:
+        raise AssertionError("expected RuntimeError for missing video file")
+
+
+def test_share_popover_whatsapp_includes_video_path(monkeypatch, tmp_path):
+    # #150: video attached -> video path appended to share text, toast
+    # tells the user to attach it manually (URL scheme can't carry media).
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    opened = []
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share",
+                        lambda text: opened.append(text) or "app")
+    vid = tmp_path / "sid1.mp4"
+    vid.write_bytes(b"fake-video")
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: vid)
+    share_text = "https://example.com/a\n\n#DogShowdown #Funny"
+    meta = {"video_file": "sid1.mp4"}
+    lui._render_share_popover("sid1", share_text, meta)
+    assert len(opened) == 1
+    assert opened[0].startswith(share_text)
+    assert "Video: %s" % vid.resolve() in opened[0]
+    assert len(fake.toasts) == 1
+    assert "attach the video manually" in fake.toasts[0][0].lower()
+    assert fake.errors == []
+
+
+def test_share_popover_whatsapp_video_missing_is_loud(monkeypatch):
+    # #150: video referenced but file missing -> loud error, no handoff.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    opened = []
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share",
+                        lambda text: opened.append(text) or "app")
+    monkeypatch.setattr(lui.lib, "media_path", lambda sid, fn: None)
+    lui._render_share_popover("sid1", "https://example.com/a",
+                             {"video_file": "sid1.mp4"})
+    assert opened == []
+    assert any("couldn't share via whatsapp" in e.lower() for e in fake.errors)
+    assert fake.toasts == []
+
+def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
+    lui, fake = _ui_with_fake_st()
+    copies = []
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key: copies.append((label, text, key)))
+    # #144: no WhatsApp.app → honest inline note; the button still works
+    # via the browser fallback when clicked.
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: False)
+    share_text = "https://example.com/a\n\n#DogShowdown #Funny"
+    lui._render_share_popover("sid1", share_text, {})
+    assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
+    assert fake.link_buttons == []
+    assert not any("whatsapp://" in m for m in fake.markup)
+    assert any("browser" in c for c in fake.captions)
+
+
+def test_whatsapp_app_installed_detects_applications_dir(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    import os as _os
+    import shutil as _shutil
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        # mdfind unavailable → pure path-check fallback.
+        monkeypatch.setattr(_shutil, "which", lambda _cmd: None)
+        monkeypatch.setattr("os.path.isdir",
+                            lambda p: p == "/Applications/WhatsApp.app")
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # …and the ~/Applications fallback.
+        home_app = _os.path.expanduser("~/Applications/WhatsApp.app")
+        monkeypatch.setattr("os.path.isdir", lambda p: p == home_app)
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # #108: the macOS localized-folder install.
+        loc_app = "/Applications/WhatsApp.localized/WhatsApp.app"
+        monkeypatch.setattr("os.path.isdir", lambda p: p == loc_app)
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # Neither location → not installed.
+        monkeypatch.setattr("os.path.isdir", lambda p: False)
+        assert lui._whatsapp_app_installed() is False
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+def test_whatsapp_app_installed_is_cached(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    import os as _os
+    import shutil as _shutil
+    calls = []
+    real_isdir = _os.path.isdir
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr(_shutil, "which", lambda _cmd: None)
+        def _counting(p):
+            calls.append(p)
+            return real_isdir(p)
+        monkeypatch.setattr("os.path.isdir", _counting)
+        lui._whatsapp_app_installed()
+        lui._whatsapp_app_installed()
+        # Six candidate paths checked once (#139 added the sandbox/group
+        # containers); the second call hits the cache.
+        assert len(calls) == 6
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+def test_whatsapp_app_installed_mdfind_finds_arbitrary_path(monkeypatch):
+    # #108: Spotlight by bundle ID finds the app anywhere on disk.
+    lui, _fake = _ui_with_fake_st()
+    import shutil as _shutil
+    import subprocess as _sp
+    seen = {}
+
+    class _FakeResult:
+        returncode = 0
+        stdout = "/Applications/WhatsApp.localized/WhatsApp.app\n"
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        return _FakeResult()
+
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr(_shutil, "which",
+                            lambda cmd: "/usr/bin/mdfind" if cmd == "mdfind" else None)
+        monkeypatch.setattr(_sp, "run", _fake_run)
+        assert lui._whatsapp_app_installed() is True
+        # The query must be the WhatsApp bundle ID.
+        assert any("net.whatsapp.WhatsApp" in a for a in seen["argv"])
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+def test_whatsapp_app_installed_mdfind_failure_falls_back(monkeypatch):
+    # #108: mdfind broken (Spotlight disabled) → path checks, not False.
+    lui, _fake = _ui_with_fake_st()
+    import shutil as _shutil
+    import subprocess as _sp
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/mdfind")
+        def _boom(_argv, **_kwargs):
+            raise OSError("Spotlight unavailable")
+        monkeypatch.setattr(_sp, "run", _boom)
+        monkeypatch.setattr("os.path.isdir",
+                            lambda p: p == "/Applications/WhatsApp.app")
+        assert lui._whatsapp_app_installed() is True
+        lui._whatsapp_app_installed.cache_clear()
+        # mdfind finds nothing → second-opinion path check still applies.
+        class _Empty:
+            returncode = 0
+            stdout = "\n"
+        monkeypatch.setattr(_sp, "run", lambda _a, **_k: _Empty())
+        monkeypatch.setattr("os.path.isdir", lambda p: False)
+        assert lui._whatsapp_app_installed() is False
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
+
+
+
+# ---------------------------------------------------------------------------
+# #139: server-side WhatsApp handoff via macOS `open`
+# ---------------------------------------------------------------------------
+
+def _darwin_platform(monkeypatch):
+    import platform as _plat
+    monkeypatch.setattr(_plat, "system", lambda: "Darwin")
+
+
+def test_open_whatsapp_share_calls_open_with_deep_link(monkeypatch):
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+    seen = {}
+
+    class _Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def _fake_run(argv, **kwargs):
+        seen["argv"] = argv
+        seen["kwargs"] = kwargs
+        return _Result()
+
+    monkeypatch.setattr(_shutil, "which",
+                        lambda cmd: "/usr/bin/open" if cmd == "open" else None)
+    monkeypatch.setattr(_sp, "run", _fake_run)
+    text = "https://example.com/a\n\n#DogShowdown #Funny"
+    # #144: app path succeeds -> returns "app".
+    assert lui._open_whatsapp_share(text) == "app"
+    assert seen["argv"][0] == "/usr/bin/open"
+    url = seen["argv"][1]
+    assert url.startswith("whatsapp://send?text=")
+    assert "wa.me" not in url
+    import urllib.parse as up
+    assert up.unquote(url.split("?text=", 1)[1]) == text
+
+
+def test_whatsapp_web_share_url_carries_exact_text():
+    # #144: browser fallback URL is wa.me with the EXACT share text.
+    lui, _fake = _ui_with_fake_st()
+    text = ("https://example.com/a\nhttps://example.com/b\n\n"
+            "#DogShowdown #Funny")
+    url = lui._whatsapp_web_share_url(text)
+    assert url.startswith("https://wa.me/?text=")
+    assert "whatsapp://" not in url
+    import urllib.parse as up
+    assert up.unquote(url.split("?text=", 1)[1]) == text
+
+
+def test_open_whatsapp_share_non_darwin_uses_browser_fallback(monkeypatch):
+    # #144: non-macOS server can't do the app handoff -> straight to the
+    # browser fallback, which succeeds here.
+    lui, _fake = _ui_with_fake_st()
+    import platform as _plat
+    monkeypatch.setattr(_plat, "system", lambda: "Linux")
+    import webbrowser as _wb
+    seen = {}
+    monkeypatch.setattr(_wb, "open",
+                        lambda url: seen.setdefault("url", url) or True)
+    assert lui._open_whatsapp_share("hi") == "browser"
+    assert seen["url"].startswith("https://wa.me/?text=")
+
+
+def test_open_whatsapp_share_non_darwin_both_fail_is_loud(monkeypatch):
+    # #144: non-Darwin AND browser launch fails -> loud error naming both.
+    lui, _fake = _ui_with_fake_st()
+    import platform as _plat
+    monkeypatch.setattr(_plat, "system", lambda: "Linux")
+    import webbrowser as _wb
+    monkeypatch.setattr(_wb, "open", lambda url: False)
+    import pytest as _pt
+    with _pt.raises(RuntimeError, match="browser fallback both failed"):
+        lui._open_whatsapp_share("hi")
+
+
+def test_open_whatsapp_share_missing_open_falls_back_to_browser(monkeypatch):
+    # #144: no `open` on PATH -> app path skipped, browser fallback used.
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    monkeypatch.setattr(_shutil, "which", lambda cmd: None)
+    import webbrowser as _wb
+    monkeypatch.setattr(_wb, "open", lambda url: True)
+    assert lui._open_whatsapp_share("hi") == "browser"
+
+
+def test_open_whatsapp_share_open_failure_falls_back_to_browser(monkeypatch):
+    # #144: `open` exits non-zero (no scheme handler) -> browser fallback.
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+    import webbrowser as _wb
+
+    class _Result:
+        returncode = 1
+        stdout = ""
+        stderr = "The application does not exist."
+
+    monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
+    monkeypatch.setattr(_sp, "run", lambda argv, **kw: _Result())
+    seen = {}
+    monkeypatch.setattr(_wb, "open",
+                        lambda url: seen.setdefault("url", url) or True)
+    assert lui._open_whatsapp_share("hi") == "browser"
+    assert seen["url"].startswith("https://wa.me/?text=")
+
+
+def test_open_whatsapp_share_both_fail_is_loud(monkeypatch):
+    # #144: app handoff fails AND browser launch fails -> loud error
+    # carrying both failures' details.
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+    import webbrowser as _wb
+
+    class _Result:
+        returncode = 1
+        stdout = ""
+        stderr = "The application does not exist."
+
+    monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
+    monkeypatch.setattr(_sp, "run", lambda argv, **kw: _Result())
+    monkeypatch.setattr(_wb, "open", lambda url: False)
+    import pytest as _pt
+    with _pt.raises(RuntimeError,
+                    match="The application does not exist.*wa.me"):
+        lui._open_whatsapp_share("hi")
+
+
+def test_open_whatsapp_share_timeout_falls_back_to_browser(monkeypatch):
+    # #144: `open` hangs -> timeout -> browser fallback.
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+    import webbrowser as _wb
+
+    def _slow(argv, **kwargs):
+        raise _sp.TimeoutExpired(cmd=argv, timeout=15)
+
+    monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
+    monkeypatch.setattr(_sp, "run", _slow)
+    monkeypatch.setattr(_wb, "open", lambda url: True)
+    assert lui._open_whatsapp_share("hi") == "browser"
+
+
+def test_whatsapp_app_installed_group_container_signal(monkeypatch):
+    # #139: the Mac App Store build's group container counts as installed,
+    # even when mdfind is unavailable and the .app path is unknown.
+    lui, _fake = _ui_with_fake_st()
+    import os as _os
+    import shutil as _shutil
+    lui._whatsapp_app_installed.cache_clear()
+    try:
+        monkeypatch.setattr(_shutil, "which", lambda _cmd: None)
+        group = _os.path.expanduser(
+            "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared")
+        monkeypatch.setattr("os.path.isdir", lambda p: p == group)
+        assert lui._whatsapp_app_installed() is True
+    finally:
+        lui._whatsapp_app_installed.cache_clear()
 
 
 def test_share_popover_empty_state(monkeypatch):
@@ -1446,8 +1855,9 @@ def test_share_popover_empty_state(monkeypatch):
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
-    lui._render_share_popover("sid1", "")
-    assert fake.popover_kwargs["label"] == "Share"
+    lui._render_share_popover("sid1", "", {})
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_SHARE
     assert fake.link_buttons == []
     assert fake.codes == []
 
@@ -1462,7 +1872,8 @@ def test_copy_popover_renders_four_actions(monkeypatch):
             "uploaded_images": []}
     script_md = "**Hook:** hello"
     lui._render_copy_popover("sid1", meta, script_md)
-    assert fake.popover_kwargs["label"] == "Copy"
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_COPY
     assert fake.popover_kwargs["key"] == "lib_copypop_sid1"
     labels = [c[0] for c in copies]
     assert labels == ["Script", "Script + Tags", "Script + Media", "All"]
@@ -1484,7 +1895,8 @@ def test_copy_popover_empty_state(monkeypatch):
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
     lui._render_copy_popover("sid1", {}, "")
-    assert fake.popover_kwargs["label"] == "Copy"
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_COPY
     assert fake.codes == []
 
 
@@ -1504,7 +1916,8 @@ def test_action_dropdowns_have_no_actions_header(monkeypatch):
 def test_reset_popover_idle_wiring():
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", set(), ai_engine=None)
-    assert fake.popover_kwargs["label"] == "Reset"
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_RESET
     assert fake.popover_kwargs["key"] == "lib_resetpop_sid1"
     assert fake.popover_kwargs["disabled"] is False
     assert fake.popover_kwargs["on_change"] == "rerun"
@@ -1514,11 +1927,12 @@ def test_reset_popover_idle_wiring():
 
 
 def test_reset_popover_busy_label_stable_and_disabled():
-    # #53: the trigger label NEVER changes to "Resetting…" — it keeps
-    # "Reset", shows the CSS spinner and stays disabled while resetting.
+    # #53: the trigger label NEVER changes to "Resetting…" — it shows
+    # the native spinner icon (#111) and stays disabled while resetting.
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", {"reset"}, ai_engine=None)
-    assert fake.popover_kwargs["label"] == "Reset"
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == "spinner"
     assert fake.popover_kwargs["disabled"] is True
 
 
@@ -1527,7 +1941,8 @@ def test_reset_popover_blocked_by_other_kind_no_spinner():
     # not working) while another kind runs.
     lui, fake = _ui_with_fake_st()
     lui._render_reset_popover("sid1", {"hashtags"}, ai_engine=None)
-    assert fake.popover_kwargs["label"] == "Reset"
+    assert fake.popover_kwargs["label"] == ""
+    assert fake.popover_kwargs["icon"] == lui._TB_ICON_RESET
     assert fake.popover_kwargs["disabled"] is True
     assert 'data-marker="lib-spin-reset"' not in "".join(fake.markup)
 
@@ -1639,8 +2054,10 @@ def test_actions_row_buttons_share_38px_height(monkeypatch):
     css = _capture_library_css(lui, monkeypatch)
     # The lib-actions marker rule is gone…
     assert '[data-marker="lib-actions"]' not in css
-    # …and the flat-layout link-button height rule stays gone.
-    assert '[data-testid="stLinkButton"] a' not in css
+    # …and the flat-layout link-button height rule stays gone: it was
+    # scoped to the lib-actions marker, which no longer exists.
+    # (#134 adds a DIFFERENT [data-testid="stLinkButton"] a rule for
+    # news-link chips in hscroll rows — unrelated to the actions row.)
     assert lui._LIB_ACTION_BTN_H_PX == 38
 
 
@@ -1682,6 +2099,8 @@ def test_danger_marker_containers_are_collapsed(monkeypatch):
 def test_danger_red_button_rules_survive_collapse_trigger_is_neutral(monkeypatch):
     """#58: macOS red lives ONLY on the explicit destructive button inside
     the popover — the trigger is neutral (deliberate reversal of #38).
+    #87: the red is a SOLID fill with white text (Apple destructive
+    alert-button style), not red text + red border.
 
     display:none removes the marker container from layout but NOT from
     the DOM, so the adjacent-sibling red rule for the destructive button
@@ -1695,8 +2114,14 @@ def test_danger_red_button_rules_survive_collapse_trigger_is_neutral(monkeypatch
     assert red_btn + ":hover" in css
     # The trigger is neutral now: no red popover-trigger selectors remain.
     assert '[data-testid="stPopoverButton"]' not in css
-    # Exactly the destructive button + its hover carry the red.
-    assert css.count("color: #FF3B30 !important;") == 2
+    # #87: exactly the destructive button carries the solid red fill
+    # (base) + white text (base and hover); hover darkens the fill.
+    assert css.count("background-color: #FF3B30 !important;") == 1
+    assert css.count("color: #FFFFFF !important;") == 2
+    assert css.count("background-color: #D92D20 !important;") == 1
+    # No standalone red-text declaration survives (the lookbehind skips
+    # background-color:/border-color:, which legitimately carry the red).
+    assert not re.search(r"(?<![a-z-])color: #FF3B30 !important;", css)
 
 
 def test_danger_button_marker_immediately_precedes_button(monkeypatch):
@@ -1745,24 +2170,27 @@ def test_confirm_popover_marker_immediately_precedes_popover(monkeypatch):
 
 def test_detail_toolbar_weights_fit_full_labels():
     """#38: the Delete trigger was ellipsized to "D..." in the 1.0-weight
-    column, and "Update Hashtags"/"Update Images" also showed "…". Every
-    action column must be weighted to fit its label — #53: labels never
-    change mid-work, so the static labels ("Update Hashtags",
-    "Update Images", "Reset", "Delete" + chevron) are the longest state.
-    #46: Share/Copy joined the same row — Delete stays the trailing (last)
-    column and each toolbar total is unchanged (10.0) so the overall
-    layout — and the #24 baseline alignment — is preserved."""
+    column. #71: hashtags/images are icon-only buttons ("#"/"🖼" glyphs, the
+    tooltip keeps the "Update …" label), so their columns shrank to icon
+    width and the freed weight moved to the spacer — no dead space in the
+    action area, Delete stays trailing. #80: the news button is icon-only
+    too ("📰", tooltip "Update News") in its own 0.9 slot. #53: glyph
+    labels never change mid-work, so the static labels are the longest
+    state. #46: Share/Copy joined the same row; each toolbar total is
+    unchanged (10.0) so the overall layout — and the #24 baseline
+    alignment — is preserved."""
     lui, _fake = _ui_with_fake_st()
     assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.0
     assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0
-    # Minimum widths that fit the longest label states (generous headroom
-    # over the old 1.7/1.6/1.3/1.0 weights that truncated).
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 2.0  # Update Hashtags
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 1.8  # Update Images
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 1.3  # Reset popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.0  # Share popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Copy popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] >= 1.5  # Delete popover trigger
+    # Icon columns fit the glyph + spinner (generous headroom); text
+    # columns unchanged from the #38 fit.
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # hashtag icon button
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 0.8  # image icon button
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 0.8  # news icon button (#80)
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Share popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[5] >= 1.0  # Copy popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[7] >= 1.5  # Delete popover trigger
     assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
 
 
@@ -1781,9 +2209,10 @@ def test_destructive_popover_has_hig_anchor_caret(monkeypatch):
     assert 'transform: rotate(45deg) !important;' in css
     assert 'background: inherit !important;' in css
     # Theme-safe: the caret introduces no hard-coded surface color, and the
-    # #58 red rule set is exactly the destructive button + hover (the
-    # trigger is neutral now).
-    assert css.count("color: #FF3B30 !important;") == 2
+    # destructive-button red rule set is exactly the solid-red button + hover
+    # (#87; the trigger is neutral).
+    assert css.count("background-color: #FF3B30 !important;") == 1
+    assert not re.search(r"(?<![a-z-])color: #FF3B30 !important;", css)
 
 
 def test_confirm_popover_emits_body_anchor_marker_first(monkeypatch):

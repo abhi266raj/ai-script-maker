@@ -4,8 +4,8 @@ Library story detail.
 #25: hashtag chips cut tag text off under the × overlay button.
 #51 redesign: the × is now a macOS token-field remove glyph centered
 INSIDE the pill (22px at 6px from the pill's trailing edge), so the ×
-clearance lives in the chip's own padding-right (34px = 22px target +
-6px inset + 6px breathing room) — tag text can never slide underneath
+clearance lives in the chip's own padding-right (44px = 22px target +
+6px inset + 16px breathing room — #68 follow-up: more space for the ×) — tag text can never slide underneath
 it, regardless of chip width.
 
 #26: news-link chips had the same × truncation, and their label was the
@@ -57,9 +57,11 @@ def test_chip_column_no_longer_reserves_x_clearance():
 def test_chip_x_rules_are_chip_scoped():
     """The chip × centering/glyph rules must only hit columns holding a
     chip — the :has(.lib-chip) scope is what keeps image-card columns on
-    their inset top-right × over the image corner."""
+    their inset top-right × over the image corner.
+    #134: the scope also covers stLinkButton columns (news links are
+    native link buttons now)."""
     css, _ = _capture_library_css()
-    assert 'div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])' in css
+    assert 'div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])' in css
     # No blanket × restyle that would also hit image cards.
     assert 'div[data-testid="stColumn"]:has([data-marker="lib-x-r"])\n' \
         '        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])\n' \
@@ -69,11 +71,11 @@ def test_chip_x_rules_are_chip_scoped():
 
 def test_chip_own_padding_clears_x_target():
     """The pill's own padding-right must clear the 22px × target sitting
-    6px inside the pill edge: 34px = 22px + 6px inset + 6px breathing
+    6px inside the pill edge: 44px = 22px + 6px inset + 16px breathing
     room — tag text can never slide underneath the ×. This is the
     #25/#26 no-truncation guarantee under the #51 design."""
     css, _ = _capture_library_css()
-    assert "padding-right: 34px !important;" in css
+    assert "padding-right: 44px !important;" in css
 
 
 def test_image_card_x_overlay_unchanged():

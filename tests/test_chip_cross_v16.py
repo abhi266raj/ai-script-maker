@@ -40,7 +40,9 @@ def _capture_library_css():
 def _chip_x_block(css, suffix):
     """Return the declaration block of the chip-scoped × rule whose
     selector ends with `suffix` (container, button, or button:hover)."""
-    anchor = ('div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])\n'
+    # #134: the chip × scope covers .lib-chip AND stLinkButton columns
+    # (news links are native link buttons now).
+    anchor = ('div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])\n'
               '        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])\n'
               '        + div[data-testid="stElementContainer"]' + suffix + " {")
     assert anchor in css, f"chip × {suffix or 'container'} rule missing"
@@ -70,8 +72,9 @@ def test_chip_x_centering_is_chip_scoped():
     # Strip /* … */ comments so prose can't trip the selector check.
     bare = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
     # No chip-scoped selector mentions lib-x-l: the ✎ keeps its own rule.
+    # (#134: the chip scope is :has(.lib-chip, [data-testid="stLinkButton"]).)
     for line in bare.splitlines():
-        if ":has(.lib-chip)" in line:
+        if ":has(.lib-chip" in line:
             assert "lib-x-l" not in line
 
 
@@ -157,9 +160,9 @@ def test_chip_theme_colors_preserved():
 
 def test_chip_no_truncation_guarantee_preserved():
     """#25/#26: chips stay single-line with ellipsis; the label clears the
-    × via the pill's own 34px padding-right."""
+    × via the pill's own 44px padding-right (#68 follow-up)."""
     css = _capture_library_css()
     for needle in ("white-space: nowrap !important;",
                    "text-overflow: ellipsis;",
-                   "padding-right: 34px !important;"):
+                   "padding-right: 44px !important;"):
         assert needle in css, needle

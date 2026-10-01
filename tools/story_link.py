@@ -24,8 +24,14 @@ _HEADERS = {
 }
 
 # Image URLs that are never story photos (logos, sprites, tracking pixels).
+# NOTE (issue #86): the ``ads/`` alternative uses a negative lookbehind so it
+# does NOT match inside longer words — the bare substring also matched
+# ``/uploads/`` (``uplo[ads/]``), silently killing every WordPress article
+# image (``.../wp-content/uploads/...``). Real ad paths (``/ads/``,
+# ``/my-ads/``, ``/banners/ads/``) are still dropped; the user explicitly
+# does not want ad images.
 _JUNK_RE = re.compile(
-    r"(logo|sprite|icon|avatar|placeholder|pixel|spacer|blank|ad-|ads/|"
+    r"(logo|sprite|icon|avatar|placeholder|pixel|spacer|blank|ad-|(?<![a-z])ads/|"
     r"tracking|beacon|1x1|transparent)",
     re.IGNORECASE,
 )
@@ -64,6 +70,57 @@ def image_alt_is_unwanted(alt: Optional[str]) -> bool:
 
 def _norm(url: str) -> str:
     return (url or "").strip().split("#")[0]
+
+
+# Tags that mark site chrome (never story content) when an image sits
+# under them. Issue #86: the fetcher must return ONLY story images.
+_CHROME_TAGS = ("header", "nav", "footer", "aside")
+
+# Story-body selectors, tried after <article>/<main>/[role=main].
+_STORY_BODY_SELECTORS = (
+    '[itemprop="articleBody"]',
+    ".article-body", ".articleBody",
+    ".article-content", ".articleContent",
+    ".story-body", ".storyBody",
+    ".story-content", ".storyContent",
+    ".entry-content", ".post-content", ".post-body",
+    "#article-body", "#story-body",
+)
+
+
+def _story_body_container(soup):
+    """Return ``(container, scoped)`` for in-article image extraction.
+
+    Prefers ``<article>``, then ``<main>`` / ``[role="main"]``, then common
+    story-body selectors. ``scoped`` is False when no article body could
+    be identified — the caller falls back to a whole-page scan and must
+    say so honestly (never silently).
+    """
+    for finder in (lambda: soup.find("article"),
+                   lambda: soup.find("main"),
+                   lambda: soup.find(attrs={"role": "main"})):
+        container = finder()
+        if container is not None:
+            return container, True
+    for sel in _STORY_BODY_SELECTORS:
+        container = soup.select_one(sel)
+        if container is not None:
+            return container, True
+    return None, False
+
+
+def _in_chrome(tag, *, allow_header_inside: bool) -> bool:
+    """True when ``tag`` sits under site-chrome elements.
+
+    ``<header>`` counts as chrome only in whole-page fallback — inside a
+    scoped article body it is the article's own header (often wrapping
+    the hero image), not the site header.
+    """
+    for parent in tag.parents:
+        name = getattr(parent, "name", None)
+        if name in _CHROME_TAGS and (name != "header" or not allow_header_inside):
+            return True
+    return False
 
 
 def fetch_story_page(url: str, timeout: int = _TIMEOUT) -> Dict:
@@ -115,13 +172,26 @@ def fetch_story_page(url: str, timeout: int = _TIMEOUT) -> Dict:
 
 
 def extract_story_images_with_alt(html: str, base_url: str,
-                                   limit: int = 4) -> List[Tuple[str, Optional[str]]]:
+                                   limit: int = 4,
+                                   scope_report: Optional[Dict] = None
+                                   ) -> List[Tuple[str, Optional[str]]]:
     """Extract up to ``limit`` story images as ``(url, alt_text)`` pairs.
 
     Priority: og:image → twitter:image → JSON-LD image → in-article
-    <img>/<figure> photos. Logos, sprites, SVGs and tracking pixels are
-    skipped, and so is any image whose alt text marks it as an unwanted
-    asset (see :func:`image_alt_is_unwanted`) — present alt text is the
+    photos. Page-level meta (og/twitter/JSON-LD) is the publisher's
+    declared story image and is kept as-is. In-article extraction is
+    scoped to the story body (``<article>`` → ``<main>``/``[role=main]``
+    → common story-body selectors); images under ``<header>``/``<nav>``/
+    ``<footer>``/``<aside>`` are site chrome and are excluded (issue
+    #86). When no article body can be identified, the scan falls back
+    to the whole page — still excluding chrome by ancestor — and
+    ``scope_report["scoped"]`` is set to False so the caller can say so
+    honestly instead of silently returning whatever the page yields.
+
+    ``<amp-img>`` tags are parsed like ``<img>`` (AMP pages use them
+    instead). Logos, sprites, SVGs and tracking pixels are skipped,
+    and so is any image whose alt text marks it as an unwanted asset
+    (see :func:`image_alt_is_unwanted`) — present alt text is the
     primary keep/remove signal. Meta/JSON-LD images carry no alt text
     (``None``). URLs are absolutized and deduplicated.
     """
@@ -176,17 +246,17 @@ def extract_story_images_with_alt(html: str, base_url: str,
                     _add(im)
                 elif isinstance(im, dict) and im.get("url"):
                     _add(im["url"])
-    # 4. In-article photos (<article>/<main>/<figure> first, then body)
-    containers = []
-    for sel in ("article", "main"):
-        c = soup.find(sel)
-        if c:
-            containers.append(c)
-    containers.extend(soup.find_all("figure"))
-    if not containers:
-        containers = [soup]
-    for container in containers:
-        for img in container.find_all("img"):
+    # 4. In-article photos, scoped to the story body (issue #86): only
+    # story images — never site chrome. <amp-img> is parsed like <img>
+    # because AMP pages use it instead.
+    container, scoped = _story_body_container(soup)
+    if scope_report is not None:
+        scope_report["scoped"] = scoped
+    roots = [container] if scoped else [soup]
+    for root in roots:
+        for img in root.find_all(["img", "amp-img"]):
+            if _in_chrome(img, allow_header_inside=scoped):
+                continue
             alt = img.get("alt")
             src = (img.get("src") or img.get("data-src")
                    or img.get("data-lazy-src") or "")

@@ -1923,6 +1923,46 @@ class ChiefEditorCoordinatorAgent:
         state["verification"] = verification
         state["scripts"] = scripts
 
+        # === #138 DUPLICATE-SCRIPT GATE ===
+        # The batch result must contain N DISTINCT script objects. If an
+        # upstream stage ever aliases one script across all slots (shared
+        # mutable reference) or the model returns the same content N times,
+        # fail loudly here — never ship "4 scripts" that are one script.
+        _seen_ids = set()
+        for _di, _ds in enumerate(scripts):
+            if id(_ds) in _seen_ids:
+                raise ModelGenerationError(
+                    f"Stage 6 failed: script {_di + 1} of {len(scripts)} is the "
+                    f"SAME object as an earlier script (shared reference) — "
+                    f"each script must be a distinct object end-to-end."
+                )
+            _seen_ids.add(id(_ds))
+        import difflib as _difflib
+
+        def _norm6(t):
+            return re.sub(r"\s+", " ", (t or "").lower()).strip()
+
+        _narrs6 = [_norm6(getattr(_s, "narration_hindi", "")) for _s in scripts]
+        for _a in range(len(_narrs6)):
+            for _b in range(_a + 1, len(_narrs6)):
+                _ta, _tb = _narrs6[_a], _narrs6[_b]
+                if not _ta or not _tb:
+                    continue
+                _dup6, _sim6 = False, 0.0
+                if _ta == _tb:
+                    _dup6, _sim6 = True, 1.0
+                else:
+                    _la, _lb = len(_ta), len(_tb)
+                    if _la and _lb and 0.9 <= _la / _lb <= 1.1:
+                        _sim6 = _difflib.SequenceMatcher(None, _ta, _tb).ratio()
+                        _dup6 = _sim6 > 0.90
+                if _dup6:
+                    raise ModelGenerationError(
+                        f"Stage 6 failed: script {_a + 1} and script {_b + 1} of "
+                        f"{len(scripts)} are duplicates (similarity {_sim6:.0%}) — "
+                        f"the batch result must contain {len(scripts)} distinct scripts."
+                    )
+
         # Integration-only Stage 6: content compliance (word budget, character
         # count, tone, dialogue/scene quality) is owned by Stages 3/4/5 and is
         # deliberately NOT re-checked here. The integration gate above is the

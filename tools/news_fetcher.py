@@ -1,11 +1,12 @@
-"""Live India news: Google News/Trends, Reddit, Mastodon (free public APIs)."""
+"""Live India news: Google News/Trends, Reddit, Mastodon, Bing News, DuckDuckGo (free public APIs)."""
 
 import html
+import random
 import re
 import urllib.parse
 import datetime
 from email.utils import parsedate_to_datetime
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 import feedparser
 import httpx
 from bs4 import BeautifulSoup
@@ -15,6 +16,100 @@ _HTTP_HEADERS = {
     "User-Agent": "HindiReelStudio/1.0 (news desk; +https://local)",
     "Accept": "application/json, application/rss+xml, text/xml, */*",
 }
+
+
+# Display names for known publishers, keyed by normalized host (no
+# "www."). Used by publisher_name_from_url (#153).
+_PUBLISHER_NAMES = {
+    "indianexpress.com": "Indian Express",
+    "timesofindia.indiatimes.com": "Times of India",
+    "economictimes.indiatimes.com": "Economic Times",
+    "hindustantimes.com": "Hindustan Times",
+    "thehindu.com": "The Hindu",
+    "ndtv.com": "NDTV",
+    "news18.com": "News18",
+    "aajtak.in": "Aaj Tak",
+    "abplive.com": "ABP Live",
+    "zeenews.india.com": "Zee News",
+    "deccanherald.com": "Deccan Herald",
+    "jagran.com": "Dainik Jagran",
+    "bhaskar.com": "Dainik Bhaskar",
+    "amarujala.com": "Amar Ujala",
+    "firstpost.com": "Firstpost",
+    "moneycontrol.com": "Moneycontrol",
+    "livemint.com": "Mint",
+    "businesstoday.in": "Business Today",
+    "mypunepulse.com": "MyPunePulse",
+    "punemirror.com": "Pune Mirror",
+    "mid-day.com": "Mid-Day",
+    "theprint.in": "ThePrint",
+    "scroll.in": "Scroll",
+    "thewire.in": "The Wire",
+    "quint.com": "The Quint",
+    "thequint.com": "The Quint",
+    "opindia.com": "OpIndia",
+    "republicworld.com": "Republic World",
+    "indiatoday.in": "India Today",
+    "dnaindia.com": "DNA India",
+    "freepressjournal.in": "Free Press Journal",
+}
+
+
+def publisher_name_from_url(url: str) -> str:
+    """Clean publisher display name derived from an article URL (#153).
+
+    Returns e.g. "Indian Express" for an indianexpress.com URL — never the
+    raw domain. Unknown hosts fall back to a title-cased domain label.
+    Returns "" when no host can be determined.
+    """
+    try:
+        host = urllib.parse.urlparse((url or "").strip()).netloc.lower()
+    except Exception:
+        host = ""
+    host = host.split("@")[-1].split(":")[0].strip()
+    for prefix in ("www.", "m.", "mobile."):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+            break
+    if not host:
+        return ""
+    if host in _PUBLISHER_NAMES:
+        return _PUBLISHER_NAMES[host]
+    label = host.split(".")[0]
+    parts = [p for p in re.split(r"[-_]+", label) if p]
+    if not parts:
+        return ""
+    return " ".join(p[:1].upper() + p[1:] for p in parts)
+
+
+class NewsFetchError(Exception):
+    """Raised when every news source failed or returned nothing.
+
+    Carries ``report`` — a list of per-source attempt dicts
+    (``source``, ``outcome`` in {"ok", "empty", "error"}, ``count``,
+    ``detail``) — so the UI can show exactly what was tried instead
+    of silently returning an empty result.
+    """
+
+    def __init__(self, report: List[Dict[str, object]]):
+        self.report = list(report or [])
+        super().__init__(self._message())
+
+    def _message(self) -> str:
+        if not self.report:
+            return "News search found nothing and no source was attempted."
+        parts = []
+        for attempt in self.report:
+            src = attempt.get("source", "?")
+            outcome = attempt.get("outcome", "?")
+            detail = attempt.get("detail") or ""
+            if outcome == "ok":
+                parts.append(f"{src}: {attempt.get('count', 0)} article(s)")
+            elif outcome == "empty":
+                parts.append(f"{src}: no results{(' — ' + detail) if detail else ''}")
+            else:
+                parts.append(f"{src}: failed{(' — ' + detail) if detail else ''}")
+        return "News search found nothing. Tried: " + "; ".join(parts) + "."
 
 
 def _parse_pub_datetime(raw: str, entry=None) -> Optional[datetime.datetime]:
@@ -122,6 +217,30 @@ def _norm_title(title: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", (title or "").lower()).strip()[:80]
 
 
+_TOPIC_STOPWORDS = frozenset(
+    "the a an and or of to in on for with by from at as is are was were be "
+    "been has have had do does did will would can could should this that "
+    "these those it its new latest breaking news today".split()
+)
+
+
+def _topic_score(title: str, snippet: str = "", query: str = "") -> int:
+    """Relevance of an article to the user's query: term overlap + phrase bonus."""
+    terms = [t for t in re.findall(r"[a-z0-9]+", (query or "").lower())
+             if len(t) > 2 and t not in _TOPIC_STOPWORDS]
+    if not terms:
+        return 0
+    blob = f"{title} {snippet}".lower()
+    score = 0
+    for term in terms:
+        if term in blob:
+            score += 5
+    phrase = " ".join(terms)
+    if phrase and phrase in blob:
+        score += 5
+    return score
+
+
 def _india_score(title: str, snippet: str = "", source: str = "") -> int:
     blob = f"{title} {snippet} {source}".lower()
     score = 0
@@ -208,19 +327,429 @@ class NewsFetcher:
             print(f"Warning: news feed parsing failed for {feed_url}: {e}")
         return articles
 
-    def search_news(self, query: str, limit: Optional[int] = None) -> List[NewsArticle]:
-        """Search Google News RSS with when:24h qualifier for fresh real-time results."""
-        n = limit or self.max_articles
+    def _http_get(self, url: str) -> httpx.Response:
+        """Single GET with the shared UA/timeout. Test seam: monkeypatch in tests."""
+        with httpx.Client(headers=_HTTP_HEADERS, timeout=self._timeout,
+                          follow_redirects=True) as client:
+            return client.get(url)
+
+    def _fetch_rss_or_raise(
+        self,
+        feed_url: str,
+        limit: int,
+        fallback_source: str = "Live Wire",
+        max_age_hours: Optional[float] = 24.0,
+    ) -> List[NewsArticle]:
+        """RSS fetch that raises on transport/HTTP failure (#121).
+
+        Unlike :meth:`_parse_feed` (which swallows failures for best-effort
+        pool callers), this surfaces the failure so the multi-source chain
+        can record exactly which source failed and why.
+        """
+        r = self._http_get(feed_url)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code} for {feed_url}")
+        feed = feedparser.parse(r.content)
+        if getattr(feed, "bozo", False) and not feed.entries:
+            raise RuntimeError(f"unparseable feed: {feed_url}")
+        articles: List[NewsArticle] = []
+        now = datetime.datetime.now(datetime.timezone.utc)
+        for entry in feed.entries:
+            title = clean_html(getattr(entry, "title", "Untitled"))
+            link = getattr(entry, "link", "")
+            published = getattr(entry, "published", "")
+            source = fallback_source
+            if " - " in title:
+                parts = title.rsplit(" - ", 1)
+                title = parts[0].strip()
+                source = parts[1].strip()
+            elif hasattr(entry, "source") and hasattr(entry.source, "title"):
+                source = entry.source.title
+            dt = _parse_pub_datetime(published, entry)
+            age_h = None
+            time_lbl = ""
+            if dt:
+                age_h = max(0.0, (now - dt).total_seconds() / 3600.0)
+                time_lbl = _format_relative_time(dt, now)
+                if max_age_hours is not None and age_h > max_age_hours:
+                    continue
+            elif max_age_hours is not None:
+                time_lbl = "Today"
+            snippet = clean_html(getattr(entry, "summary", ""))
+            if not title or not link:
+                continue
+            articles.append(
+                NewsArticle(
+                    title=title,
+                    link=link,
+                    source=source,
+                    snippet=snippet,
+                    published=published,
+                    age_hours=round(age_h, 1) if age_h is not None else None,
+                    time_label=time_lbl,
+                )
+            )
+            if len(articles) >= limit:
+                break
+        return articles
+
+    # -- #121 multi-source chain -------------------------------------------
+
+    _DDG_INTERNAL_HOSTS = frozenset({"duckduckgo.com", "www.duckduckgo.com"})
+
+    def _src_google_news(self, query: str, limit: int) -> Tuple[List[NewsArticle], List[Dict[str, object]]]:
+        """Google News RSS: strict 24h search, then a looser 48h fallback."""
+        attempts: List[Dict[str, object]] = []
         q = f"when:24h {query.strip()}"
-        encoded_query = urllib.parse.quote(q)
-        feed_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
-        results = self._parse_feed(feed_url, n, fallback_source="News Wire", max_age_hours=24.0)
-        if not results:
-            # Fallback to standard query without when:24h if too restrictive
-            encoded_query = urllib.parse.quote(query.strip())
-            feed_url = f"https://news.google.com/rss/search?q={encoded_query}&hl=en-IN&gl=IN&ceid=IN:en"
-            results = self._parse_feed(feed_url, n, fallback_source="News Wire", max_age_hours=48.0)
-        return results
+        feed_url = ("https://news.google.com/rss/search?q="
+                    + urllib.parse.quote(q) + "&hl=en-IN&gl=IN&ceid=IN:en")
+        arts = self._fetch_rss_or_raise(feed_url, limit, fallback_source="News Wire",
+                                       max_age_hours=24.0)
+        attempts.append({"source": "google-news-rss/24h",
+                         "outcome": "ok" if arts else "empty",
+                         "count": len(arts), "detail": ""})
+        if not arts:
+            feed_url = ("https://news.google.com/rss/search?q="
+                        + urllib.parse.quote(query.strip()) + "&hl=en-IN&gl=IN&ceid=IN:en")
+            arts = self._fetch_rss_or_raise(feed_url, limit, fallback_source="News Wire",
+                                           max_age_hours=48.0)
+            attempts.append({"source": "google-news-rss/48h",
+                             "outcome": "ok" if arts else "empty",
+                             "count": len(arts), "detail": "24h query was empty"})
+        return arts, attempts
+
+    def _src_bing_news(self, query: str, limit: int) -> List[NewsArticle]:
+        """Bing News RSS — independent RSS index from Google's."""
+        feed_url = ("https://www.bing.com/news/search?q="
+                    + urllib.parse.quote(query.strip()) + "&format=rss")
+        return self._fetch_rss_or_raise(feed_url, limit, fallback_source="Bing News",
+                                       max_age_hours=48.0)
+
+    @staticmethod
+    def _ddg_real_url(href: str) -> str:
+        """Unwrap a DuckDuckGo redirect href to the real article URL (#135).
+
+        DDG double-encodes the target inside ``uddg`` (parse_qs decodes
+        only once), so unquote repeatedly until stable — otherwise the
+        link comes out as ``https%3A%2F%2F...`` garbage. Reject
+        anything that is not an http(s) URL.
+        """
+        href = (href or "").strip()
+        if not href:
+            return ""
+        if href.startswith("//"):
+            href = "https:" + href
+        try:
+            parsed = urllib.parse.urlparse(href)
+        except Exception:
+            return ""
+        if parsed.netloc.lower() in NewsFetcher._DDG_INTERNAL_HOSTS:
+            qs = urllib.parse.parse_qs(parsed.query)
+            real = (qs.get("uddg") or [""])[0]
+            decoded = real
+            for _ in range(4):
+                nxt = urllib.parse.unquote(decoded)
+                if nxt == decoded:
+                    break
+                decoded = nxt
+            real = decoded.strip()
+            if real.startswith("http://") or real.startswith("https://"):
+                return real
+            return ""
+        if parsed.netloc:
+            return href
+        return ""
+
+    def _src_duckduckgo(self, query: str, limit: int) -> List[NewsArticle]:
+        """DuckDuckGo HTML search with regex-based link extraction (#121).
+
+        Last-resort source: no API, no RSS — parse the classic HTML
+        endpoint and regex out result anchors + snippets, unwrapping
+        DDG's redirect URLs to the real article links.
+        """
+        url = "https://html.duckduckgo.com/html/?q=" + urllib.parse.quote(query.strip())
+        r = self._http_get(url)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code} for {url}")
+        page = r.text or ""
+        anchors = re.findall(
+            r'<a\b(?=[^>]*\bclass="result__a")[^>]*\bhref="([^"]+)"[^>]*>(.*?)</a>',
+            page, re.DOTALL | re.IGNORECASE)
+        if not anchors:
+            # Page shape changed: fall back to any anchor carrying a DDG
+            # redirect (uddg=) href before giving up loudly.
+            anchors = re.findall(
+                r'<a\b[^>]*\bhref="([^"]*uddg=[^"]+)"[^>]*>(.*?)</a>',
+                page, re.DOTALL | re.IGNORECASE)
+        snippets = re.findall(
+            r'<a\b(?=[^>]*\bclass="result__snippet")[^>]*>(.*?)</a>',
+            page, re.DOTALL | re.IGNORECASE)
+        if not snippets:
+            snippets = re.findall(
+                r'<(?:div|td|span)\b[^>]*\bclass="result__snippet"[^>]*>(.*?)</(?:div|td|span)>',
+                page, re.DOTALL | re.IGNORECASE)
+        if not anchors:
+            # Page shape changed or was blocked — say so loudly, don't
+            # pretend the query had no results.
+            raise RuntimeError("no result anchors found in DuckDuckGo HTML "
+                               "(page shape changed or request blocked)")
+        articles: List[NewsArticle] = []
+        for i, (href, inner) in enumerate(anchors):
+            link = self._ddg_real_url(html.unescape(href))
+            if not link:
+                continue
+            title = clean_html(inner)
+            if not title:
+                continue
+            snippet = clean_html(snippets[i]) if i < len(snippets) else ""
+            articles.append(
+                NewsArticle(
+                    title=title,
+                    link=link,
+                    source="DuckDuckGo",
+                    snippet=snippet,
+                    published="",
+                    age_hours=None,
+                    time_label="",
+                )
+            )
+            if len(articles) >= limit:
+                break
+        return articles
+
+    # -- #136/#143 aggregator redirect resolution ----------------------------
+
+    # Hosts that are known to serve redirect/intermediate URLs rather than
+    # the final article. #143: this list is only used to decide
+    # fail-closed (skip loudly) vs fail-open (keep the original URL) when
+    # a URL cannot be fetched for resolution — the resolution itself is
+    # universal (every URL is followed through its redirect chain).
+    _AGGREGATOR_REDIRECT_HOSTS = frozenset({
+        "news.google.com", "www.news.google.com",
+        "www.bing.com", "bing.com",
+        "duckduckgo.com", "www.duckduckgo.com",
+        "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd",
+        "news.yahoo.com", "www.news.yahoo.com",
+    })
+
+    def resolve_final_url(self, url: str) -> str:
+        """Follow the FULL redirect chain to the final destination URL (#143).
+
+        Uses the shared timeout/UA with ``follow_redirects=True``, so
+        multi-hop chains (aggregator → shortener → publisher) are fully
+        resolved. Returns the final URL, or "" when it cannot be
+        determined (network error, non-200, non-http result) — the
+        caller decides whether to skip loudly or keep the original.
+        """
+        url = (url or "").strip()
+        if not url:
+            return ""
+        # Protocol-relative URLs (//host/path) from scraped HTML.
+        if url.startswith("//"):
+            url = "https:" + url
+        # Repeatedly unquote: some aggregators double/triple-encode (#135).
+        prev = None
+        cur = url
+        while prev != cur:
+            prev = cur
+            cur = urllib.parse.unquote(cur)
+        url = cur
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return ""
+        try:
+            r = self._http_get(url)
+        except Exception:
+            return ""
+        if r.status_code != 200:
+            return ""
+        final = str(getattr(r, "url", "") or "").strip()
+        if not final:
+            return ""
+        if not (final.startswith("http://") or final.startswith("https://")):
+            return ""
+        try:
+            if urllib.parse.urlparse(final).netloc.lower() in self._AGGREGATOR_REDIRECT_HOSTS:
+                return ""  # still an aggregator redirect — not resolved
+        except Exception:
+            return ""
+        return final
+
+    def _resolve_publisher_url(self, url: str) -> str:
+        """Resolve an aggregator redirect URL to the final publisher URL (#136).
+
+        Kept for backwards compatibility; delegates to
+        :meth:`resolve_final_url` (#143).
+        """
+        return self.resolve_final_url(url)
+
+    def _resolve_aggregator_links(
+        self, articles: List[NewsArticle]
+    ) -> Tuple[List[NewsArticle], int]:
+        """Rewrite redirect links to final publisher URLs (#136, #143).
+
+        #143: EVERY article URL is followed through its complete redirect
+        chain (not just known aggregator hosts) — this catches Bing
+        redirects, URL shorteners, and any future aggregator pattern.
+        When the final URL differs, it replaces the original.
+        #153: the source is refreshed to the final publisher's name when
+        the URL changes — a "Bing News"/"DuckDuckGo" label must not
+        survive on a resolved publisher link.
+
+        Returns (kept_articles, skipped_count). Articles that cannot be
+        resolved are handled loudly:
+        - URL on a known redirect/aggregator host → dropped, counted in
+          ``skipped`` (the redirect URL is useless; never stored).
+        - Other URLs → kept as-is (fail-open: a direct publisher link
+          that blocks bots still works in the user's browser).
+        """
+        kept: List[NewsArticle] = []
+        skipped = 0
+        for art in articles:
+            link = (art.link or "").strip()
+            if not link:
+                skipped += 1
+                continue
+            try:
+                host = urllib.parse.urlparse(link).netloc.lower()
+            except Exception:
+                host = ""
+            final = self.resolve_final_url(link)
+            if final:
+                if final != link:
+                    art.link = final
+                    # #153: the redirect's source ("Bing News",
+                    # "DuckDuckGo", ...) is meaningless on the resolved
+                    # publisher link — show the publisher's name.
+                    art.source = publisher_name_from_url(final) or art.source
+                kept.append(art)
+            elif host in self._AGGREGATOR_REDIRECT_HOSTS:
+                # Known redirect URL that could not be resolved — useless.
+                skipped += 1
+            else:
+                # Fail-open: probably a direct link whose server blocks
+                # bots; it still works in the user's browser.
+                kept.append(art)
+        return kept, skipped
+
+    def _dedupe_rank_topic(self, articles: List[NewsArticle], query: str,
+                          limit: int) -> List[NewsArticle]:
+        """Dedupe + rank by query relevance, then recency (#121)."""
+        seen = set()
+        ranked: List[tuple] = []
+        for art in articles:
+            key = _norm_title(art.title)
+            if not key or key in seen:
+                continue
+            seen.add(key)
+            recency_bonus = 0
+            if art.age_hours is not None:
+                if art.age_hours <= 3.0:
+                    recency_bonus = 10
+                elif art.age_hours <= 6.0:
+                    recency_bonus = 7
+                elif art.age_hours <= 12.0:
+                    recency_bonus = 4
+                elif art.age_hours <= 24.0:
+                    recency_bonus = 2
+            score = (_india_score(art.title, art.snippet, art.source)
+                     + _topic_score(art.title, art.snippet, query)
+                     + recency_bonus)
+            ranked.append((score, -(art.age_hours if art.age_hours is not None else 999.0), art))
+        ranked.sort(key=lambda x: (x[0], x[1]), reverse=True)
+        return [art for _, _, art in ranked[:limit]]
+
+    def search_news_multi(self, query: str,
+                          limit: Optional[int] = None,
+                          rng: Optional[random.Random] = None
+                          ) -> Tuple[List[NewsArticle], List[Dict[str, object]]]:
+        """Aggressive multi-source news search (#121, #133, #135, #136).
+
+        Source order is randomized on every call and each source
+        contributes at most 2 articles (round-robin) instead of draining
+        one source first (#133). The merged set is deduped and ranked by
+        query relevance. Aggregator redirect links (Google News) are
+        resolved to the final publisher URL before storage; unresolvable
+        redirects are skipped with a report entry — an aggregator URL
+        never reaches the UI (#136). Real network calls — never
+        local-only.
+
+        Returns (articles, report); raises :class:`NewsFetchError` with
+        the full per-source report when every source failed or returned
+        nothing — never a silent empty list.
+        """
+        n = limit or self.max_articles
+        q = (query or "").strip()
+        if not q:
+            raise NewsFetchError([{"source": "none", "outcome": "error",
+                                   "count": 0, "detail": "empty query"}])
+        per_source = 2  # round-robin cap: 1-2 articles per site (#133)
+        rnd = rng if rng is not None else random
+        report: List[Dict[str, object]] = []
+        pooled: List[NewsArticle] = []
+
+        def _google():
+            arts, attempts = self._src_google_news(q, per_source)
+            return arts, attempts
+
+        def _bing():
+            arts = self._src_bing_news(q, per_source)
+            return arts, [{"source": "bing-news-rss",
+                           "outcome": "ok" if arts else "empty",
+                           "count": len(arts), "detail": ""}]
+
+        def _ddg():
+            arts = self._src_duckduckgo(q, per_source)
+            return arts, [{"source": "duckduckgo-html",
+                           "outcome": "ok" if arts else "empty",
+                           "count": len(arts), "detail": ""}]
+
+        sources = [("google-news-rss", _google),
+                   ("bing-news-rss", _bing),
+                   ("duckduckgo-html", _ddg)]
+        rnd.shuffle(sources)  # fresh random order on every call (#133)
+
+        for name, fetch in sources:
+            try:
+                arts, attempts = fetch()
+            except Exception as e:  # noqa: BLE001 - recorded in the report, raised loudly below
+                report.append({"source": name, "outcome": "error",
+                               "count": 0, "detail": f"{type(e).__name__}: {e}"})
+                continue
+            kept, skipped = self._resolve_aggregator_links(arts)
+            if skipped:
+                note = (f"{skipped} aggregator redirect(s) skipped "
+                        f"(could not resolve to publisher URL)")
+                remaining = skipped
+                for att in reversed(attempts):
+                    if remaining:
+                        cut = min(remaining, int(att.get("count", 0) or 0))
+                        att["count"] = int(att.get("count", 0) or 0) - cut
+                        remaining -= cut
+                        d = att.get("detail") or ""
+                        att["detail"] = f"{d}; {note}" if d else note
+                    if not att.get("count"):
+                        att["outcome"] = "empty"
+            report.extend(attempts)
+            pooled.extend(kept)
+
+        ranked = self._dedupe_rank_topic(pooled, q, n)
+        if not ranked:
+            raise NewsFetchError(report)
+        return ranked, report
+
+    def search_news(self, query: str, limit: Optional[int] = None) -> List[NewsArticle]:
+        """Multi-source news search (#121, #133, #135, #136).
+
+        Same signature as before; now backed by Google News RSS, Bing
+        News RSS and DuckDuckGo HTML in randomized order (#133) with
+        round-robin 1-2 articles per source, relevance ranking, DDG link
+        decoding (#135) and aggregator-redirect resolution to publisher
+        URLs (#136). Raises :class:`NewsFetchError` (carrying the
+        per-source report) when every source failed or returned nothing —
+        callers surface it loudly instead of reporting an empty result.
+        """
+        articles, _report = self.search_news_multi(query, limit)
+        return articles
 
     def get_top_world_news(self, limit: int = 8) -> List[NewsArticle]:
         """Fetch real-time top global world headlines from the last 24 hours."""

@@ -27,6 +27,7 @@ import traceback
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
+import urllib.parse
 from urllib.parse import urljoin
 
 # ---------------------------------------------------------------------------
@@ -66,10 +67,14 @@ BUSY_STATES = ("pending", "refreshing", "running")
 # ---------------------------------------------------------------------------
 # Refresh work is tracked PER KIND, not with a single busy flag:
 #
-# - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"`` and
-#   ``"images"`` are independent and may run concurrently (#54); ``"reset"``
-#   is destructive and exclusive; ``"enrich"`` is the save-time enrichment
-#   and also exclusive with manual refreshes.
+# - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"``,
+#   ``"images"`` and ``"news"`` are independent and may run concurrently
+#   (#54, #80); ``"more_images"`` / ``"more_news"`` (#91) are the explicit
+#   "load more" batches — independent of everything except their sibling
+#   kind (``"images"``/``"more_images"`` and ``"news"``/``"more_news"``
+#   both write the same field, so each pair is mutually exclusive);
+#   ``"reset"`` is destructive and exclusive; ``"enrich"`` is the
+#   save-time enrichment and also exclusive with manual refreshes.
 # - ``refresh_busy`` (frontmatter, list of kind names): the kinds currently
 #   running. A list round-trips through _dump_frontmatter/_parse_frontmatter
 #   (nested dicts do not — never store one in frontmatter).
@@ -87,8 +92,19 @@ BUSY_STATES = ("pending", "refreshing", "running")
 # _meta_write_lock(story_id): concurrent per-kind workers must not clobber
 # each other's updates. Lock order is always kind-lock (_ENRICH_LOCKS) THEN
 # meta-lock — never the reverse (deadlock avoidance).
-_REFRESH_KINDS = ("hashtags", "images", "reset", "enrich")
+_REFRESH_KINDS = ("hashtags", "images", "news", "more_images", "more_news",
+                 "reset", "enrich")
 _EXCLUSIVE_KINDS = ("reset", "enrich")
+
+# #91: kinds that write the SAME story field must not run together — the
+# second writer would silently clobber the first's appended batch
+# (last-writer-wins on the whole list). "Load more images" is refused
+# while "Update Images" runs and vice versa; same for the news pair.
+_SIBLING_KINDS = {"images": "more_images", "more_images": "images",
+                  "news": "more_news", "more_news": "news"}
+
+# #91: one "load more" click fetches at most this many genuinely new items.
+_LOAD_MORE_BATCH = 5
 
 # Hard wall-clock bound for one AI hashtag-discovery call inside a refresh.
 _AI_HASHTAG_TIMEOUT_S = 45
@@ -1241,6 +1257,13 @@ def _image_content_hash(url: str) -> str:
 _PHASH_DUP_THRESHOLD = 10
 
 
+# Max auto-fetched images kept per story (issue #83). Manually uploaded
+# images live in the separate ``uploaded_images`` field and are NEVER
+# capped — only fetched candidates pass through the cap. Callers that
+# must exceed the cap (e.g. "Load more", issue #91) omit it.
+_MAX_FETCHED_IMAGES = 5
+
+
 def _image_dhash(data: bytes, url: str) -> int:
     """64-bit difference-hash of raw image bytes — PIL only, no new deps.
 
@@ -1347,6 +1370,7 @@ def _merge_story_images(
     existing_hashes: Optional[List[str]],
     existing_phashes: Optional[List[str]],
     candidates,
+    cap: Optional[int] = None,
 ) -> Tuple[List[str], List[str], List[str], Dict[str, int]]:
     """Merge image candidates into a story's image list with full dedupe.
 
@@ -1377,10 +1401,17 @@ def _merge_story_images(
        (first occurrence wins); then each surviving fresh candidate is
        checked against everything kept. Undecodable image bytes raise
        :class:`ImageDedupeError` naming the URL — never silently skipped.
+    5. Cap (issue #83): only when ``cap`` is passed. After ALL dedupe,
+       the merged list is trimmed to ``cap`` entries — the first N are
+       kept (existing entries first, then fresh candidates in
+       publisher-declared order: og:image → twitter:image → JSON-LD →
+       in-article), so the tail is what goes. The trim count is
+       reported in ``stats["trimmed"]``.
 
     Returns ``(merged_urls, merged_hashes, merged_phashes, stats)``;
     ``stats`` counts ``added`` / ``dup_url`` / ``dup_content`` /
-    ``dup_visual`` / ``rejected_alt`` / ``removed_existing_dupes``.
+    ``dup_visual`` / ``rejected_alt`` / ``removed_existing_dupes`` /
+    ``trimmed``.
     Existing order is preserved; genuinely new images are appended.
     """
     from tools.story_link import image_alt_is_unwanted
@@ -1389,7 +1420,7 @@ def _merge_story_images(
     hashes = _align_hashes(existing_urls, existing_hashes)
     phashes = _align_hashes(existing_urls, existing_phashes)
     stats = {"added": 0, "dup_url": 0, "dup_content": 0, "dup_visual": 0,
-             "rejected_alt": 0, "removed_existing_dupes": 0}
+             "rejected_alt": 0, "removed_existing_dupes": 0, "trimmed": 0}
 
     # 1. Alt-text filter (primary signal).
     screened: List[str] = []
@@ -1475,12 +1506,10 @@ def _merge_story_images(
     merged_urls, merged_hashes, merged_phashes = vis_urls, vis_hashes, vis_phashes
     seen_hashes = set(merged_hashes)
 
-    if not fresh:
-        # No fresh candidates — but the existing-entries backfill and
-        # collapse above already ran, so stored duplicates are cleaned
-        # and missing hashes are backfilled (issue #57).
-        return merged_urls, merged_hashes, merged_phashes, stats
-
+    # Fresh candidates. The loop is a no-op when empty — but the
+    # existing-entries backfill + collapse above already ran, so stored
+    # duplicates are cleaned and missing hashes are backfilled even when
+    # the fetch found nothing new (issue #57).
     for url in fresh:
         h, ph = _image_fingerprints(url)
         if h in seen_hashes:
@@ -1496,6 +1525,18 @@ def _merge_story_images(
         merged_hashes.append(h)
         merged_phashes.append(_dhash_to_hex(ph))
         stats["added"] += 1
+
+    # 5. Cap (issue #83): after ALL dedupe, trim to the cap — the first N
+    #    are kept (existing entries first, fresh candidates appended in
+    #    publisher-declared order), so the tail is what goes. The trim
+    #    count is reported in stats["trimmed"] for an honest outcome
+    #    note. Only when `cap` is passed — "Load more" (issue #91)
+    #    omits it and bypasses the cap.
+    if cap is not None and len(merged_urls) > cap:
+        stats["trimmed"] = len(merged_urls) - cap
+        merged_urls = merged_urls[:cap]
+        merged_hashes = merged_hashes[:cap]
+        merged_phashes = merged_phashes[:cap]
     return merged_urls, merged_hashes, merged_phashes, stats
 
 
@@ -1550,17 +1591,26 @@ def _grab_og_images(urls: List[str], tries: int = 3) -> List[str]:
 
 
 def _grab_article_images(urls: List[str], tries: int = 3,
-                         per_page: int = 3) -> List[Tuple[str, Optional[str]]]:
+                         per_page: int = 3,
+                         report: Optional[Dict[str, Any]] = None
+                         ) -> List[Tuple[str, Optional[str]]]:
     """Parallel article-page image extraction from a list of page URLs.
 
     Each article's HTML is fetched (httpx, timeout, retries) and passed to
     ``tools.story_link.extract_story_images_with_alt``, which pulls
-    og:image → twitter:image → JSON-LD → in-article <img>/<figure> photos
-    as ``(url, alt_text)`` pairs. News pages carry their real photos in
-    body <img> tags, so this finds images that an og:image-only grab
-    misses. Relative and lazy-load URLs are absolutized; logos, sprites,
-    SVGs, tracking pixels and alt-text-flagged unwanted assets are
-    filtered. Batch results are deduplicated by normalized URL.
+    og:image → twitter:image → JSON-LD → in-article story-body photos
+    as ``(url, alt_text)`` pairs (issue #86: in-article extraction is
+    scoped to the story body — site chrome under header/nav/footer/aside
+    is excluded). News pages carry their real photos in body <img> tags,
+    so this finds images that an og:image-only grab misses. Relative and
+    lazy-load URLs are absolutized; logos, sprites, SVGs, tracking pixels
+    and alt-text-flagged unwanted assets are filtered. Batch results are
+    deduplicated by normalized URL.
+
+    When ``report`` (a dict) is supplied, ``report["unscoped_pages"]`` is
+    set to the number of pages where no article body could be identified
+    and the extractor fell back to a whole-page scan — the caller
+    surfaces this honestly in the refresh outcome note.
     """
     from tools.story_link import extract_story_images_with_alt
 
@@ -1568,8 +1618,10 @@ def _grab_article_images(urls: List[str], tries: int = 3,
     seen: set = set()
     found_lock = threading.Lock()
     threads: List[threading.Thread] = []
+    unscoped_pages = 0
 
     def _grab(url: str) -> None:
+        nonlocal unscoped_pages
         # Resolve Google News wrappers to the publisher page first — the
         # wrapper's own HTML is a JS shell with no article images.
         url = _resolve_article_url(url)
@@ -1596,11 +1648,15 @@ def _grab_article_images(urls: List[str], tries: int = 3,
             time.sleep(1.0 * (attempt + 1))
         if not html:
             return
+        scope_report: Dict[str, Any] = {}
         try:
-            imgs = extract_story_images_with_alt(html, url, limit=per_page)
+            imgs = extract_story_images_with_alt(html, url, limit=per_page,
+                                                 scope_report=scope_report)
         except Exception:
             return
         with found_lock:
+            if scope_report.get("scoped") is False:
+                unscoped_pages += 1
             for img_url, alt in imgs:
                 key = normalize_image_url(img_url)
                 if key not in seen:
@@ -1614,6 +1670,8 @@ def _grab_article_images(urls: List[str], tries: int = 3,
             threads.append(t)
     for t in threads:
         t.join(timeout=30.0)
+    if report is not None:
+        report["unscoped_pages"] = unscoped_pages
     return found
 
 
@@ -1636,7 +1694,9 @@ def _story_direct_link_urls(story: Optional[Dict[str, Any]]) -> List[str]:
 
 
 def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
-                            tries: int = 3) -> List[Tuple[str, Optional[str]]]:
+                            tries: int = 3,
+                            report: Optional[Dict[str, Any]] = None
+                            ) -> List[Tuple[str, Optional[str]]]:
     """Images for a story: verified story links first, then topic search.
 
     The story's own verified news links point at the exact story's publisher
@@ -1650,6 +1710,10 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
     filter in the merge step. Hero/web-search images carry no alt text
     (``None``).
 
+    When ``report`` (a dict) is supplied it is passed to the article-image
+    grab, which records ``report["unscoped_pages"]`` — pages where no
+    article body could be identified (issue #86 fallback).
+
     Every step runs under a hard wall-clock bound (via ``_run_bounded``):
     a stuck host raises ``TimeoutError`` naming the step instead of
     hanging the refresh. Pure fetch — no persistence here.
@@ -1657,7 +1721,8 @@ def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
     direct = _story_direct_link_urls(story)
     if direct:
         found = _run_bounded(
-            lambda: _grab_article_images(direct[:6], tries=tries),
+            lambda: _grab_article_images(direct[:6], tries=tries,
+                                         report=report),
             40.0, "article image fetch")
         if found:
             return found[:6]
@@ -2041,8 +2106,9 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     existing = list(story["meta"].get("image_urls") or [])
     existing_hashes = list(story["meta"].get("image_hashes") or [])
     existing_phashes = list(story["meta"].get("image_phashes") or [])
+    img_report: Dict[str, Any] = {}
     try:
-        found = _fetch_images_for_story(story, topic)
+        found = _fetch_images_for_story(story, topic, report=img_report)
     except TimeoutError as e:
         # The fetch names the step that timed out; existing media survives.
         # Hash backfill needs the network too, so it would fail as well —
@@ -2053,7 +2119,8 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     # (issue #57). The collapse against stored hashes is pure; only the
     # backfill touches the network.
     merged_urls, merged_hashes, merged_phashes, stats = _merge_story_images(
-        existing, existing_hashes, existing_phashes, found)
+        existing, existing_hashes, existing_phashes, found,
+        cap=_MAX_FETCHED_IMAGES)
     added = stats["added"]
     aligned_hashes = _align_hashes(existing, existing_hashes)
     aligned_phashes = _align_hashes(existing, existing_phashes)
@@ -2067,6 +2134,17 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     if stats["removed_existing_dupes"]:
         extras.append(f"Removed {stats['removed_existing_dupes']} duplicate "
                       f"image(s) already stored.")
+    if img_report.get("unscoped_pages"):
+        # Issue #86: say it honestly — these pages were scanned
+        # page-wide because no story body could be identified.
+        _n = img_report["unscoped_pages"]
+        extras.append(f"Note: {_n} article page(s) had no identifiable story "
+                      f"body — images were scanned page-wide and may "
+                      f"include site images.")
+    if stats["trimmed"]:
+        extras.append(f"Capped fetched images at {_MAX_FETCHED_IMAGES} "
+                      f"({stats['trimmed']} extra not kept; "
+                      f"uploads are never capped).")
     extra = (" " + " ".join(extras)) if extras else ""
     if added or urls_changed or hashes_changed:
         update_story_fields(story_id, image_urls=merged_urls,
@@ -2081,15 +2159,386 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     return True, f"Added {added} new image(s); kept {len(existing)} existing.{extra}"
 
 
+def _normalize_news_url(url: str) -> str:
+    """Canonical dedupe key for a news-link URL (#80).
+
+    Conservative: strip whitespace, lowercase the whole URL and drop a
+    trailing slash. Deliberately lighter than ``normalize_image_url`` —
+    news links are article pages, not byte-compared assets, so scheme /
+    query collapsing is left alone (Google News redirect links differ
+    from the canonical article URL and must still match when re-found).
+    """
+    u = (url or "").strip().lower()
+    return u[:-1] if u.endswith("/") and len(u) > 1 else u
+
+
+# Issue #82: news links target at least 5 related links per story, max 5.
+NEWS_LINKS_TARGET = 5
+
+
+def _news_query_variants(topic: str) -> List[str]:
+    """Progressively looser Google News queries for one topic (#82).
+
+    The full topic is tried first; when it under-fetches (a very
+    specific headline matches few articles), looser variants follow:
+    the first clause (parentheticals, quoted segments and trailing
+    ``; : ! ?`` clauses dropped), then the significant-keyword core
+    (reuses ``_keyword_list``). Variants are distinct and non-empty;
+    an empty topic yields [].
+    """
+    t = re.sub(r"\s+", " ", (topic or "")).strip()
+    if not t:
+        return []
+    variants: List[str] = []
+
+    def _push(q: str) -> None:
+        q = re.sub(r"\s+", " ", q).strip(" ;:!?-\u2013\u2014()[]\"'")
+        if len(q) >= 3 and q.lower() not in {v.lower() for v in variants}:
+            variants.append(q)
+
+    _push(t)
+    # Looser: drop parentheticals/quotes, keep the first clause.
+    loose = re.sub(r"\(.*?\)|\[.*?\]|\"[^\"]*\"|'[^']*'", " ", t)
+    loose = re.split(r"[;:!?\u2014\u2013]", loose, maxsplit=1)[0]
+    _push(loose)
+    # Loosest: significant keywords only.
+    _push(" ".join(_keyword_list(loose)[:8]))
+    return variants
+
+
+def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
+                                exclude_urls=()) -> List[Dict[str, str]]:
+    """Fetch up to ``count`` NEW news links for ``topic`` (#82).
+
+    Reusable "fetch up to N new links for topic T excluding existing
+    URLs" primitive — #91 (load more news references) composes with
+    this rather than duplicating it.
+
+    Tries the topic's query variants in order (full topic, then looser
+    variants) and pulls a pool from ``news_fetcher.search_news`` per
+    variant, keeping distinct links (normalized-URL dedupe, #21) that
+    are not in ``exclude_urls``. Stops as soon as ``count`` candidates
+    are gathered. ``count <= 0`` returns [] without searching.
+
+    Fail-loud: when every variant's search raises, raises RuntimeError
+    naming the cause — a fetch failure is never reported as an empty
+    result. A shortfall (fewer than ``count`` genuinely related links
+    exist) is an honest short list, never padded or invented; callers
+    report it in their outcome note.
+    """
+    count = max(0, int(count or 0))
+    if count == 0:
+        return []
+    topic = (topic or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — news links unchanged.")
+    from tools.news_fetcher import news_fetcher
+    excluded = {_normalize_news_url(u) for u in (exclude_urls or ())}
+    seen = set(excluded)
+    found: List[Dict[str, str]] = []
+    errors: List[str] = []
+    for variant in _news_query_variants(topic):
+        if len(found) >= count:
+            break
+        try:
+            articles = (news_fetcher.search_news(
+                variant, limit=max(count * 3, 12)) or [])
+        except Exception as e:  # noqa: BLE001 - collected, raised loudly below
+            errors.append(f"{variant!r}: {type(e).__name__}: {e}")
+            continue
+        for a in articles:
+            url = (getattr(a, "link", "") or "").strip()
+            if not url:
+                continue
+            key = _normalize_news_url(url)
+            if key in seen:
+                continue
+            seen.add(key)
+            found.append({
+                "title": getattr(a, "title", "") or "",
+                "url": url,
+                "source": getattr(a, "source", "") or "",
+            })
+            if len(found) >= count:
+                break
+    if not found and errors:
+        raise RuntimeError(
+            f"News search failed ({errors[0]}) — news links unchanged.")
+    return found
+
+
+def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+    """Re-fetch news links (sources) and ADD the new ones to the story.
+
+    Runs the same Google News search as save-time enrichment, then
+    merges genuinely new links after the existing ones — the stored
+    list is never wiped, and verified Stage-1 links keep their place
+    (#62). Duplicates are detected by normalized URL, so a source found
+    again is not stored twice. Issue #82: tops the story up toward
+    ``NEWS_LINKS_TARGET`` (5) links, never beyond it — the fetch tries
+    progressively looser queries until the target is reached.
+    Never touches hashtags, images, or story content.
+
+    Fail-loud: a story with no topic, a missing story, or a search
+    failure raises RuntimeError with the honest cause — a network
+    failure is never reported as "nothing new". A shortfall (fewer
+    than 5 genuinely related links exist) is an honest "now at N of 5"
+    note, not an error. Returns (changed, note).
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — news links unchanged.")
+    # #143: repair any stored redirect URLs to their final destinations
+    # before topping up — stories saved before universal resolution may
+    # still hold aggregator/shortener links.
+    try:
+        _repaired, _repair_note = repair_news_link_urls(story_id)
+    except Exception:
+        _repaired, _repair_note = False, ""
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
+    existing = [lk for lk in (story["meta"].get("news_links") or [])
+                if isinstance(lk, dict) and lk.get("url")]
+    room = NEWS_LINKS_TARGET - len(existing)
+    if room <= 0:
+        return False, (f"Kept {len(existing)} existing news link(s) "
+                       f"(at the {NEWS_LINKS_TARGET}-link cap).")
+    added = _fetch_news_link_candidates(
+        topic, count=room,
+        exclude_urls=[lk["url"] for lk in existing])
+    if added:
+        update_story_fields(story_id, news_links=existing + added)
+        total = len(existing) + len(added)
+        note = (f"Added {len(added)} new news link(s); "
+                f"now at {total} of {NEWS_LINKS_TARGET}.")
+        if total < NEWS_LINKS_TARGET:
+            note += f" Only {total} related article(s) found."
+        return True, note
+    return False, (f"No new news links found; kept {len(existing)} "
+                   "existing.")
+
+
+def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
+    """Re-resolve stored news-link URLs to their final destinations (#143).
+
+    Repairs stories saved before universal redirect resolution: every
+    stored news-link URL is followed through its full redirect chain
+    and updated when the final URL differs. #153: the source label is
+    refreshed to the final publisher's name whenever the URL changes
+    or the stored source is a stale aggregator name ("Bing News"/
+    "DuckDuckGo"/"News Wire"/"Live Wire") — the chip must show the
+    publisher, not the aggregator. Unresolvable redirect URLs
+    (known aggregator hosts) are dropped loudly; other unresolvable
+    URLs are kept (fail-open — likely direct links blocking bots).
+
+    Runs in background threads (called from refresh paths), never on
+    the render path. Returns (changed, note).
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news link URLs unchanged.")
+    existing = [lk for lk in (story["meta"].get("news_links") or [])
+                if isinstance(lk, dict) and lk.get("url")]
+    if not existing:
+        return False, "No stored news links to repair."
+    from tools.news_fetcher import news_fetcher, publisher_name_from_url
+    repaired = 0
+    dropped = 0
+    sources_refreshed = 0
+    kept: List[Dict[str, str]] = []
+    for lk in existing:
+        url = (lk.get("url") or "").strip()
+        if not url:
+            dropped += 1
+            continue
+        final = news_fetcher.resolve_final_url(url)
+        if final:
+            url_changed = final != url
+            old_source = (lk.get("source") or "").strip()
+            new_source = old_source
+            if url_changed or old_source in _STALE_AGGREGATOR_SOURCES:
+                new_source = publisher_name_from_url(final) or old_source
+            if url_changed:
+                repaired += 1
+            if new_source != old_source:
+                sources_refreshed += 1
+            kept.append(dict(lk, url=final, source=new_source))
+            continue
+        # Unresolvable: drop loudly only known redirect hosts (#143).
+        try:
+            host = urllib.parse.urlparse(url).netloc.lower()
+        except Exception:
+            host = ""
+        if host in news_fetcher._AGGREGATOR_REDIRECT_HOSTS:
+            dropped += 1
+        else:
+            kept.append(lk)
+    if repaired or dropped or sources_refreshed:
+        update_story_fields(story_id, news_links=kept)
+    parts = []
+    if repaired:
+        parts.append(f"re-resolved {repaired} redirect URL(s) to final destinations")
+    if sources_refreshed:
+        parts.append(f"refreshed {sources_refreshed} source label(s) to final publishers")
+    if dropped:
+        parts.append(f"dropped {dropped} unresolvable redirect URL(s)")
+    note = "; ".join(parts) if parts else "All stored news link URLs already final."
+    return bool(parts), note
+
+
+# Fetch-time source labels that name the aggregator/search engine rather
+# than the publisher (#153). When a stored link carries one of these,
+# the source is refreshed from the (resolved) URL's domain.
+_STALE_AGGREGATOR_SOURCES = frozenset(
+    {"Bing News", "DuckDuckGo", "News Wire", "Live Wire"}
+)
+
+
+def _fetch_more_images(topic: str, existing_norm_urls: Set[str],
+                       batch: int = _LOAD_MORE_BATCH
+                       ) -> List[Tuple[str, Optional[str]]]:
+    """Deeper image-candidate pool for \"load more\" (#91).
+
+    Goes wider than ``_fetch_images_for_story``: 12 topic articles (vs 6)
+    and up to 4 images per article page (vs 3), then the web image search
+    as a final fallback — every candidate filtered to exclude the
+    already-stored normalized URLs, so the batch is genuinely new by URL
+    before the merge's content/perceptual dedupe runs. Extraction reuses
+    the same article-scoped path as refresh (#86), so site chrome stays
+    out here too. Pure fetch — no persistence. Bounded like the refresh
+    path; a stuck host raises TimeoutError naming the step.
+    """
+    found: List[Tuple[str, Optional[str]]] = []
+    seen = set(existing_norm_urls)
+    articles = _fetch_news_articles(topic, limit=12)
+    urls = [getattr(a, "link", "") or "" for a in articles]
+    for url, alt in _run_bounded(
+            lambda: _grab_article_images(urls, per_page=4),
+            90.0, "load-more image fetch"):
+        key = normalize_image_url(url)
+        if key and key not in seen:
+            seen.add(key)
+            found.append((url, alt))
+            if len(found) >= batch:
+                return found
+    if len(found) < batch and topic.strip():
+        for url in _search_web_images(topic.strip(), limit=10):
+            key = normalize_image_url(url)
+            if key and key not in seen:
+                seen.add(key)
+                found.append((url, None))
+                if len(found) >= batch:
+                    break
+    return found
+
+
+def load_more_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
+    """Fetch ONE more batch (up to 5) of genuinely new images (#91).
+
+    The sanctioned way past the #83 fetched-images cap: the cap is
+    bypassed by this explicit user request, but dedupe is never bypassed
+    — every candidate goes through the full ``_merge_story_images``
+    pipeline (alt-text filter, normalized-URL, SHA-256 content and dHash
+    perceptual dedupe, #21/#44). New images are appended after the
+    existing list; the stored list is never wiped and manual uploads are
+    never touched.
+
+    Fail-loud: a missing story, missing topic, or fetch failure raises
+    RuntimeError with the honest cause. When the deeper pool yields
+    nothing new, this returns ``(False, \"No more images found …\")`` —
+    a ``no_change`` outcome, never a faked success. Never touches
+    hashtags, news links, or story content.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — images unchanged.")
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — images unchanged.")
+    existing = list(story["meta"].get("image_urls") or [])
+    existing_hashes = list(story["meta"].get("image_hashes") or [])
+    existing_phashes = list(story["meta"].get("image_phashes") or [])
+    existing_norm = {normalize_image_url(u) for u in existing}
+    try:
+        fresh = _fetch_more_images(topic, existing_norm,
+                                   batch=_LOAD_MORE_BATCH)
+    except TimeoutError as e:
+        return False, (f"Load-more timed out ({e}); "
+                       f"kept {len(existing)} existing.")
+    # The merge ALWAYS runs so stored duplicates are collapsed and
+    # missing hashes backfilled (#57) — and so the batch survives the
+    # same dedupe as a refresh. #91: no total-count trim is applied here;
+    # the #83 cap is bypassed by this explicit user request.
+    merged_urls, merged_hashes, merged_phashes, stats = _merge_story_images(
+        existing, existing_hashes, existing_phashes, fresh)
+    added = stats["added"]
+    if added:
+        update_story_fields(story_id, image_urls=merged_urls,
+                            image_hashes=merged_hashes,
+                            image_phashes=merged_phashes)
+        return True, (f"Added {added} more image(s); "
+                      f"{len(merged_urls)} total.")
+    note = f"No more images found; kept {len(merged_urls)} existing."
+    dupes = stats["dup_url"] + stats["dup_content"] + stats["dup_visual"]
+    if dupes:
+        note += f" ({dupes} already stored.)"
+    return False, note
+
+
+def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+    """Fetch ONE more batch (up to 5) of genuinely new news links (#91).
+
+    The sanctioned way past the #82 5-link target: this explicit user
+    request composes with ``_fetch_news_link_candidates`` (#82's reusable
+    primitive — query variants, normalized-URL dedupe, fail-loud) and
+    asks for one more batch of links that are not already stored,
+    appended after the existing ones, which are never wiped and never
+    reordered. Fail-loud: a missing story, missing topic, or search
+    failure raises RuntimeError with the honest cause; a shortfall
+    returns ``(False, "No more news links found")`` — never a faked
+    success. Never touches hashtags, images, or story content.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — news links unchanged.")
+    # #143: repair any stored redirect URLs to their final destinations
+    # (stories saved before universal resolution).
+    try:
+        repair_news_link_urls(story_id)
+    except Exception:
+        pass
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
+    existing = [lk for lk in (story["meta"].get("news_links") or [])
+                if isinstance(lk, dict) and lk.get("url")]
+    added = _fetch_news_link_candidates(
+        topic, count=_LOAD_MORE_BATCH,
+        exclude_urls=[lk["url"] for lk in existing])
+    if added:
+        update_story_fields(story_id, news_links=existing + added)
+        return True, (f"Added {len(added)} more news link(s); "
+                      f"{len(existing) + len(added)} total.")
+    return False, (f"No more news links found; kept {len(existing)} "
+                    "existing.")
+
+
 def _refresh_worker(story_id: str, kind: str, topic: str,
                     ai_engine: Optional[str] = None) -> None:
     """Background worker for one manual refresh kind. Never raises.
 
     Runs in a daemon thread so tab switches (st.rerun) can't stop it.
-    Per-kind locking: "hashtags" and "images" are independent and run
-    concurrently (#54) — each kind owns only its own busy flag and
-    outcome, so finishing never clears a sibling kind's state (#53).
-    The outcome is recorded honestly (``succeeded`` / ``no_change`` /
+    Per-kind locking: "hashtags", "images", "news", "more_images" and
+    "more_news" are independent and run concurrently (#54, #80, #91) —
+    each kind owns only its own busy flag and outcome, so finishing never
+    clears a sibling kind's state (#53). The outcome is recorded honestly (``succeeded`` / ``no_change`` /
     ``failed``) with the real detail in the note — a failure is never
     written as a success, and the toggle-off AI error surfaces verbatim.
     """
@@ -2107,6 +2556,12 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
                 changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
             elif kind == "images":
                 changed, note = refresh_images(story_id, topic)
+            elif kind == "news":
+                changed, note = refresh_news_links(story_id, topic)
+            elif kind == "more_images":
+                changed, note = load_more_images(story_id, topic)
+            elif kind == "more_news":
+                changed, note = load_more_news_links(story_id, topic)
             elif kind == "reset":
                 changed, note = _do_reset(story_id, topic, ai_engine=ai_engine)
             else:
@@ -2115,6 +2570,8 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
         except Exception as e:
             status = "failed"
             label = {"hashtags": "Hashtag", "images": "Image",
+                     "news": "News", "more_images": "Load more images",
+                     "more_news": "Load more news",
                      "reset": "Reset"}.get(kind, kind)
             note = f"{label} refresh failed: {e}"
         try:
@@ -2127,28 +2584,38 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
 
 def start_refresh(story_id: str, kind: str,
                   ai_engine: Optional[str] = None) -> Tuple[bool, str]:
-    """Kick off a background hashtag/image/reset refresh. Never raises.
+    """Kick off a background hashtag/image/news/reset refresh. Never raises.
 
-    ``kind`` is "hashtags", "images" or "reset". ``ai_engine`` (an engine
-    mode string or None) enables AI-assisted hashtag suggestions for the
-    hashtags and reset kinds — None means the "Enable AI processing"
-    toggle is off, in which case the worker fails loudly with a clear
-    message instead of silently falling back. The "reset" kind
+    ``kind`` is "hashtags", "images", "news", "more_images", "more_news" or
+    "reset". ``ai_engine`` (an engine mode string or None) enables
+    AI-assisted hashtag suggestions for the hashtags and reset kinds —
+    None means the "Enable AI processing" toggle is off, in which case
+    the worker fails loudly with a clear message instead of silently
+    falling back. The "news" kind re-fetches news links (sources) for the
+    story's topic and merges new ones in (never wipes). The "more_images"
+    / "more_news" kinds (#91) fetch ONE more batch (up to 5) of genuinely
+    new images / news links past the #83/#82 caps — the cap is bypassed
+    by this explicit user request, dedupe never is. The "reset" kind
     destructively clears all hashtags, fetched images and news links and
     re-fetches them fresh (manual uploads are never touched). The fetch
     runs in a daemon thread, so changing tabs mid-refresh won't stop it.
     Falls back to the story title when ``source_topic`` is missing so
     older stories can still refresh.
 
-    Concurrency (#54): "hashtags" and "images" are independent and may run
-    at the same time — a second kick is refused only for the SAME kind, or
-    when an exclusive kind ("reset", or save-time "enrich") is running.
-    "reset" stays exclusive: it refuses while ANY kind runs.
+    Concurrency (#54, #80, #91): "hashtags", "images", "news",
+    "more_images" and "more_news" are independent and may run at the same
+    time — a second kick is refused only for the SAME kind, for the
+    SIBLING kind that writes the same field ("images"↔"more_images",
+    "news"↔"more_news" — concurrent writers would silently clobber each
+    other's appended batch), or when an exclusive kind ("reset", or
+    save-time "enrich") is running. "reset" stays exclusive: it refuses
+    while ANY kind runs.
 
     Returns (started, reason): ``reason`` is "" when the refresh started,
     otherwise a human-readable explanation of why it could not start.
     """
-    if kind not in ("hashtags", "images", "reset"):
+    if kind not in ("hashtags", "images", "news", "more_images",
+                    "more_news", "reset"):
         return False, f"Unknown refresh kind: {kind!r}."
     try:
         story = load_story(story_id)
@@ -2166,6 +2633,12 @@ def start_refresh(story_id: str, kind: str,
         elif kind in busy:
             return False, (f"A {kind} refresh is already running — "
                            "try again shortly.")
+        elif _SIBLING_KINDS.get(kind) in busy:
+            # #91: the sibling writes the same story field — a concurrent
+            # run would silently clobber the other's appended batch.
+            sibling = _SIBLING_KINDS[kind]
+            return False, (f"A {sibling} refresh is already running — "
+                           "try again when it's done.")
         elif busy & set(_EXCLUSIVE_KINDS):
             blocker = "reset" if "reset" in busy else "enrichment"
             return False, (f"A {blocker} is already running — "
@@ -2195,10 +2668,13 @@ def start_refresh(story_id: str, kind: str,
 # the refresh flow above: the worker always writes a terminal state, the UI
 # auto-polls while busy, and a stale "warming" state is recovered honestly.
 
-# Upper bound for one warm-up run: the #4 probe budget is 30+30+60 = 120s,
-# plus overhead. Anything still "warming" past this is orphaned (the app
-# restarted mid-run) and is recovered as interrupted, never left stuck.
-FM_WARMUP_STALE_SECONDS = 600.0
+# Hard cap for one warm-up run (#122): the worker enforces FM_WARMUP_TIMEOUT_SECONDS
+# on the #4 probe (whose internal retry budget is 30+30+60 = 120s), so the
+# mailbox always reaches a terminal state within ~60s of kick-off. Anything
+# still "warming" past FM_WARMUP_STALE_SECONDS is orphaned (the app died
+# mid-run) and is recovered as interrupted — never left stuck.
+FM_WARMUP_TIMEOUT_SECONDS = 60.0
+FM_WARMUP_STALE_SECONDS = 90.0
 
 
 def _warmup_state_path() -> Path:
@@ -2259,19 +2735,51 @@ def read_fm_warmup_state() -> Dict[str, Any]:
     return data
 
 
+def _probe_fm_bounded(dual_engine, timeout_s: float) -> Dict[str, Any]:
+    """Run the #4 FM availability probe with a hard timeout (#122).
+
+    The probe itself has a 30s -> 30s -> 60s retry budget and no timeout
+    parameter, so it runs in a daemon thread while the caller waits at
+    most ``timeout_s``. On timeout the orphaned daemon probe thread is
+    abandoned (it dies with the process and never writes the mailbox —
+    only the worker below does) and TimeoutError is raised so the worker
+    records an honest failed state. Never hangs the caller past the
+    timeout. Probe exceptions are re-raised for the worker to record.
+    """
+    box: Dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            box["status"] = dual_engine.check_status(force=True, check_fm=True)
+        except Exception as e:  # noqa: BLE001 -- re-raised below
+            box["error"] = e
+
+    t = threading.Thread(target=_target, daemon=True, name="fm-warmup-probe")
+    t.start()
+    t.join(timeout=timeout_s)
+    if t.is_alive():
+        raise TimeoutError(
+            f"warm-up probe timed out after {timeout_s:.0f}s "
+            "(the on-device model may still be initializing)")
+    if "error" in box:
+        raise box["error"]
+    return box.get("status") or {}
+
+
 def _fm_warmup_worker() -> None:
     """Background worker: run the #4 FM availability probe. Never raises.
 
-    Uses ``dual_engine.check_status(force=True)`` — the exact probe with
-    the 30s -> 30s -> 60s retry budget — so a real ``fm respond`` call
-    initializes the on-device model. The outcome is recorded honestly:
+    Uses ``dual_engine.check_status(force=True)`` — the exact probe — but
+    bounded by FM_WARMUP_TIMEOUT_SECONDS (#122), so a hung probe can never
+    leave the mailbox "warming" forever. The outcome is recorded honestly:
     "done" only when the probe reports the model available, otherwise
-    "failed" with the probe's own message verbatim (same messaging as #4).
+    "failed" with the probe's own message verbatim (same messaging as #4),
+    or a timeout message when the probe exceeds its budget.
     """
     started = time.time()
     try:
         from core.dual_engine import dual_engine
-        status = dual_engine.check_status(force=True, check_fm=True)
+        status = _probe_fm_bounded(dual_engine, FM_WARMUP_TIMEOUT_SECONDS)
         fm = (status or {}).get("fm", {}) or {}
         secs = time.time() - started
         if fm.get("available"):
@@ -2297,12 +2805,16 @@ def _fm_warmup_worker() -> None:
         })
 
 
-def start_fm_warmup() -> Tuple[bool, str]:
+def start_fm_warmup(*, auto: bool = False) -> Tuple[bool, str]:
     """Kick off a background on-device Apple FM warm-up probe. Never raises.
 
     Returns (started, reason): ``reason`` is "" when the worker started,
     otherwise a human-readable explanation of why it could not start
     (e.g. a warm-up is already running).
+
+    ``auto`` marks a launch-time automatic kick-off (#115/#122): it is
+    recorded in the mailbox so the UI can treat it as purely informational
+    (no poll loop) instead of user-initiated work.
     """
     try:
         state = read_fm_warmup_state()
@@ -2315,6 +2827,7 @@ def start_fm_warmup() -> Tuple[bool, str]:
             "message": "",
             "seconds": 0.0,
             "started_at": time.time(),
+            "auto": bool(auto),
         })
         t = threading.Thread(target=_fm_warmup_worker, daemon=True,
                              name="fm-warmup")
@@ -2322,6 +2835,48 @@ def start_fm_warmup() -> Tuple[bool, str]:
         return True, ""
     except Exception as e:
         return False, f"Could not start warm-up: {type(e).__name__}: {e}"
+
+
+# ---------------------------------------------------------------------------
+# Automatic cold-start (#115)
+# ---------------------------------------------------------------------------
+
+_auto_cold_start_lock = threading.Lock()
+_auto_cold_start_fired = False
+
+
+def maybe_auto_cold_start() -> None:
+    """Kick off the FM warm-up automatically once per process (#115).
+
+    Cold-start init must run in a background thread without disturbing
+    anything else: the UI renders immediately and stays interactive while
+    the probe warms up the on-device model. This only *fires* the daemon
+    thread via :func:`start_fm_warmup` — it never waits for it, never
+    touches ``st.session_state`` (not thread-safe), and never raises.
+
+    Safe to call on every render: the per-process flag guarantees at most
+    one kick-off, and ``start_fm_warmup`` itself refuses a double-start
+    while a warm-up is already in flight. If the kick-off fails, it stays
+    silent here — the manual "Cold start" button remains available, and
+    the worker itself fails loudly via the mailbox on probe failure.
+    """
+    global _auto_cold_start_fired
+    with _auto_cold_start_lock:
+        if _auto_cold_start_fired:
+            return
+        _auto_cold_start_fired = True
+    try:
+        start_fm_warmup(auto=True)
+    except Exception:
+        # Never break the render for a background kick-off failure.
+        pass
+
+
+def _reset_auto_cold_start_for_tests() -> None:
+    """Reset the per-process auto cold-start flag. Tests only."""
+    global _auto_cold_start_fired
+    with _auto_cold_start_lock:
+        _auto_cold_start_fired = False
 
 
 def _do_reset(story_id: str, topic: str,
@@ -2372,17 +2927,22 @@ def _do_reset(story_id: str, topic: str,
     #    nothing is written. Alt-text filtering and content dedupe apply
     #    to the fresh list (issue #21); a hash-fetch failure raises
     #    ImageDedupeError and likewise fails loudly.
-    new_images, new_hashes, new_phashes, _ = _merge_story_images(
-        [], [], [], _fetch_images_for_story(story, topic) or [])
+    new_images, new_hashes, new_phashes, _img_stats = _merge_story_images(
+        [], [], [], _fetch_images_for_story(story, topic) or [],
+        cap=_MAX_FETCHED_IMAGES)
 
     # 3. News links: re-run the link verifier fresh for the topic.
-    #    Best-effort by contract: [] on failure means an empty row.
-    articles = _fetch_news_articles(topic, limit=6)
-    new_links = [{
-        "title": getattr(a, "title", "") or "",
-        "url": getattr(a, "link", "") or "",
-        "source": getattr(a, "source", "") or "",
-    } for a in articles[:6]]
+    #    Best-effort by contract: [] on failure means an empty row, with
+    #    the honest cause in the note. Issue #82: targets
+    #    NEWS_LINKS_TARGET (5) distinct links via progressively looser
+    #    queries.
+    try:
+        new_links = _fetch_news_link_candidates(
+            topic, count=NEWS_LINKS_TARGET)
+        news_err = ""
+    except RuntimeError as e:
+        new_links = []
+        news_err = str(e)
     new_urls = [lk["url"] for lk in new_links]
 
     update_story_fields(
@@ -2402,8 +2962,13 @@ def _do_reset(story_id: str, topic: str,
         parts.append("No hashtags found — row cleared.")
     if not new_images:
         parts.append("No images found — fetched row cleared (uploads kept).")
+    if _img_stats["trimmed"]:
+        parts.append(f"Capped fetched images at {_MAX_FETCHED_IMAGES} "
+                     f"({_img_stats['trimmed']} extra not kept; "
+                     f"uploads are never capped).")
     if not new_links:
-        parts.append("No news links found — row cleared.")
+        parts.append(f"News search failed ({news_err}) — row cleared."
+                     if news_err else "No news links found — row cleared.")
     if not changed:
         parts.append("Everything already fresh — nothing changed.")
     if ai_note:
@@ -2414,17 +2979,21 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     """Post-save enrichment body: news links + images + hashtags.
 
     Deterministic only — save-time enrichment never calls the AI, so a
-    story always saves cleanly with AI processing off. Returns
-    (changed, note); raises loudly on failure.
+    story always saves cleanly with AI processing off. Issue #82: the
+    news fetch targets ``NEWS_LINKS_TARGET`` (5) distinct links,
+    trying progressively looser queries when the topic under-fetches.
+    Returns (changed, note); raises loudly on failure.
     """
-    articles = _fetch_news_articles(topic, limit=6)
-    news_links: List[Dict[str, str]] = []
-    for a in articles[:6]:
-        news_links.append({
-            "title": getattr(a, "title", ""),
-            "url": getattr(a, "link", ""),
-            "source": getattr(a, "source", ""),
-        })
+    try:
+        news_links = _fetch_news_link_candidates(
+            topic, count=NEWS_LINKS_TARGET)
+        news_err = ""
+    except RuntimeError as e:
+        # Save-time enrichment keeps the image-timeout precedent: a news
+        # fetch failure is an honest note, not a lost enrichment — the
+        # story is already saved and hashtags/images still land.
+        news_links = []
+        news_err = str(e)
     story = load_story(story_id)
     if not story:
         raise RuntimeError("Enrichment failed: story not found.")
@@ -2455,7 +3024,7 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     # ImageDedupeError and fails the enrichment loudly.
     merged_imgs, merged_hashes, merged_phashes, _img_stats = _merge_story_images(
         meta.get("image_urls"), meta.get("image_hashes"),
-        meta.get("image_phashes"), image_urls)
+        meta.get("image_phashes"), image_urls, cap=_MAX_FETCHED_IMAGES)
     imgs_added = _img_stats["added"]
     links_added = 0 if verified_links else len(news_links)
     update_story_fields(
@@ -2468,10 +3037,22 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
     )
     changed = bool(tags_added or imgs_added or links_added)
     bits = []
-    bits.append(f"Found {links_added} news link(s)."
-                if links_added else "Kept verified news links.")
+    if news_err:
+        bits.append(f"News search failed ({news_err}); no links added.")
+    elif links_added:
+        bit = f"Found {links_added} news link(s)."
+        if links_added < NEWS_LINKS_TARGET:
+            bit += f" Only {links_added} related article(s) found."
+        bits.append(bit)
+    else:
+        bits.append("Kept verified news links." if verified_links
+                    else "No related news articles found.")
     bits.append(img_note or (f"Added {imgs_added} image(s)."
                              if imgs_added else "No new images found."))
+    if _img_stats["trimmed"]:
+        bits.append(f"Capped fetched images at {_MAX_FETCHED_IMAGES} "
+                    f"({_img_stats['trimmed']} extra not kept; "
+                    f"uploads are never capped).")
     bits.append(f"Added {tags_added} hashtag(s)."
                 if tags_added else "No new hashtags found.")
     return changed, "Enrichment complete: " + " ".join(bits)

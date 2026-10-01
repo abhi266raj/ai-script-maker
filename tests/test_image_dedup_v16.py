@@ -323,7 +323,7 @@ def test_merge_story_images_mixed_batch(monkeypatch):
     assert len(phashes) == 2 and all(phashes)
     assert stats == {"added": 1, "dup_url": 1, "dup_content": 1,
                      "dup_visual": 0, "rejected_alt": 1,
-                     "removed_existing_dupes": 0}
+                     "removed_existing_dupes": 0, "trimmed": 0}
 
 
 def test_merge_story_images_accepts_bare_url_strings(monkeypatch):
