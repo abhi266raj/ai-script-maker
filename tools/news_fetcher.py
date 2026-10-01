@@ -18,6 +18,70 @@ _HTTP_HEADERS = {
 }
 
 
+# Display names for known publishers, keyed by normalized host (no
+# "www."). Used by publisher_name_from_url (#153).
+_PUBLISHER_NAMES = {
+    "indianexpress.com": "Indian Express",
+    "timesofindia.indiatimes.com": "Times of India",
+    "economictimes.indiatimes.com": "Economic Times",
+    "hindustantimes.com": "Hindustan Times",
+    "thehindu.com": "The Hindu",
+    "ndtv.com": "NDTV",
+    "news18.com": "News18",
+    "aajtak.in": "Aaj Tak",
+    "abplive.com": "ABP Live",
+    "zeenews.india.com": "Zee News",
+    "deccanherald.com": "Deccan Herald",
+    "jagran.com": "Dainik Jagran",
+    "bhaskar.com": "Dainik Bhaskar",
+    "amarujala.com": "Amar Ujala",
+    "firstpost.com": "Firstpost",
+    "moneycontrol.com": "Moneycontrol",
+    "livemint.com": "Mint",
+    "businesstoday.in": "Business Today",
+    "mypunepulse.com": "MyPunePulse",
+    "punemirror.com": "Pune Mirror",
+    "mid-day.com": "Mid-Day",
+    "theprint.in": "ThePrint",
+    "scroll.in": "Scroll",
+    "thewire.in": "The Wire",
+    "quint.com": "The Quint",
+    "thequint.com": "The Quint",
+    "opindia.com": "OpIndia",
+    "republicworld.com": "Republic World",
+    "indiatoday.in": "India Today",
+    "dnaindia.com": "DNA India",
+    "freepressjournal.in": "Free Press Journal",
+}
+
+
+def publisher_name_from_url(url: str) -> str:
+    """Clean publisher display name derived from an article URL (#153).
+
+    Returns e.g. "Indian Express" for an indianexpress.com URL — never the
+    raw domain. Unknown hosts fall back to a title-cased domain label.
+    Returns "" when no host can be determined.
+    """
+    try:
+        host = urllib.parse.urlparse((url or "").strip()).netloc.lower()
+    except Exception:
+        host = ""
+    host = host.split("@")[-1].split(":")[0].strip()
+    for prefix in ("www.", "m.", "mobile."):
+        if host.startswith(prefix):
+            host = host[len(prefix):]
+            break
+    if not host:
+        return ""
+    if host in _PUBLISHER_NAMES:
+        return _PUBLISHER_NAMES[host]
+    label = host.split(".")[0]
+    parts = [p for p in re.split(r"[-_]+", label) if p]
+    if not parts:
+        return ""
+    return " ".join(p[:1].upper() + p[1:] for p in parts)
+
+
 class NewsFetchError(Exception):
     """Raised when every news source failed or returned nothing.
 
@@ -527,6 +591,9 @@ class NewsFetcher:
         chain (not just known aggregator hosts) — this catches Bing
         redirects, URL shorteners, and any future aggregator pattern.
         When the final URL differs, it replaces the original.
+        #153: the source is refreshed to the final publisher's name when
+        the URL changes — a "Bing News"/"DuckDuckGo" label must not
+        survive on a resolved publisher link.
 
         Returns (kept_articles, skipped_count). Articles that cannot be
         resolved are handled loudly:
@@ -550,6 +617,10 @@ class NewsFetcher:
             if final:
                 if final != link:
                     art.link = final
+                    # #153: the redirect's source ("Bing News",
+                    # "DuckDuckGo", ...) is meaningless on the resolved
+                    # publisher link — show the publisher's name.
+                    art.source = publisher_name_from_url(final) or art.source
                 kept.append(art)
             elif host in self._AGGREGATOR_REDIRECT_HOSTS:
                 # Known redirect URL that could not be resolved — useless.
