@@ -273,10 +273,16 @@ def test_tailored_instruction_matrix():
                 assert "30 seconds" in inst
                 assert "Recommended" in inst
                 assert "SAMPLE STORY" in inst
-                # Sample is a style reference only: never copied, never takes precedence
-                assert "STYLE REFERENCE ONLY" in inst
-                assert "DO NOT copy" in inst
-                assert "HIGHEST PRECEDENCE" not in inst
+                # Sample is the director's guide: highest creative precedence,
+                # never demoted to a style reference
+                assert "DIRECTOR'S GUIDE" in inst
+                assert "highest creative precedence" in inst
+                assert "SAMPLE WINS" in inst
+                assert "STYLE REFERENCE ONLY" not in inst
+                assert "DO NOT copy" not in inst
+                assert "lowest precedence" not in inst
+                # Verified news facts still outrank the sample
+                assert "verified news facts always outrank the sample" in inst
 
 
 def test_configuration_compliance_gate():
@@ -567,13 +573,16 @@ def test_argument_style_and_relational_characters():
     assert "corporate" in attire_colleague.lower() or "smart-casual" in attire_colleague.lower() or "lanyard" in attire_colleague.lower() or "shirt" in attire_colleague.lower()
 
 
-def test_sample_story_is_style_reference_not_copied():
-    """Verify the sample story is a STYLE REFERENCE ONLY: its names, locations,
-    and situations are never copied into characters or scenes."""
+def test_sample_story_is_directors_guide():
+    """Verify the sample story is the DIRECTOR'S GUIDE: its cast, direction and
+    tone win over creative setup rules on conflict (issue #33). Verified news
+    facts still outrank the sample; the sample outranks vibe/character-count/
+    scene-style settings. Extracted personas are never force-fit to the
+    configured character count."""
     from core.screenplay_formatter import format_industry_screenplay
 
-    # 1. Sample script with explicit CHARACTERS & CLOTHING block — names and
-    #    tapri location must NOT be copied into the selected personas.
+    # 1. Sample script with explicit CHARACTERS & CLOTHING block — the sample's
+    #    cast IS used (director's guide), not ignored.
     sample_script_block = """
 [Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]
 SCENE DETAIL:
@@ -588,13 +597,12 @@ VIKRAM: "सिस्टम को स्टूडेंट नहीं, अं
 """
     p_block = get_character_personas("Dialogue", 2, "Funny", "Funny", sample_story=sample_script_block)
     assert len(p_block) == 2
-    # Sample names are NOT copied — personas are grounded afresh
-    assert "Ananya" not in p_block[0] and "Ananya" not in p_block[1]
-    assert "Vikram" not in p_block[0] and "Vikram" not in p_block[1]
-    # Sample tapri location is NOT copied into personas
-    assert not any("tapri" in p.lower() or "टपरी" in p or "chai" in p.lower() for p in p_block)
+    # Sample cast wins — the director's names carry through
+    assert any("Ananya" in p for p in p_block)
+    assert any("Vikram" in p for p in p_block)
 
-    # 2. Sample story with dialogue cues (Wife: ... Husband: ...)
+    # 2. Sample story with dialogue cues (Wife: ... Husband: ...) — speakers
+    #    become the cast.
     sample_dialogue_cues = """
 Wife: "सब्जी और राशन का बिल देखकर तो होश उड़ गए!"
 Husband: "कमाई वही है और खर्चे दोगुने हो गए हैं!"
@@ -604,24 +612,42 @@ Husband: "कमाई वही है और खर्चे दोगुन�
     assert any("Wife" in p or "पत्नी" in p for p in p_cues)
     assert any("Husband" in p or "पति" in p for p in p_cues)
 
-    # 3. Narrative relationship mention (Father & Son)
+    # 3. Narrative relationship mention (Father & Son) — the sample's implied
+    #    cast is returned WHOLE, never force-fit back to character_count=2.
     sample_father_son = "Father and son heated debate regarding coaching classes fees and degree value."
     p_fs = get_character_personas("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic", sample_story=sample_father_son)
-    assert len(p_fs) == 2
+    assert len(p_fs) == 3  # trio template kept whole: no truncation to 2
     assert any("Father" in p or "पिता" in p for p in p_fs)
     assert any("Son" in p or "बेटा" in p for p in p_fs)
 
-    # 4. Narrative domain mention (hospital/doctor) — the system picks a grounded
-    #    socioeconomic pair for the domain; it does NOT copy roles from the sample.
+    # 3b. Three explicit speakers with character_count=1 — sample wins over the
+    #     count setting; all three are kept.
+    sample_trio_block = """
+CHARACTERS:
+⚬ ANANYA: college student
+⚬ VIKRAM: street-smart friend
+⚬ KABIR: quiet friend
+"""
+    p_trio = get_character_personas("Dialogue", 1, "Funny", "Funny", sample_story=sample_trio_block)
+    assert len(p_trio) == 3
+    assert any("Ananya" in p for p in p_trio)
+    assert any("Vikram" in p for p in p_trio)
+    assert any("Kabir" in p for p in p_trio)
+
+    # 4. Narrative domain mention (hospital/doctor) with no recognizable cast —
+    #    extraction finds nothing, so setup-driven grounded generation applies.
     sample_doc_pat = "Hospital doctor discusses medicine costs with a visitor."
     p_dp = get_character_personas("Dialogue", 2, "Funny", "Funny", sample_story=sample_doc_pat)
     assert len(p_dp) == 2
     assert any("Doctor" in p or "चिकित्सक" in p or "डॉक्टर" in p for p in p_dp)
     assert any("Construction Worker" in p or "मजदूर" in p for p in p_dp)
 
+    # 4b. No sample at all — setup-driven behavior unchanged.
+    p_plain = get_character_personas("Dialogue", 2, "Funny", "Funny")
+    assert len(p_plain) == 2
+
     # 5. Screenplay Formatter custom clothing and scene detail extraction from sample script
-    #    (neutral sample block — the formatter honors the user's own draft detail,
-    #    but generation never defaults to a tapri)
+    #    (neutral sample block — the formatter honors the user's own draft detail)
     sample_neutral_block = """
 [Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]
 SCENE DETAIL:
@@ -1255,3 +1281,71 @@ if __name__ == "__main__":
 
 
 
+
+
+def test_sample_precedence_in_chief_editor_sub_instructions():
+    """Verify the chief editor's sample clause frames the sample as the
+    director's guide with highest creative precedence (issue #33) — never
+    'lowest precedence' / 'style reference only'."""
+    budget = get_duration_budget(30)
+    result = chief_editor.decompose_master_instruction(
+        master_instruction="master",
+        news_topic="AI in Education",
+        target_seconds=30,
+        tone="Funny",
+        angle="Funny & Relatable",
+        character_count=1,
+        scene_style="Dialogue",
+        batch_size=1,
+        max_retries=3,
+        budget=budget,
+        sample_story="ANANYA: Degree le li, naukri kahan hai? VIKRAM: System ko student nahi chahiye!",
+    )
+    assert isinstance(result, dict) and result
+    dialogue_inst = result.get("dialogue_writer", "")
+    assert "DIRECTOR'S GUIDE" in dialogue_inst
+    assert "highest creative precedence" in dialogue_inst
+    assert "SAMPLE WINS" in dialogue_inst
+    assert "lowest precedence" not in dialogue_inst
+    assert "STYLE REFERENCE ONLY" not in dialogue_inst
+    # Facts boundary survives the flip
+    assert "verified news facts always outrank the sample" in dialogue_inst
+
+
+def test_sample_precedence_absent_without_sample():
+    """No sample story -> no director's-guide clause anywhere."""
+    budget = get_duration_budget(30)
+    inst = build_tailored_instruction(
+        topic="AI in Education",
+        duration_sec=30,
+        tone="Joke",
+        angle="Funny",
+        scene_style="Dialogue",
+        character_count=1,
+        sample_story=None,
+    )
+    assert "DIRECTOR'S GUIDE" not in inst
+    assert "SAMPLE STORY" not in inst
+
+
+def test_extract_sample_story_personas_never_force_fits_count():
+    """extract_sample_story_personas returns the sample's whole cast — never
+    truncated or padded to a configured character count (issue #33)."""
+    from agents.dialogue_writer import extract_sample_story_personas
+
+    # Explicit CHARACTERS block with 3 names: all 3 returned as-is.
+    trio = extract_sample_story_personas(
+        "CHARACTERS:\nAnanya: student\nVikram: friend\nKabir: friend"
+    )
+    assert trio is not None and len(trio) == 3
+    assert any("Ananya" in p for p in trio)
+    assert any("Vikram" in p for p in trio)
+    assert any("Kabir" in p for p in trio)
+
+    # Speaker cues: one persona per detected speaker.
+    duo = extract_sample_story_personas('Wife: "bill!"\nHusband: "kharcha!"')
+    assert duo is not None and len(duo) == 2
+
+    # No recognizable cast -> None (documented fallthrough, not a silent skip).
+    assert extract_sample_story_personas("A quiet news report with no characters.") is None
+    assert extract_sample_story_personas("   ") is None
