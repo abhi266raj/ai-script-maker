@@ -2187,7 +2187,11 @@ def _do_enrich(story_id: str, topic: str) -> Tuple[bool, str]:
             merged_tags.append(t)
             tags_added += 1
     # Verified Stage-1 links are sacred: they point at the exact story the
-    # reel was built from. Never replace them with topic-search results.
+    # reel was built from — the stored links from save time. Define the
+    # name before use (issue #62: it was referenced but never defined).
+    verified_links = [lk for lk in (meta.get("news_links") or [])
+                      if isinstance(lk, dict) and lk.get("url")]
+    # Never replace them with topic-search results.
     # Images merge: the story may already carry the Stage-1 curated gallery —
     # keep those and add what enrichment found, deduplicated by normalized
     # URL and content hash (issue #21). A hash-fetch failure raises
