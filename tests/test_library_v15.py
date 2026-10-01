@@ -1604,3 +1604,72 @@ def test_confirm_popover_marker_immediately_precedes_popover(monkeypatch):
     assert 'data-marker="lib-danger-pop-dp"' in seq[0][1]
     assert seq[1] == ("pop", "Delete")
     assert fake.popover_kwargs["key"] == "dp"
+
+
+# v1.6 (#38) — Delete popover HIG: full trigger labels + anchored caret.
+# ---------------------------------------------------------------------------
+
+def test_detail_toolbar_weights_fit_full_labels():
+    """#38: the Delete trigger was ellipsized to "D..." in the 1.0-weight
+    column, and "Update Hashtags"/"Update Images" also showed "…". Every
+    action column must be weighted to fit its longest label state
+    ("Updating Hashtags…", "Updating Images…", "Resetting…", "Delete" +
+    chevron). Delete stays the trailing (last) column and each toolbar
+    total is unchanged (10.0) so the overall layout — and the #24 baseline
+    alignment — is preserved."""
+    lui, _fake = _ui_with_fake_st()
+    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.0
+    assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0
+    # Minimum widths that fit the longest label states (generous headroom
+    # over the old 1.7/1.6/1.3/1.0 weights that truncated).
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 2.0  # Update Hashtags
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 1.8  # Update Images
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.5  # Delete popover trigger
+    assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
+
+
+def test_destructive_popover_has_hig_anchor_caret(monkeypatch):
+    """#38: the confirmation must read as a HIG popover anchored to its
+    trigger, not a detached card. The caret is scoped to popover bodies
+    carrying the lib-danger-pop-body marker: a 45° square inheriting the
+    body's own background, so it tracks the light/dark theme with no
+    hard-coded surface color."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_story_list_css(lui, monkeypatch)
+    assert css.count("{") == css.count("}")
+    rule = ('div[data-testid="stPopoverBody"]'
+            ':has([data-marker="lib-danger-pop-body"])::before')
+    assert rule in css
+    assert 'transform: rotate(45deg) !important;' in css
+    assert 'background: inherit !important;' in css
+    # Theme-safe: the caret introduces no hard-coded surface color, and the
+    # #24 red rules are untouched (still exactly 4 red declarations).
+    assert css.count("color: #FF3B30 !important;") == 4
+
+
+def test_confirm_popover_emits_body_anchor_marker_first(monkeypatch):
+    """#38: the lib-danger-pop-body marker must be the first node inside the
+    popover body. The body lives in a floating overlay portal, unreachable
+    from the trigger marker, so the caret rule anchors to this marker
+    instead. Emitted first so the red-button `+` sibling rules (DOM order)
+    never see a button-bearing container after it."""
+    lui, fake = _ui_with_fake_st()
+    seq = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: seq.append(("md", a[0] if a else "")))
+    orig_popover = lui.st.popover
+
+    def rec_popover(label, **k):
+        seq.append(("pop", label))
+        return orig_popover(label, **k)
+
+    monkeypatch.setattr(lui.st, "popover", rec_popover)
+    lui._confirm_popover(**_pop_kwargs(on_yes=lambda: None))
+    md_calls = [s[1] for s in seq if s[0] == "md"]
+    # [0] trigger marker (outside), [1] body anchor marker (first inside).
+    assert 'data-marker="lib-danger-pop-dp"' in md_calls[0]
+    assert 'data-marker="lib-danger-pop-body"' in md_calls[1]
+    # The body marker must not disturb the Yes/No buttons or the red Yes.
+    assert ("Yes", "dp-yes") in fake.buttons
+    assert ("No", "dp-no") in fake.buttons
