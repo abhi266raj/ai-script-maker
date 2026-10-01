@@ -268,7 +268,11 @@ def save_story(
     """Save a story immediately (no network). Returns the story id.
 
     Fetched image URLs are deduplicated by normalized URL before
-    storing — the same image is never stored twice (issue #21).
+    storing — the same image is never stored twice (issue #21). This
+    stays deliberately network-free: byte-identical or visual duplicates
+    under different URLs that slip through here are collapsed by every
+    later image refresh, which backfills content/perceptual hashes and
+    collapses stored duplicates (issue #57).
     """
     story_id = new_story_id()
     image_urls, _, _ = _dedupe_stored_image_entries(image_urls, [], [])
@@ -301,6 +305,9 @@ def load_story(story_id: str) -> Optional[Dict[str, Any]]:
     collapsed by normalized URL on load so the detail view shows each
     image once, and the cleanup is persisted back so it sticks. The
     returned view is always deduped, even if the write-back fails.
+    Byte-identical / visual duplicates under different URLs need the
+    network to detect, so they are NOT collapsed here — the image
+    refresh backfills hashes and collapses them (issue #57).
     """
     path = story_path(story_id)
     if not path.exists():
@@ -1143,18 +1150,22 @@ def _merge_story_images(
        are excluded. Missing alt text is NOT a pass: the URL junk rules
        and content-type preflights applied at extraction still stand.
     2. Normalized-URL dedupe against existing images and within the batch.
-    3. Content-hash dedupe: every surviving candidate's bytes are fetched
-       and SHA-256 hashed; a candidate whose bytes match an existing
-       image (or an earlier candidate) is dropped. Missing hashes for
-       existing images are backfilled first so candidates are compared
-       against real content. ANY fetch failure raises
-       :class:`ImageDedupeError` — the check is never silently skipped.
+    3. Content-hash backfill + collapse of EXISTING entries. This always
+       runs — even when no fresh candidates survived — so a refresh that
+       finds nothing new still cleans stored duplicates (issue #57).
+       Backfill fetches bytes only for entries missing hashes (SHA-256
+       and dHash, one fetch per URL; one-time cost, then persisted), so
+       candidates are compared against real content, never skipped. ANY
+       fetch failure raises :class:`ImageDedupeError` — the check is
+       never silently skipped. Existing entries that turn out to be
+       identical bytes collapse here (first occurrence wins).
     4. Perceptual-hash dedupe (issue #44): byte-different look-alikes
        (re-sized, re-compressed, slightly cropped) that survived step 3
-       are caught by 64-bit dHash — a candidate within
+       are caught by 64-bit dHash — an entry within
        ``_PHASH_DUP_THRESHOLD`` bits of any kept image is a visual
        duplicate and is dropped. Existing entries collapse the same way
-       (first occurrence wins). Undecodable image bytes raise
+       (first occurrence wins); then each surviving fresh candidate is
+       checked against everything kept. Undecodable image bytes raise
        :class:`ImageDedupeError` naming the URL — never silently skipped.
 
     Returns ``(merged_urls, merged_hashes, merged_phashes, stats)``;
@@ -1200,12 +1211,14 @@ def _merge_story_images(
     merged_urls = list(existing_urls)
     merged_hashes = list(hashes)
     merged_phashes = list(phashes)
-    if not fresh:
-        return merged_urls, merged_hashes, merged_phashes, stats
 
-    # 3. Content-hash dedupe. Backfill missing existing hashes (SHA-256 and
-    #    dHash, one fetch per URL) first so candidates are compared
-    #    against real content, never skipped.
+    # 3. Content-hash backfill + collapse of existing entries. ALWAYS
+    #    runs, even when no fresh candidates exist (issue #57): a refresh
+    #    that finds nothing new must still clean stored duplicates.
+    #    Backfill fetches bytes only for entries missing hashes (one-time
+    #    cost, then persisted); the collapse against stored hashes is
+    #    pure. ANY fetch/decode failure raises ImageDedupeError — never
+    #    silently skipped.
     for i, url in enumerate(merged_urls):
         if not merged_hashes[i] or not merged_phashes[i]:
             h, ph = _image_fingerprints(url)
@@ -1213,7 +1226,8 @@ def _merge_story_images(
                 merged_hashes[i] = h
             if not merged_phashes[i]:
                 merged_phashes[i] = _dhash_to_hex(ph)
-    # Collapse existing entries that turn out to be identical bytes.
+    # Collapse existing entries that turn out to be identical bytes
+    # (first occurrence wins).
     deduped_urls: List[str] = []
     deduped_hashes: List[str] = []
     deduped_phashes: List[str] = []
@@ -1250,6 +1264,12 @@ def _merge_story_images(
             kept_dhashes.append(ph)
     merged_urls, merged_hashes, merged_phashes = vis_urls, vis_hashes, vis_phashes
     seen_hashes = set(merged_hashes)
+
+    if not fresh:
+        # No fresh candidates — but the existing-entries backfill and
+        # collapse above already ran, so stored duplicates are cleaned
+        # and missing hashes are backfilled (issue #57).
+        return merged_urls, merged_hashes, merged_phashes, stats
 
     for url in fresh:
         h, ph = _image_fingerprints(url)
@@ -1796,9 +1816,11 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     are excluded; missing alt text is not a pass by itself.
 
     A fetch/hash failure raises ImageDedupeError — the dedupe check is
-    never silently skipped. When the fetch finds nothing, the existing
-    list is left untouched. Returns (changed, note). Never touches
-    hashtags, links, or story content.
+    never silently skipped. When the fetch finds nothing new, the merge
+    still runs: stored duplicates (byte-identical or visual) are
+    collapsed and missing hashes are backfilled, and that cleanup is
+    written back and reported (issue #57). Returns (changed, note).
+    Never touches hashtags, links, or story content.
     """
     story = load_story(story_id)
     if not story:
@@ -1813,13 +1835,21 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
         found = _fetch_images_for_story(story, topic)
     except TimeoutError as e:
         # The fetch names the step that timed out; existing media survives.
+        # Hash backfill needs the network too, so it would fail as well —
+        # the honest timeout note stands and nothing is written.
         return False, f"Image refresh timed out ({e}); kept {len(existing)} existing."
-    if not found:
-        return False, f"No new images found; kept {len(existing)} existing."
+    # The merge ALWAYS runs — even when the fetch found nothing new — so
+    # stored duplicates are collapsed and missing hashes are backfilled
+    # (issue #57). The collapse against stored hashes is pure; only the
+    # backfill touches the network.
     merged_urls, merged_hashes, merged_phashes, stats = _merge_story_images(
         existing, existing_hashes, existing_phashes, found)
     added = stats["added"]
-    cleaned = merged_urls != existing
+    aligned_hashes = _align_hashes(existing, existing_hashes)
+    aligned_phashes = _align_hashes(existing, existing_phashes)
+    urls_changed = merged_urls != existing
+    hashes_changed = (merged_hashes != aligned_hashes
+                      or merged_phashes != aligned_phashes)
     extras: List[str] = []
     if stats["rejected_alt"]:
         extras.append(f"Excluded {stats['rejected_alt']} unwanted image(s) "
@@ -1828,16 +1858,16 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
         extras.append(f"Removed {stats['removed_existing_dupes']} duplicate "
                       f"image(s) already stored.")
     extra = (" " + " ".join(extras)) if extras else ""
-    if added or cleaned:
+    if added or urls_changed or hashes_changed:
         update_story_fields(story_id, image_urls=merged_urls,
                             image_hashes=merged_hashes,
                             image_phashes=merged_phashes)
     if not added:
-        note = f"No new images found; kept {len(existing)} existing."
+        note = f"No new images found; kept {len(merged_urls)} existing."
         dupes = stats["dup_url"] + stats["dup_content"] + stats["dup_visual"]
         if dupes:
             note += f" ({dupes} already stored.)"
-        return cleaned, (note + extra).strip()
+        return urls_changed or hashes_changed, (note + extra).strip()
     return True, f"Added {added} new image(s); kept {len(existing)} existing.{extra}"
 
 

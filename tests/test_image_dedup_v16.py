@@ -141,9 +141,15 @@ def test_refresh_images_same_url_twice_is_noop(libdir, monkeypatch):
     sid = _make_story(image_urls=["https://img.example/a.jpg"])
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: ["https://img.example/a.jpg"])
+    # Issue #57: the merge always runs, so the stored image's missing
+    # hashes are backfilled (one-time fetch, then persisted). No second
+    # copy of the image is ever stored.
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
-    assert changed is False
-    assert lib.load_story(sid)["meta"]["image_urls"] == ["https://img.example/a.jpg"]
+    assert changed is True  # backfilled hashes were persisted
+    meta = lib.load_story(sid)["meta"]
+    assert meta["image_urls"] == ["https://img.example/a.jpg"]
+    assert all(meta["image_hashes"]) and all(meta["image_phashes"])
 
 
 def test_refresh_images_normalized_url_variant_is_noop(libdir, monkeypatch):
@@ -152,13 +158,12 @@ def test_refresh_images_normalized_url_variant_is_noop(libdir, monkeypatch):
         lib, "_fetch_images_for_story",
         lambda story, topic, **k: ["https://IMG.EXAMPLE/a.jpg/?y=2&x=1",
                                    "https://img.example/a.jpg?x=1&y=2#frag"])
-    # No byte fetching is needed: both candidates collapse to the stored
-    # URL before any content check.
-    def _boom(url, **kw):
-        raise AssertionError("no fetch should happen for URL-dupes")
-    monkeypatch.setattr(lib, "_fetch_image_bytes", _boom)
+    # Both candidates collapse to the stored URL before any candidate
+    # content check — but issue #57 backfills the stored entry's missing
+    # hashes (one-time fetch, then persisted).
+    monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
-    assert changed is False
+    assert changed is True  # backfilled hashes were persisted
     assert lib.load_story(sid)["meta"]["image_urls"] == [
         "https://img.example/a.jpg?x=1&y=2"]
     assert "already stored" in note
@@ -177,9 +182,12 @@ def test_refresh_images_identical_content_different_url_is_noop(libdir, monkeypa
         fetch_for({"https://img.example/one.jpg": _same,
                    "https://cdn.example/mirror.jpg": _same}))
     changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
-    assert changed is False
+    # No duplicate stored (the mirror is recognised by content) — but issue
+    # #57 backfills the stored entry's missing hashes, which is persisted.
+    assert changed is True
     meta = lib.load_story(sid)["meta"]
     assert meta["image_urls"] == ["https://img.example/one.jpg"]
+    assert all(meta["image_hashes"]) and all(meta["image_phashes"])
     assert "already stored" in note
 
 
