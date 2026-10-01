@@ -104,6 +104,16 @@ class _FakeSt(types.ModuleType):
     def text_input(self, *args, **kwargs):
         return ""
 
+    def expander(self, label, expanded=False, **kwargs):
+        # #159: the share popover's Telegram setup expander; recorded
+        # like the other containers.
+        self.events.append(("expander", label, expanded))
+        return _Ctx(self, "expander", (label,), kwargs)
+
+    def spinner(self, text=None, **kwargs):
+        # #159: share-progress spinner; a no-op context in tests.
+        return _Ctx(self, "spinner", (text,), kwargs)
+
 
 @pytest.fixture()
 def libdir(tmp_path, monkeypatch):
