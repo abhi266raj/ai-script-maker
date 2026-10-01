@@ -18,6 +18,7 @@ threads AFTER the story is saved, so saving never waits on the network.
 from __future__ import annotations
 
 import datetime
+import json
 import re
 import threading
 import time
@@ -32,6 +33,7 @@ from urllib.parse import urljoin
 
 LIBRARY_ROOT = Path.home() / "Documents" / "HindiReelStudio"
 STORIES_DIR = LIBRARY_ROOT / "stories"
+PREFS_PATH = LIBRARY_ROOT / "prefs.json"
 
 _STORY_ID_RE = re.compile(r"^[0-9A-Za-z-]{8,64}$")
 _ENRICH_LOCKS: Dict[str, threading.Lock] = {}
@@ -46,6 +48,33 @@ def library_root() -> Path:
 def stories_dir() -> Path:
     STORIES_DIR.mkdir(parents=True, exist_ok=True)
     return STORIES_DIR
+
+
+# ---------------------------------------------------------------------------
+# Preferences (persisted UI choices, e.g. the verifier's "Use AI" engine)
+# ---------------------------------------------------------------------------
+
+def load_prefs() -> Dict[str, Any]:
+    """Read the persisted prefs file; {} when missing or unreadable."""
+    try:
+        if PREFS_PATH.exists():
+            data = json.loads(PREFS_PATH.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+    except Exception:
+        pass
+    return {}
+
+
+def save_prefs(updates: Dict[str, Any]) -> None:
+    """Merge ``updates`` into the persisted prefs file. Never raises."""
+    try:
+        prefs = load_prefs()
+        prefs.update(updates)
+        LIBRARY_ROOT.mkdir(parents=True, exist_ok=True)
+        PREFS_PATH.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
+    except Exception:
+        pass
 
 
 def new_story_id() -> str:
@@ -592,7 +621,7 @@ _HASHTAG_STOPWORDS = {
     "into", "over", "after", "before", "between", "through", "during",
     "under", "their", "there", "these", "those", "what", "when", "where",
     "which", "while", "your", "yours", "news", "viral", "video", "watch",
-    "says", "said", "told", "more", "most", "very", "just",
+    "says", "said", "told", "more", "most", "very", "just", "scene",
 }
 
 
@@ -616,35 +645,54 @@ def _camel_tag(words: List[str], max_words: int = 3) -> str:
     return tag if len(tag) > 4 else ""
 
 
-def _fetch_trending_hashtags(topic: str, articles=None) -> List[str]:
-    """Smart hashtag discovery for a topic. Always returns at least one tag.
+def _story_content_texts(story: Optional[Dict[str, Any]]) -> List[str]:
+    """The story's own words, most specific first: headline, title, topic, script."""
+    if not story:
+        return []
+    meta = story.get("meta") or {}
+    return [
+        meta.get("source_headline") or "",
+        meta.get("title") or "",
+        meta.get("source_topic") or "",
+        story.get("script") or "",
+    ]
 
-    1. Trending hashtags matching the topic's words.
-    2. Tags derived from news article titles about the topic.
+
+def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None) -> List[str]:
+    """Content-first hashtag discovery. Always returns at least one tag.
+
+    1. Tags built from the story's own content (headline/title/topic/script).
+    2. Trending hashtags whose words overlap the story's content words.
     3. A tag derived from the topic itself.
     4. Guaranteed fallback so a story never ends up hashtag-less.
+
+    Live article titles are deliberately NOT used: they come from whatever
+    a news search happens to return and produce random, off-content tags.
     """
     tags: List[str] = []
-    # 1. trending matches
+    texts = [t for t in _story_content_texts(story) if t] or [topic]
+    content = " ".join(texts)
+    content_words = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", content)}
+    content_words -= _HASHTAG_STOPWORDS
+    # 1. from the story's own words (headline first — it names the story)
+    for text in texts:
+        t = _camel_tag(_keyword_list(text))
+        if t and t not in tags:
+            tags.append(t)
+        if len(tags) >= 4:
+            break
+    # 2. trending tags that actually match the story's content
     try:
         from tools.news_fetcher import news_fetcher
         trending = news_fetcher.fetch_famous_english_hashtags(limit=12) or []
-        words = {w.lower() for w in re.findall(r"[A-Za-z]{4,}", topic)}
         for entry in trending:
             tag = entry.get("tag", "") if isinstance(entry, dict) else str(entry)
-            if words & _tag_words(tag) and tag not in tags:
+            if tag and (content_words & _tag_words(tag)) and tag not in tags:
                 tags.append(tag)
-            if len(tags) >= 3:
+            if len(tags) >= 8:
                 break
     except Exception:
         pass
-    # 2. derive from article titles about the topic
-    if articles is None:
-        articles = _fetch_news_articles(topic, limit=6)
-    for a in (articles or [])[:6]:
-        t = _camel_tag(_keyword_list(getattr(a, "title", "")))
-        if t and t not in tags and len(tags) < 8:
-            tags.append(t)
     # 3. derive from the topic itself
     t = _camel_tag(_keyword_list(topic))
     if t and t not in tags and len(tags) < 8:
@@ -671,7 +719,7 @@ def refresh_hashtags(story_id: str, topic: str = "") -> bool:
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
         return False
-    new_tags = _fetch_trending_hashtags(topic)
+    new_tags = _fetch_trending_hashtags(topic, story)
     if not new_tags:
         return False
     merged = list(story["meta"].get("hashtags") or [])
@@ -770,10 +818,10 @@ def _do_media_refresh(story_id: str, topic: str) -> None:
     """
     articles = _fetch_news_articles(topic, limit=6)
     image_urls = _fetch_article_images(articles, topic)
-    new_tags = _fetch_trending_hashtags(topic, articles)
     story = load_story(story_id)
     if not story:
         return
+    new_tags = _fetch_trending_hashtags(topic, story)
     meta = story["meta"]
     merged_tags = list(meta.get("hashtags") or [])
     for t in new_tags:
@@ -796,10 +844,10 @@ def _do_enrich(story_id: str, topic: str) -> None:
             "source": getattr(a, "source", ""),
         })
     image_urls = _fetch_article_images(articles, topic)
-    new_tags = _fetch_trending_hashtags(topic, articles)
     story = load_story(story_id)
     if not story:
         return
+    new_tags = _fetch_trending_hashtags(topic, story)
     meta = story["meta"]
     merged_tags = list(meta.get("hashtags") or [])
     for t in new_tags:

@@ -13,8 +13,8 @@ import streamlit as st
 
 import story_library as lib
 
-TAB_STUDIO = "🎬 Studio"
-TAB_LIBRARY = "📚 Library"
+TAB_STUDIO = "Studio"
+TAB_LIBRARY = "Library"
 
 
 # ---------------------------------------------------------------------------
@@ -30,6 +30,10 @@ def inject_library_css() -> None:
         --lib-seg-bg: #E9E2D6;
         --lib-seg-active-bg: #FFFFFF;
         --lib-seg-active-shadow: 0 1px 3px rgba(60, 40, 20, 0.18);
+        /* latest macOS: floating glass tab strip */
+        --lib-glass-bg: rgba(233, 226, 214, 0.55);
+        --lib-glass-border: rgba(255, 255, 255, 0.55);
+        --lib-glass-shadow: 0 8px 24px rgba(60, 40, 20, 0.10), 0 1px 3px rgba(60, 40, 20, 0.08);
         --lib-dialogue-bg: #FFF8E7;
         --lib-dialogue-border: #E8B93C;
         --lib-dialogue-text: #5A3E00;
@@ -50,6 +54,10 @@ def inject_library_css() -> None:
         --lib-seg-bg: #2E2620;
         --lib-seg-active-bg: #4A3F33;
         --lib-seg-active-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        /* latest macOS: floating glass tab strip */
+        --lib-glass-bg: rgba(46, 38, 32, 0.55);
+        --lib-glass-border: rgba(255, 255, 255, 0.14);
+        --lib-glass-shadow: 0 8px 24px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.4);
         --lib-dialogue-bg: #3A2E14;
         --lib-dialogue-border: #C99A2E;
         --lib-dialogue-text: #F5DFA0;
@@ -63,18 +71,41 @@ def inject_library_css() -> None:
         --lib-said: #6EE7B7;
         --lib-key: #67E8F9;
     }
-    /* macOS segmented tab bar — centers the control like a native tab strip */
+    /* macOS segmented tab bar — latest macOS: a floating glass tab strip.
+       NOTE: the .lib-tabbar wrapper div cannot scope CSS in Streamlit's
+       DOM (each st.markdown is a separate element), so these rules target
+       the widget directly. st.segmented_control is used exactly once
+       app-wide (this tab bar), so no ancestor scoping is needed.
+       Labels are plain 13px text (macOS HIG: no emoji in tab titles). */
     .lib-tabbar { display: flex; justify-content: center; margin: 6px 0 14px 0; }
-    .lib-tabbar [data-testid="stSegmentedControl"] { width: auto; }
-    .lib-tabbar [data-testid="stSegmentedControl"] > div {
-        background: var(--lib-seg-bg) !important;
-        border-radius: 12px !important;
-        padding: 3px !important;
+    [data-testid="stSegmentedControl"] {
+        width: fit-content !important;
+        margin: 10px auto 18px auto !important;
     }
-    .lib-tabbar [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
+    [data-testid="stSegmentedControl"] > div {
+        background: var(--lib-glass-bg) !important;
+        -webkit-backdrop-filter: blur(18px) saturate(160%);
+        backdrop-filter: blur(18px) saturate(160%);
+        border: 1px solid var(--lib-glass-border) !important;
+        border-radius: 18px !important;
+        padding: 4px !important;
+        box-shadow: var(--lib-glass-shadow) !important;
+    }
+    [data-testid="stSegmentedControl"] button {
+        font-size: 13px !important;
+        font-weight: 500 !important;
+        padding: 6px 26px !important;
+        border-radius: 14px !important;
+        color: #3A2E1A !important;
+    }
+    [data-theme="dark"] [data-testid="stSegmentedControl"] button {
+        color: #F5EFE3 !important;
+    }
+    [data-testid="stSegmentedControl"] button[aria-pressed="true"] {
         background: var(--lib-seg-active-bg) !important;
         box-shadow: var(--lib-seg-active-shadow) !important;
-        border-radius: 9px !important;
+        border-radius: 14px !important;
+        font-weight: 600 !important;
     }
     /* Fallback: horizontal radio styled as segmented control (scoped to tabbar) */
     .lib-tabbar [data-testid="stRadio"] > div[role="radiogroup"] {
@@ -139,6 +170,19 @@ def inject_library_css() -> None:
         border-bottom: 1px solid rgba(128, 128, 128, 0.25);
         margin: 4px 0 12px 0;
     }
+    /* macOS HIG section header: plain semibold text, no emoji, no boxes */
+    .lib-section {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 22px 0 8px 0;
+    }
+    /* Quiet inline status line (replaces loud banners for background work) */
+    .lib-quiet {
+        text-align: center;
+        font-size: 13px;
+        opacity: 0.65;
+        margin: 2px 0 10px 0;
+    }
     /* macOS HIG: document title centered, empty states centered */
     .lib-doc-title {
         text-align: center;
@@ -154,14 +198,6 @@ def inject_library_css() -> None:
         color: var(--lib-chip-text);
         font-size: 15px;
     }
-    .lib-empty .lib-empty-icon { font-size: 40px; display: block; margin-bottom: 10px; }
-    .lib-story-card {
-        border: 1px solid var(--lib-chip-bg);
-        border-radius: 10px;
-        padding: 10px 14px;
-        margin-bottom: 8px;
-        cursor: pointer;
-    }
 </style>
         """,
         unsafe_allow_html=True,
@@ -171,6 +207,75 @@ def inject_library_css() -> None:
 # ---------------------------------------------------------------------------
 # Tab bar
 # ---------------------------------------------------------------------------
+
+def _inject_story_list_css() -> None:
+    """Library-page-only CSS: the story list renders as a macOS sidebar.
+
+    Only injected on the Library view, where the story radio is the sole
+    radio widget — the Studio view never sees these rules.
+    """
+    st.markdown(
+        """
+<style>
+    /* macOS sidebar: plain rows, accent-tinted rounded selection */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
+        + div[data-testid="stElementContainer"] [data-testid="stRadio"] > div[role="radiogroup"] {
+        gap: 2px !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
+        + div[data-testid="stElementContainer"] [data-testid="stRadio"] label {
+        border-radius: 8px !important;
+        padding: 7px 10px !important;
+        margin: 0 !important;
+        font-size: 13.5px !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
+        + div[data-testid="stElementContainer"] [data-testid="stRadio"] label:has(input:checked) {
+        background: rgba(0, 122, 255, 0.15) !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
+        + div[data-testid="stElementContainer"] [data-testid="stRadio"] label:has(input:checked) p {
+        font-weight: 600 !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
+        + div[data-testid="stElementContainer"] [data-testid="stRadio"] label > div:first-child {
+        display: none !important;
+    }
+    /* Sidebar section header */
+    .lib-sidebar-label {
+        font-size: 12px;
+        font-weight: 600;
+        opacity: 0.55;
+        margin: 2px 0 6px 2px;
+    }
+    /* Destructive actions: macOS system red text (graceful — plain button if unmatched) */
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
+        color: #FF3B30 !important;
+        border-color: rgba(255, 59, 48, 0.35) !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
+        color: #FF3B30 !important;
+        border-color: rgba(255, 59, 48, 0.6) !important;
+    }
+</style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def _danger_button(label: str, key: str, **kwargs) -> bool:
+    """Mac-style destructive button: red text via a marker-scoped rule.
+
+    The marker div sits directly before the button so the CSS can target
+    exactly this button. If the selector ever misses, it degrades to a
+    normal button — never broken.
+    """
+    st.markdown(f'<div data-marker="lib-danger-{key}" style="display:none"></div>',
+                unsafe_allow_html=True)
+    return st.button(label, key=key, **kwargs)
+
 
 def render_tab_bar() -> str:
     """Render the macOS-style tab bar. Returns 'studio' or 'library'."""
@@ -362,7 +467,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
 
 
 def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenplay: str = "") -> None:
-    if st.button("💾 Save to library", key="lib_manual_save_btn", type="primary"):
+    if st.button("Save to Library", key="lib_manual_save_btn", type="primary"):
         try:
             story_id = _save_current_story(batch_result, script, pro_screenplay)
         except Exception as e:
@@ -381,52 +486,64 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
 # ---------------------------------------------------------------------------
 
 def render_library_page() -> None:
-    st.markdown("## 📚 Story Library")
+    # macOS HIG: the tab bar already identifies this view — no redundant
+    # large title repeating "Library". Deference: content first.
+    _inject_story_list_css()
     stories = lib.list_stories()
-    selected = st.session_state.get("lib_selected_story")
 
     if not stories:
-        st.markdown('<div class="lib-empty"><span class="lib-empty-icon">📚</span>'
-                    'No saved stories yet.<br>Generate a reel in the Studio tab — '
+        st.markdown('<div class="lib-empty">No saved stories yet.<br>'
+                    'Generate a reel in the Studio tab — '
                     'it auto-saves here on completion.</div>',
                     unsafe_allow_html=True)
         return
 
     master, detail = st.columns([1, 3])
     with master:
-        st.caption(f"**Stories** · {len(stories)}")
-        for s in stories:
-            sid = s.get("id", "")
-            title = (s.get("title", "Untitled") or "Untitled")[:42]
-            label = f"📄 {title}"
-            if st.button(label, key=f"lib_story_{sid}", use_container_width=True):
-                st.session_state["lib_selected_story"] = sid
-                st.rerun()
+        # macOS sidebar: the story list is a single-select list with an
+        # accent-tinted selected row (like Mail/Finder). Newest first, so
+        # the latest story is selected on entry.
+        st.markdown(f'<div class="lib-sidebar-label">Stories · {len(stories)}</div>',
+                    unsafe_allow_html=True)
+        ids = [s.get("id", "") for s in stories]
+        titles = {s.get("id", ""): (s.get("title", "Untitled") or "Untitled")[:38]
+                  for s in stories}
+        if st.session_state.get("lib_story_radio") not in ids:
+            # Reset a stale selection (e.g. after a delete) before the
+            # widget is created so it falls back to the first row.
+            st.session_state.pop("lib_story_radio", None)
+        st.markdown('<div data-marker="lib-story-list" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        sel = st.radio(
+            "Stories",
+            options=ids,
+            format_func=lambda sid: titles.get(sid, "?"),
+            index=0,
+            key="lib_story_radio",
+            label_visibility="collapsed",
+        )
+        st.session_state["lib_selected_story"] = sel
         # Delete-all lives in the master section (two-step confirm).
         st.markdown("")
         if not st.session_state.get("lib_confirm_delete_all"):
-            if st.button("🗑️ Delete all", key="lib_delete_all_btn", use_container_width=True,
-                         help="Delete every saved story"):
+            if _danger_button("Delete All", key="lib_delete_all_btn", use_container_width=True,
+                              help="Delete every saved story"):
                 st.session_state["lib_confirm_delete_all"] = True
                 st.rerun()
         else:
-            if st.button("⚠️ Delete ALL?", key="lib_delete_all_confirm", type="primary",
-                         use_container_width=True, help="Confirm: delete every saved story"):
+            if _danger_button("Confirm Delete", key="lib_delete_all_confirm",
+                              use_container_width=True, help="Confirm: delete every saved story"):
                 n = lib.delete_all_stories()
                 st.session_state.pop("lib_confirm_delete_all", None)
                 st.session_state.pop("lib_selected_story", None)
+                st.session_state.pop("lib_story_radio", None)
                 st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
                 st.rerun()
             if st.button("Cancel", key="lib_delete_all_cancel", use_container_width=True):
                 st.session_state.pop("lib_confirm_delete_all", None)
                 st.rerun()
     with detail:
-        if not selected or not any(s.get("id") == selected for s in stories):
-            st.markdown('<div class="lib-empty"><span class="lib-empty-icon">👈</span>'
-                        'Select a story to view it.</div>',
-                        unsafe_allow_html=True)
-            return
-        _render_story_detail(selected)
+        _render_story_detail(sel)
 
 
 def _render_full_script(script_md: str) -> None:
@@ -540,8 +657,9 @@ def _copy_button(label: str, text: str, key: str) -> None:
     payload = _json.dumps(text)
     btn_id = f"libcp-{key}"
     components.html(
-        f"""<button id="{btn_id}" style="width:100%;padding:8px 4px;border:1px solid #bbb;border-radius:8px;
-        background:#f5f5f5;color:#222;cursor:pointer;font-size:13px;">{_html.escape(label)}</button>
+        f"""<button id="{btn_id}" style="width:100%;padding:7px 4px;border:1px solid rgba(0,0,0,0.12);
+        border-radius:8px;background:rgba(255,255,255,0.72);color:#1d1d1f;cursor:pointer;font-size:13px;
+        font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;">{_html.escape(label)}</button>
         <script>
         document.getElementById("{btn_id}").addEventListener("click", async () => {{
             const t = {payload};
@@ -569,29 +687,27 @@ def _render_story_detail(story_id: str) -> None:
         return
     meta = story["meta"]
 
-    # Detail navigation bar (macOS HIG toolbar pattern): Back leading,
-    # Delete trailing, hairline separator — deference over heavy chrome.
-    nb1, _, nb3 = st.columns([1.2, 7.6, 1.2])
-    with nb1:
-        if st.button("← Back", key=f"lib_back_{story_id}", help="Back to the story list"):
-            st.session_state.pop("lib_selected_story", None)
-            st.rerun()
+    # Detail toolbar (macOS HIG): the sidebar owns navigation, so the
+    # detail keeps only its trailing destructive action + a hairline.
+    _, nb3 = st.columns([8.4, 1.6])
     with nb3:
         if not st.session_state.get(f"lib_confirm_del_{story_id}"):
-            if st.button("🗑️ Delete", key=f"lib_del_{story_id}", help="Delete this story"):
+            if _danger_button("Delete", key=f"lib_del_{story_id}",
+                              use_container_width=True, help="Delete this story"):
                 st.session_state[f"lib_confirm_del_{story_id}"] = True
                 st.rerun()
         else:
-            if st.button("⚠️ Confirm?", key=f"lib_del_confirm_{story_id}", type="primary",
-                         help="Confirm: delete this story"):
+            if _danger_button("Confirm Delete", key=f"lib_del_confirm_{story_id}",
+                              use_container_width=True, help="Confirm: delete this story"):
                 lib.delete_story(story_id)
                 st.session_state.pop(f"lib_confirm_del_{story_id}", None)
                 st.session_state.pop("lib_selected_story", None)
+                st.session_state.pop("lib_story_radio", None)
                 st.success("Story deleted.")
                 st.rerun()
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
 
-    # Title at top: big, multiline. ✏️ swaps in a borderless editor (no label text).
+    # Title at top: big, multiline. "Edit" swaps in a borderless editor (no label text).
     title = meta.get("title", "Untitled Story") or "Untitled Story"
     if st.session_state.get(f"lib_edit_title_{story_id}"):
         new_title = st.text_area("", value=title, key=f"lib_title_{story_id}",
@@ -613,7 +729,7 @@ def _render_story_detail(story_id: str) -> None:
             st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
                         unsafe_allow_html=True)
         with t2:
-            if st.button("✏️", key=f"lib_title_edit_{story_id}", help="Edit title"):
+            if st.button("Edit", key=f"lib_title_edit_{story_id}", help="Edit title"):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
                 st.rerun()
     created = (meta.get("created_at", "") or "").replace("T", " ")
@@ -621,21 +737,22 @@ def _render_story_detail(story_id: str) -> None:
     st.markdown(f"<div style='text-align:center' class='stCaption'>{_html.escape(_sub)}</div>",
                 unsafe_allow_html=True)
 
-    # Enrichment / refresh state
+    # Enrichment / refresh state — quiet inline status, never a loud banner.
     _status = meta.get("enrichment_status")
-    if _status == "pending":
-        st.info("⏳ Fetching images & news links in the background…")
-    elif _status == "refreshing":
-        st.info("🔄 Refreshing in the background — feel free to switch tabs, it won't stop.")
+    if _status in ("pending", "refreshing"):
+        _msg = ("Fetching images and links in the background…"
+                if _status == "pending"
+                else "Refreshing in the background — safe to switch tabs.")
+        st.markdown(f'<div class="lib-quiet">{_msg}</div>', unsafe_allow_html=True)
     _note = (meta.get("refresh_note") or "").strip()
     if _note:
-        st.caption(f"🔄 Last refresh: {_note}")
+        st.caption(f"Last refresh: {_note}")
 
     # Whole script — always through the color-coded renderer so dialogue
     # never falls back to plain markdown.
     script_md = story["script"].strip()
     if script_md:
-        st.markdown("### 🎬 Full Script")
+        st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
         _render_full_script(script_md)
     elif story["dialogue"].strip():
         # Old-format files (saved before the blockquote change): two-box rendering.
@@ -645,26 +762,26 @@ def _render_story_detail(story_id: str) -> None:
     # Hashtags sit below the story (macOS HIG: centered, quiet chips).
     tags = meta.get("hashtags") or []
     if tags:
-        st.markdown("### #️⃣ Hashtags")
+        st.markdown('<div class="lib-section">Hashtags</div>', unsafe_allow_html=True)
         st.markdown('<div style="text-align:center">' +
                     "".join(f'<span class="lib-chip">{t}</span>' for t in tags) +
                     '</div>', unsafe_allow_html=True)
 
     # Copy options: the full final-stage script, pure — nothing added.
     if script_md:
-        st.markdown("### 📋 Copy")
+        st.markdown('<div class="lib-section">Copy</div>', unsafe_allow_html=True)
         cc1, cc2, cc3, cc4 = st.columns(4)
         with cc1:
-            _copy_button("📋 Script", _script_plain_text(script_md), f"s-{story_id}")
+            _copy_button("Script", _script_plain_text(script_md), f"s-{story_id}")
         with cc2:
-            _copy_button("🖼️ + Media", _compose_share_text(meta, script_md, True, False), f"m-{story_id}")
+            _copy_button("Script + Media", _compose_share_text(meta, script_md, True, False), f"m-{story_id}")
         with cc3:
-            _copy_button("#️⃣ + Tags", _compose_share_text(meta, script_md, False, True), f"h-{story_id}")
+            _copy_button("Script + Tags", _compose_share_text(meta, script_md, False, True), f"h-{story_id}")
         with cc4:
-            _copy_button("📦 All", _compose_share_text(meta, script_md, True, True), f"a-{story_id}")
+            _copy_button("All", _compose_share_text(meta, script_md, True, True), f"a-{story_id}")
 
     # Images + news links at the bottom
-    st.markdown("### 🖼️ Media & Links")
+    st.markdown('<div class="lib-section">Media &amp; Links</div>', unsafe_allow_html=True)
     img_urls = meta.get("image_urls") or []
     uploaded = meta.get("uploaded_images") or []
     if img_urls:
@@ -699,12 +816,12 @@ def _render_story_detail(story_id: str) -> None:
             url = lk.get("url", "")
             src = lk.get("source", "")
             label = f"{title} ({src})" if src else title
-            st.markdown(f"🔗 [{label}]({url})" if url else f"🔗 {label}")
+            st.markdown(f"[{label}]({url})" if url else label)
     elif meta.get("enrichment_status") != "pending":
         st.caption("No news links yet.")
 
     # Video upload + playback
-    st.markdown("### 🎥 Video")
+    st.markdown('<div class="lib-section">Video</div>', unsafe_allow_html=True)
     video_file = meta.get("video_file", "")
     vpath = lib.media_path(story_id, video_file) if video_file else None
     if vpath:
@@ -740,7 +857,7 @@ def _render_story_detail(story_id: str) -> None:
     r1, r2, r3 = st.columns(3)
     with r1:
         _loading = _refresh_kind == "hashtags"
-        if st.button("⏳ Updating hashtags…" if _loading else "#️⃣ Update hashtags",
+        if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
                      key=f"lib_tags_{story_id}",
                      help="Find trending hashtags for this story's topic and add them",
                      disabled=_busy):
@@ -750,7 +867,7 @@ def _render_story_detail(story_id: str) -> None:
                 st.error("Could not start the hashtag refresh.")
     with r2:
         _loading = _refresh_kind == "images"
-        if st.button("⏳ Updating images…" if _loading else "🖼️ Update images",
+        if st.button("Updating Images…" if _loading else "Update Images",
                      key=f"lib_imgs_{story_id}",
                      help="Re-fetch news images for this story's topic",
                      disabled=_busy):
@@ -760,7 +877,7 @@ def _render_story_detail(story_id: str) -> None:
                 st.error("Could not start the image refresh.")
     with r3:
         _loading = _refresh_kind == "all"
-        if st.button("⏳ Retrying…" if _loading else "↻ Retry media fetch",
+        if st.button("Retrying…" if _loading else "Retry Media",
                      key=f"lib_retry_{story_id}",
                      help="Re-run the hashtag + image fetch for this story",
                      disabled=_busy):

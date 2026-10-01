@@ -1551,7 +1551,8 @@ with col_brand:
         unsafe_allow_html=True,
     )
 with col_srv:
-    with st.popover(f"⚡ Server ({srv_info['port']})", help="Server status & controls", use_container_width=True):
+    # macOS HIG: disclosure triangle (inline expansion), never a popover on click.
+    with st.expander(f"Server · :{srv_info['port']}", expanded=False):
         st.markdown("**Server Status: Running**")
         st.caption(f"Host: `{srv_info['host']}` • Port: `{srv_info['port']}` • PID: `{srv_info['pid']}`")
         if srv_info['is_standard_port']:
@@ -1559,11 +1560,11 @@ with col_srv:
 
         btn_stop, btn_restart = st.columns(2)
         with btn_stop:
-            if st.button("🛑 Stop", help="Stop server process", use_container_width=True, key="web_srv_stop"):
+            if st.button("Stop", help="Stop server process", use_container_width=True, key="web_srv_stop"):
                 st.session_state.server_action = "stop"
                 st.rerun()
         with btn_restart:
-            if st.button("🔄 Restart", help="Restart server process", use_container_width=True, key="web_srv_restart"):
+            if st.button("Restart", help="Restart server process", use_container_width=True, key="web_srv_restart"):
                 st.session_state.server_action = "restart"
                 st.rerun()
 
@@ -2401,7 +2402,7 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
     _store = st.session_state.setdefault("s1_story_links", {})
     _entry = _store.get(_sel_url) or {}
 
-    if st.button("📥 Fetch story link", key=f"{key_prefix}sl_fetch",
+    if st.button("Fetch story link", key=f"{key_prefix}sl_fetch",
                  help="Fetch the article page and pull its images"):
         try:
             with st.spinner("Fetching the article page…"):
@@ -2425,21 +2426,22 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
     st.markdown(f"**Fetched:** {_entry.get('title') or '(no title found)'}")
     st.caption(_entry.get("url", ""))
 
-    _use_llm = st.toggle(
-        "Use LLM for verification", value=_entry.get("use_llm", True),
-        key=f"{key_prefix}sl_llm",
-        help="On = the selected LLM judges same-story. Off = fast deterministic keyword check.")
-    _engine_mode = None
-    if _use_llm:
-        _def_mode = st.session_state.get("chosen_engine_mode", "first_local_then_agy")
-        _names = list(ENGINE_OPTIONS.keys())
-        _def_name = ENGINE_NAMES_REV.get(_def_mode, _names[0])
-        _engine_name = st.selectbox("LLM engine", _names,
-                                    index=_names.index(_def_name) if _def_name in _names else 0,
-                                    key=f"{key_prefix}sl_engine")
-        _engine_mode = ENGINE_OPTIONS[_engine_name]
+    _ai_names = ["None"] + list(ENGINE_OPTIONS.keys())
+    _last_ai = story_library.load_prefs().get("s1_verify_engine", "None")
+    if _last_ai not in _ai_names:
+        _last_ai = "None"
+    _ai_pick = st.selectbox(
+        "Use AI",
+        _ai_names,
+        index=_ai_names.index(_last_ai),
+        help="None = fast deterministic keyword check. Pick an engine and the AI judges same-story.")
+    if _ai_pick != _last_ai:
+        # Remember the last selection across links, stories, and restarts.
+        story_library.save_prefs({"s1_verify_engine": _ai_pick})
+    _use_llm = _ai_pick != "None"
+    _engine_mode = ENGINE_OPTIONS[_ai_pick] if _use_llm else None
 
-    if st.button("✅ Verify same story", key=f"{key_prefix}sl_verify"):
+    if st.button("Verify same story", key=f"{key_prefix}sl_verify"):
         _headline = _model_field(verif, "headline", "") or ""
         _facts = _model_field(verif, "verified_facts", None) or []
         try:
