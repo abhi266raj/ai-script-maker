@@ -831,7 +831,7 @@ def _confirm_delete_story(story_id: str) -> None:
         raise RuntimeError("the story file could not be removed")
     st.session_state.pop("lib_selected_story", None)
     st.session_state.pop("lib_story_radio", None)
-    st.success("Story deleted.")
+    _notify("Story deleted.", icon="✅")
 
 
 def _confirm_delete_all() -> None:
@@ -839,7 +839,7 @@ def _confirm_delete_all() -> None:
     n = lib.delete_all_stories()
     st.session_state.pop("lib_selected_story", None)
     st.session_state.pop("lib_story_radio", None)
-    st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
+    _notify(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.", icon="✅")
 
 
 # ---------------------------------------------------------------------------
@@ -1215,6 +1215,19 @@ def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
     )
 
 
+def _notify(msg: str, icon: str | None = None) -> None:
+    """#88: the single app-wide pattern for transient status notifications.
+
+    Every transient status goes through ``st.toast`` — Streamlit renders
+    it in one fixed position (bottom-right), auto-dismisses it after a few
+    seconds, and styles every toast identically. Funneling all transient
+    status through this helper guarantees notifications share one style
+    and one place. Loud failures are NOT transient: they keep using
+    ``st.error``/``st.warning`` so they stay visible until acknowledged.
+    """
+    st.toast(msg, icon=icon)
+
+
 def _refresh_outcome_icon(status: str) -> str:
     """Toast icon for a finished refresh outcome (#53)."""
     return {"succeeded": "✅", "no_change": "ℹ️",
@@ -1256,9 +1269,9 @@ def _fire_refresh_toasts(story_id: str, meta: dict) -> None:
             st.error(f"Could not read a saved refresh outcome "
                      f"({str(entry)[:80]}); dropped.")
             continue
-        st.toast(_refresh_toast_text(outcome["kind"], outcome["status"],
-                                     outcome["note"]),
-                 icon=_refresh_outcome_icon(outcome["status"]))
+        _notify(_refresh_toast_text(outcome["kind"], outcome["status"],
+                                    outcome["note"]),
+                icon=_refresh_outcome_icon(outcome["status"]))
     lib.update_story_fields(story_id, refresh_outcome_pending=[])
 def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     """Tiny ×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).
@@ -1636,8 +1649,9 @@ def _render_fm_warmup_result() -> None:
     if _stt == "done":
         _secs = _state.get("seconds") or 0.0
         _msg = (_state.get("message") or "").strip()
-        st.success(f"Apple FM warmed up in {_secs:.1f}s"
-                   + (f" — {_msg}" if _msg else ""))
+        _notify(f"Apple FM warmed up in {_secs:.1f}s"
+                + (f" — {_msg}" if _msg else ""),
+                icon="✅")
     elif _stt == "failed":
         _msg = (_state.get("message") or "unknown error").strip()
         st.error(f"Warm-up failed: {_msg}")
@@ -1859,7 +1873,7 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
         _ok, _why = lib.start_enrichment(story_id, topic)
-        st.success("Saved to Library.")
+        _notify("Saved to Library.", icon="✅")
         st.rerun()
 
 
@@ -2453,7 +2467,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                         if vpath:
                             msg += (f" Attach the video manually from:\n"
                                     f"{vpath}")
-                        st.toast(msg)
+                        _notify(msg)
             else:
                 # Fail loudly: never a dead link. The app may still open
                 # via the browser fallback when clicked.
@@ -2478,7 +2492,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                     except Exception as e:
                         st.error(f"Couldn't share via Telegram: {e}")
                     else:
-                        st.success(_tg_msg)
+                        _notify(_tg_msg, icon="✅")
             else:
                 # Fail loudly with guided setup — never a dead button.
                 with st.expander("Set up Telegram sharing"):
@@ -2507,7 +2521,8 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                                 st.error("Couldn't save the token — the prefs "
                                          "file isn't writable.")
                             else:
-                                st.success("Telegram bot saved — you can share now.")
+                                _notify("Telegram bot saved — you can share now.",
+                                        icon="✅")
                                 st.rerun()
         else:
             st.caption("No news links or hashtags to share yet.")
@@ -2663,7 +2678,7 @@ def _render_upload_popover(story_id: str) -> None:
                 st.error(f"Video upload failed: {e}")
             else:
                 _up_ok = True
-                st.success(f"Video attached: {stored}")
+                _notify(f"Video attached: {stored}", icon="✅")
             _reset_file_uploader(f"lib_video_{story_id}")
             if _up_ok:
                 st.rerun()
@@ -2686,7 +2701,7 @@ def _render_upload_popover(story_id: str) -> None:
                 st.warning(f"Attached {len(up_imgs) - _up_failed} of "
                            f"{len(up_imgs)} image(s).")
             else:
-                st.success(f"Attached {len(up_imgs)} image(s).")
+                _notify(f"Attached {len(up_imgs)} image(s).", icon="✅")
                 st.rerun()
 
 
