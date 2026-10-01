@@ -515,53 +515,21 @@ def inject_library_css() -> None:
         opacity: 0.65;
         margin: 2px 0 10px 0;
     }
-    /* #60: the story header is one static glyph, centered — the title
-       text is gone from the header. The hidden lib-story-icon marker sits
-       in the element container directly before the popover's own container,
-       so the sibling rules below reach exactly the icon's popover trigger.
-       Theme-safe: the glyph inherits the text color and the hover is a
-       quiet neutral wash. The glyph is text, never SVG — no fill/stroke
-       forcing. */
-    div[data-testid="stElementContainer"]:has([data-marker="lib-story-icon"])
-        + div[data-testid="stElementContainer"] [data-testid="stPopover"] {
-        display: flex !important;
-        justify-content: center !important;
+    /* macOS HIG: document title centered, multiline, theme-safe (#84
+       reverts #60 — the full title text is back as an h2). */
+    .lib-doc-title {
+        text-align: center;
+        font-size: 30px;
+        font-weight: 700;
+        line-height: 1.25;
+        margin: 6px 0 2px 0;
+        overflow-wrap: anywhere;
     }
-    div[data-testid="stElementContainer"]:has([data-marker="lib-story-icon"])
-        + div[data-testid="stElementContainer"]
-        [data-testid="stPopover"] [data-testid="stPopoverButton"] {
-        border: none !important;
-        background: transparent !important;
-        box-shadow: none !important;
-        padding: 4px 14px !important;
-        color: inherit !important;
-    }
-    div[data-testid="stElementContainer"]:has([data-marker="lib-story-icon"])
-        + div[data-testid="stElementContainer"]
-        [data-testid="stPopover"] [data-testid="stPopoverButton"] p {
-        font-size: 44px !important;
-        line-height: 1 !important;
-    }
-    div[data-testid="stElementContainer"]:has([data-marker="lib-story-icon"])
-        + div[data-testid="stElementContainer"]
-        [data-testid="stPopover"] [data-testid="stPopoverButton"]:hover {
-        background: rgba(128, 128, 128, 0.18) !important;
-        color: inherit !important;
-        border: none !important;
-    }
-    div[data-testid="stElementContainer"]:has([data-marker="lib-story-icon"])
-        + div[data-testid="stElementContainer"]
-        [data-testid="stPopover"] [data-testid="stPopoverButton"]:focus-visible {
-        outline: 2px solid currentColor !important;
-        outline-offset: 2px !important;
-    }
-    /* #68 follow-up: the story title never shows Streamlit's heading-anchor
-       🔗 link icon. Streamlit appends that anchor to h1–h6 rendered through
-       st.markdown — including the legacy raw-HTML <h2 class="lib-doc-title">
-       title, which is what the user's screenshot showed. #60 replaced the h2
-       with the glyph + popover (title now bold text, no heading possible),
-       so on current code this rule is belt-and-braces: if any build ever
-       renders the title as a heading again, the chrome stays hidden. */
+    /* #68 follow-up / #84: the story title never shows Streamlit's
+       heading-anchor 🔗 link icon. Streamlit appends that anchor to h1–h6
+       rendered through st.markdown — including the raw-HTML
+       <h2 class="lib-doc-title"> title restored by #84 (the user's
+       screenshot showed the icon on it). The anchor stays hidden. */
     .lib-doc-title a {
         display: none !important;
     }
@@ -1601,12 +1569,6 @@ def _copy_button(label: str, text: str, key: str) -> None:
 _DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, 1.4, 1.1, 1.1, 2.0, 1.7]
 _TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
 
-# #60: the story-detail header shows ONE static glyph for every story —
-# never the title text, never per-tone. The full title lives in a native
-# popover on the icon (click to reveal).
-_STORY_ICON_GLYPH = "🎬"
-
-
 def _render_story_detail(story_id: str) -> None:
     story = lib.load_story(story_id)
     if not story:
@@ -1719,13 +1681,13 @@ def _render_story_detail(story_id: str) -> None:
     _fire_refresh_toasts(story_id, meta)
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
 
-    # #60: the header is a single static story glyph — the title text is
-    # gone from the header, and no recency caption is emitted there.
-    # The full title lives in a native popover on the icon: click to
-    # reveal, with a help tooltip naming the affordance. While editing, a
-    # borderless editor takes the glyph's place (Save/Cancel live in the
-    # toolbar above). The ✏️ edit flow and the delete popover's
-    # meta.get("title") naming (#58) are untouched.
+    # Title at top: big, multiline, centered, with a small inline edit icon.
+    # While editing, a borderless editor takes its place (Save/Cancel live
+    # in the toolbar above). #84 reverts #60: the full title text is back
+    # as an h2 — the #79 `.lib-doc-title a { display:none }` guard keeps
+    # Streamlit's heading-anchor 🔗 icon off it. The ✏️ edit flow and the
+    # delete popover's meta.get("title") naming (#58) are untouched; no
+    # recency caption is emitted ("Edited … ago" stays removed).
     title = meta.get("title", "Untitled Story") or "Untitled Story"
     if _editing:
         st.text_area("", value=title, key=f"lib_title_{story_id}",
@@ -1733,13 +1695,8 @@ def _render_story_detail(story_id: str) -> None:
     else:
         _tt1, _tt2, _tt3 = st.columns([1, 8, 1], vertical_alignment="center")
         with _tt2:
-            # Marker first: the icon CSS is scoped to the element container
-            # directly after this marker (the popover's own container).
-            st.markdown('<div data-marker="lib-story-icon" style="display:none"></div>',
+            st.markdown(f"<h2 class='lib-doc-title'>{_html.escape(title)}</h2>",
                         unsafe_allow_html=True)
-            with st.popover(_STORY_ICON_GLYPH, key=f"lib_icon_{story_id}",
-                            help="Story title — click to view"):
-                st.markdown(f"**{_md_escape(title)}**")
         with _tt3:
             if st.button("✏️", key=f"lib_title_edit_{story_id}",
                          help="Edit title", disabled=_busy):
