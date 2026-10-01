@@ -1037,6 +1037,7 @@ class _FakeSt:
         self.reran = False
         self.popover_kwargs = None
         self.popovers = []  # every popover's kwargs, in render order
+        self.expanders = []  # every expander's kwargs, in render order (#66)
         self.buttons = []  # (label, key) in render order
         self.button_kwargs = []  # full kwargs per button, in render order
         self.link_buttons = []  # (label, url) in render order
@@ -1080,6 +1081,11 @@ class _FakeSt:
         self.popovers.append(self.popover_kwargs)
         return _FakeCtx()
 
+    def expander(self, label, expanded=False, **k):
+        # #66: the story-detail uploaders live in a collapsed expander.
+        self.expanders.append({"label": label, "expanded": expanded})
+        return _FakeCtx()
+
     def link_button(self, label, url, **k):
         self.link_buttons.append((label, url))
         return False
@@ -1096,8 +1102,8 @@ def _ui_with_fake_st(clicks=()):
     try:
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
-                     "button", "columns", "popover", "link_button", "code",
-                     "toast"):
+                     "button", "columns", "popover", "expander", "link_button",
+                     "code", "toast"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
