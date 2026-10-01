@@ -846,3 +846,154 @@ def test_recover_orphaned_refreshes(libdir, monkeypatch):
     assert healthy["refresh_note"] == "ok"
     # Idempotent: a second call in the same process recovers nothing.
     assert lib.recover_orphaned_refreshes() == 0
+
+
+# ---------------------------------------------------------------------------
+# Google News redirect resolution -> publisher article images
+# ---------------------------------------------------------------------------
+
+_GN_TOKEN = "CBMiTestToken123"
+_GN_URL = f"https://news.google.com/rss/articles/{_GN_TOKEN}?oc=5"
+_PUBLISHER_URL = "https://example-publisher.com/world/article-1"
+_PUBLISHER_IMG = "https://example-publisher.com/img/hero.jpg"
+
+
+class _GNFakeResp:
+    def __init__(self, status_code=200, content=b"", text=""):
+        self.status_code = status_code
+        self.content = content
+        self.text = text
+        self.headers = {"content-type": "text/html"}
+
+
+def test_google_news_article_id_forms():
+    assert lib._google_news_article_id(_GN_URL) == _GN_TOKEN
+    assert lib._google_news_article_id(
+        f"https://news.google.com/articles/{_GN_TOKEN}") == _GN_TOKEN
+    assert lib._google_news_article_id(
+        f"https://news.google.com/__i/rss/rd/articles/{_GN_TOKEN}?oc=5"
+    ) == _GN_TOKEN
+    assert lib._google_news_article_id(
+        "https://indianexpress.com/article/trending/x-123/") is None
+    assert lib._google_news_article_id("https://news.google.com/") is None
+    assert lib._google_news_article_id("not a url") is None
+
+
+def test_resolve_google_news_url_mocked(monkeypatch):
+    import httpx
+    page = (b'<html><body><c-wiz><div data-n-a-sg="SG123" '
+            b'data-n-a-ts="1700000000"></div></c-wiz></body></html>')
+    rpc = (')]}}\'\n\n[[["wrb.fr","Fbv4je","[\\"garturlres\\",\\"'
+           + _PUBLISHER_URL + '\\",1]"]]]')
+    posted = {}
+
+    def fake_get(url, **kw):
+        assert "hl=&gl=&ceid=" in url
+        return _GNFakeResp(200, content=page, text=page.decode())
+
+    def fake_post(url, **kw):
+        posted["body"] = kw.get("content", "")
+        assert "batchexecute" in url
+        return _GNFakeResp(200, text=rpc)
+
+    monkeypatch.setattr(httpx, "get", fake_get)
+    monkeypatch.setattr(httpx, "post", fake_post)
+    assert lib._resolve_google_news_url(_GN_URL) == _PUBLISHER_URL
+    # The RPC envelope must carry the token, ts and sg.
+    assert _GN_TOKEN in posted["body"]
+    assert "SG123" in posted["body"]
+
+
+def test_resolve_google_news_url_failures_are_none(monkeypatch):
+    import httpx
+    # Non-Google URL: not our job.
+    assert lib._resolve_google_news_url(
+        "https://example.com/x") is None
+    # Page fetch fails.
+    monkeypatch.setattr(httpx, "get",
+                        lambda url, **kw: _GNFakeResp(404, content=b"no"))
+    assert lib._resolve_google_news_url(_GN_URL) is None
+    # Page has no sg/ts tokens.
+    monkeypatch.setattr(httpx, "get",
+                        lambda url, **kw: _GNFakeResp(
+                            200, content=b"<html></html>", text="<html></html>"))
+    assert lib._resolve_google_news_url(_GN_URL) is None
+    # Network explodes.
+    def boom(url, **kw):
+        raise RuntimeError("net down")
+    monkeypatch.setattr(httpx, "get", boom)
+    assert lib._resolve_google_news_url(_GN_URL) is None
+    # RPC returns no usable URL.
+    monkeypatch.setattr(
+        httpx, "get",
+        lambda url, **kw: _GNFakeResp(
+            200,
+            content=(b'<div data-n-a-sg="S" data-n-a-ts="1"></div>'),
+            text='<div data-n-a-sg="S" data-n-a-ts="1"></div>'))
+    monkeypatch.setattr(httpx, "post",
+                        lambda url, **kw: _GNFakeResp(200, text=")]}'\nnope"))
+    assert lib._resolve_google_news_url(_GN_URL) is None
+
+
+def test_resolve_article_url_passthrough_and_fallback(monkeypatch):
+    plain = "https://indianexpress.com/article/x-1/"
+    assert lib._resolve_article_url(plain) == plain
+    assert lib._resolve_article_url("") == ""
+    # Resolution failure must never invent a URL: original comes back.
+    monkeypatch.setattr(lib, "_resolve_google_news_url",
+                        lambda url, timeout=12.0: None)
+    assert lib._resolve_article_url(_GN_URL) == _GN_URL
+
+
+def test_og_image_resolves_google_news_first(monkeypatch):
+    import httpx
+    html = (f'<html><head><meta property="og:image" content="{_PUBLISHER_IMG}">'
+            '</head></html>')
+
+    def fake_get(url, **kw):
+        assert url == _PUBLISHER_URL, url  # resolved, not the wrapper
+        return _GNFakeResp(200, content=html.encode(), text=html)
+
+    monkeypatch.setattr(lib, "_resolve_google_news_url",
+                        lambda url, timeout=12.0: _PUBLISHER_URL)
+    monkeypatch.setattr(httpx, "get", fake_get)
+    assert lib._og_image(_GN_URL) == _PUBLISHER_IMG
+
+
+def _sandbox_proxy_workaround(monkeypatch):
+    # This sandbox's no_proxy carries bracketed IPv6 entries that httpx
+    # 0.28.1 cannot parse (InvalidURL in Client.__init__); the user's Mac
+    # has no such entries. Neutralize for live-network tests only.
+    monkeypatch.setenv("no_proxy", "localhost,127.0.0.1,::1")
+    monkeypatch.setenv("NO_PROXY", "localhost,127.0.0.1,::1")
+
+
+def test_live_google_news_url_resolves_to_publisher(monkeypatch):
+    _sandbox_proxy_workaround(monkeypatch)
+    url = ("https://news.google.com/rss/articles/"
+           "CBMingJBVV95cUxOZG1HQU9WaG42S01RVWZjNTlTQVBPSVd3WU05N0VHTUpkOWJhOENfS3hQUnpJR25SVGsyR3FpUjEtOE82WWVhU2tqQ2h1UGhjNG9OeHRGZVR0eHBRNmZoR1dVTzNoQ3NZYmpDX25GbEwyam5ENUctNmx3eHV0eXRjU0t2OGpkbGpsQlNWU01qUnpCTzZQeGhFMU4wcUZRQkRQRnpXQ3VrUGZKSEdhbHMtSzQ2YXJjblVPc1BMcFBodGpEQVgwRHdFZzg2SXRGeFYydnVPdVVzSmFpa1FNRTU5QWNTLW42S0dha2U1c0NGUDd1bmhmMW1EcUV5aGZZV0t1TEttVGJpMmJXam9oei1fbUN0QURGQ2F1VnlaLUpR0gGjAkFVX3lxTE5jLTdfUUNYS1c1emJNRlpQc0sxdkhzTDk3OVJ1S1BDcEt2bGRTWmxxM2RaQ1plY1B6bEVnU1B1cXdOQWQzNHVoa3MwekloT1dwVW1JRXY0dGZNZzRsczZQS0h4bE1NT0FlTWNqUEVkWDAyS29pNFNab0hKQV9ScmNrdjRKNWZsRFM2R1FkM2pRbEhETElLRGtWaV9Xd3lNdWpXOC1VQkxBazFTOWhVeUVZRG8xQm5EeTlWM1Bxb1RFZzN1S3BZdk9CVi1yV1B6QU1yWURTaGJyQ3Y4Tkw4WllqSUs3LXlaa3BmN0NlN0tvOU9hUEt1UDZPN2JzX0ZnQnhOZms5d2NucDY4SjVOcXlQQ0ZWanZieWJjYURxZ1hHNkhGTQ"
+           "?oc=5")
+    try:
+        resolved = lib._resolve_google_news_url(url, timeout=20.0)
+    except Exception as e:  # noqa: BLE001 - network-dependent
+        pytest.skip(f"network unavailable: {e}")
+    assert resolved is not None, "Google changed the RPC; resolution failed"
+    assert resolved.startswith("https://timesofindia.indiatimes.com/")
+    # And the publisher page yields its og:image through the real path.
+    try:
+        img = lib._og_image(url, timeout=20.0)
+    except Exception as e:  # noqa: BLE001 - network-dependent
+        pytest.skip(f"network unavailable: {e}")
+    assert img is not None and img.startswith("https://"), img
+
+
+def test_live_indianexpress_direct_url_og_image(monkeypatch):
+    _sandbox_proxy_workaround(monkeypatch)
+    url = ("https://indianexpress.com/article/trending/trending-in-india/"
+           "mumbai-metro-installs-touchless-spit-bin-spitting-fine-irony-10900972/")
+    try:
+        img = lib._og_image(url, timeout=20.0)
+    except Exception as e:  # noqa: BLE001 - network-dependent
+        pytest.skip(f"network unavailable: {e}")
+    assert img == ("https://images.indianexpress.com/2026/09/"
+                   "Mumbai-Metro-spit-bin.jpg"), img

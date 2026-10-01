@@ -511,6 +511,132 @@ def _run_bounded(fn, timeout_s: float, step_name: str):
     if "error" in result:
         raise result["error"]
     return result.get("value")
+# ---------------------------------------------------------------------------
+# Google News redirect resolution
+# ---------------------------------------------------------------------------
+
+def _google_news_article_id(url: str) -> Optional[str]:
+    """Extract the article token from a Google News redirect URL.
+
+    Handles ``news.google.com/rss/articles/<token>``,
+    ``news.google.com/articles/<token>`` and the legacy
+    ``news.google.com/__i/rss/rd/articles/<token>`` form. Returns None for
+    any non-Google-News URL.
+    """
+    try:
+        from urllib.parse import urlparse, unquote
+        p = urlparse(url)
+        if (p.hostname or "").lower() not in ("news.google.com",
+                                              "www.news.google.com"):
+            return None
+        parts = [seg for seg in p.path.split("/") if seg]
+        if len(parts) >= 2 and parts[-2] == "articles" and parts[-1]:
+            return unquote(parts[-1])
+        return None
+    except Exception:
+        return None
+
+
+def _resolve_google_news_url(url: str, timeout: float = 12.0) -> Optional[str]:
+    """Resolve a Google News redirect URL to the publisher's article URL.
+
+    New-style Google News tokens are opaque signatures — the mapping only
+    exists on Google's servers, and the redirect itself is performed by
+    client-side JS, so a plain GET never yields the publisher URL. The
+    article page embeds per-fetch ``data-n-a-sg`` / ``data-n-a-ts`` tokens;
+    those are POSTed to Google's batchexecute ``garturlreq`` RPC, which
+    returns the publisher URL. Returns None when resolution fails for any
+    reason (network, changed RPC format, rate limit) — callers fall back to
+    the original URL and report honestly. Bounded by ``timeout`` per call.
+    """
+    token = _google_news_article_id(url)
+    if not token:
+        return None
+    try:
+        import httpx
+        import json as _json
+        import re as _re
+        import urllib.parse as _up
+        headers = {
+            "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                           "AppleWebKit/537.36 (KHTML, like Gecko) "
+                           "Chrome/126.0.0.0 Safari/537.36"),
+            "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+                       "*/*;q=0.8"),
+            "Accept-Language": "en-US,en;q=0.9",
+        }
+        # Blank hl/gl/ceid: Google serves the resolver shell for this form
+        # (a plain ?oc=5 fetch hangs for non-browser clients).
+        page_url = ("https://news.google.com/rss/articles/"
+                    f"{token}?hl=&gl=&ceid=")
+        resp = httpx.get(page_url, timeout=timeout, follow_redirects=True,
+                         headers=headers)
+        if resp.status_code != 200:
+            return None
+        sg_m = _re.search(rb'data-n-a-sg="([^"]+)"', resp.content)
+        ts_m = _re.search(rb'data-n-a-ts="([^"]+)"', resp.content)
+        if not (sg_m and ts_m):
+            return None
+        try:
+            ts = int(ts_m.group(1))
+        except ValueError:
+            return None
+        sg = sg_m.group(1).decode("ascii", "ignore")
+        # garturlreq envelope (Google's internal RPC; if Google changes it
+        # this POST fails and we return None — never a guessed URL).
+        inner = ["garturlreq",
+                 [["en-US", "US", ["FINANCE_TOP_INDICES", "WEB_TEST_1_0_0"],
+                   None, None, 1, 1, "US:en", None, 180, None, None, None,
+                   None, None, 0, None, None, [1608992183, 723341000]],
+                  "en-US", "US", 1, [2, 3, 4, 8], 1, 0, "655000234",
+                  0, 0, None, 0],
+                 token, ts, sg]
+        freq = [[["Fbv4je", _json.dumps(inner, separators=(",", ":")),
+                  None, "generic"]]]
+        body = "f.req=" + _up.quote(_json.dumps(freq, separators=(",", ":")))
+        r2 = httpx.post(
+            "https://news.google.com/_/DotsSplashUi/data/batchexecute"
+            "?rpcids=Fbv4je",
+            content=body, timeout=timeout,
+            headers={**headers,
+                     "Content-Type":
+                         "application/x-www-form-urlencoded;charset=utf-8",
+                     "Referer": page_url,
+                     "Origin": "https://news.google.com",
+                     "x-same-domain": "1"})
+        if r2.status_code != 200:
+            return None
+        # The payload is backslash-escaped inside the RPC envelope.
+        text = r2.text.replace('\\"', '"')
+        m = _re.search(r'\["garturlres",\s*"(https?://[^"]+)"', text)
+        if not m:
+            return None
+        resolved = m.group(1)
+        # Sanity: must be a real publisher URL, never another Google wrapper.
+        host = (_up.urlparse(resolved).hostname or "").lower()
+        if not host or "google." in host:
+            return None
+        return resolved
+    except Exception:
+        return None
+
+
+def _resolve_article_url(url: str) -> str:
+    """Return the fetchable article URL for a news link.
+
+    Google News redirect URLs are resolved to the publisher's article URL
+    (their HTML is what carries the og:image the preview needs). Every
+    other URL passes through unchanged. Never raises and never invents a
+    URL: on any failure the original URL is returned so callers keep their
+    existing behavior and honest failure notes.
+    """
+    if not url:
+        return url
+    try:
+        resolved = _resolve_google_news_url(url)
+    except Exception:
+        resolved = None
+    return resolved or url
 
 
 def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
@@ -518,7 +644,12 @@ def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
 
     Checks og:image / twitter:image, JSON-LD structured data (where many
     publishers put the hero image), and older link/itemprop fallbacks.
+
+    Google News redirect URLs are resolved to the publisher's article URL
+    first — the redirect is client-side JS, so fetching the wrapper directly
+    only ever hangs.
     """
+    article_url = _resolve_article_url(article_url)
     try:
         import httpx
         import json as _json
@@ -756,6 +887,9 @@ def _grab_article_images(urls: List[str], tries: int = 3,
     threads: List[threading.Thread] = []
 
     def _grab(url: str) -> None:
+        # Resolve Google News wrappers to the publisher page first — the
+        # wrapper's own HTML is a JS shell with no article images.
+        url = _resolve_article_url(url)
         html = ""
         for attempt in range(tries):
             try:
