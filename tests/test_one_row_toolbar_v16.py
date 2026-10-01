@@ -83,7 +83,8 @@ def _story(monkeypatch, lui, **meta_over):
 # ---------------------------------------------------------------------------
 # #46 — one toolbar row: Update Hashtags, Update Images, Reset, Share,
 # Copy, Delete (trailing). Weights still total 10.0 (#24 layout preserved)
-# and every column fits its longest label state (#38 no-truncation).
+# and every column fits its longest label state (#38 no-truncation; #53:
+# labels never change mid-work, so the static labels are the longest).
 # ---------------------------------------------------------------------------
 
 def test_detail_toolbar_weights_single_row():
@@ -91,9 +92,9 @@ def test_detail_toolbar_weights_single_row():
     w = lui._DETAIL_TOOLBAR_WEIGHTS
     assert len(w) == 7  # tags, images, reset, share, copy, spacer, delete
     assert abs(sum(w) - 10.0) < 1e-9
-    assert w[0] >= 2.2  # "Updating Hashtags…"
-    assert w[1] >= 2.0  # "Updating Images…"
-    assert w[2] >= 1.4  # "Resetting…" + chevron
+    assert w[0] >= 2.2  # "Update Hashtags"
+    assert w[1] >= 2.0  # "Update Images"
+    assert w[2] >= 1.4  # "Reset" + chevron
     assert w[3] >= 1.0  # Share + native chevron
     assert w[4] >= 1.0  # Copy + native chevron
     assert w[5] < 1.0   # slim spacer before Delete

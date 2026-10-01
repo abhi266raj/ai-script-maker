@@ -26,7 +26,7 @@ import time
 import traceback
 import uuid
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from urllib.parse import urljoin
 
 # ---------------------------------------------------------------------------
@@ -38,8 +38,14 @@ STORIES_DIR = LIBRARY_ROOT / "stories"
 PREFS_PATH = LIBRARY_ROOT / "prefs.json"
 
 _STORY_ID_RE = re.compile(r"^[0-9A-Za-z-]{8,64}$")
-_ENRICH_LOCKS: Dict[str, threading.Lock] = {}
+_ENRICH_LOCKS: Dict[tuple, threading.Lock] = {}
 _ENRICH_THREADS: Dict[str, threading.Thread] = {}
+_META_WRITE_LOCKS: Dict[str, threading.RLock] = {}
+
+# Per-story write lock guarding every read-modify-write of a story's
+# frontmatter file (#53/#54: concurrent per-kind workers must not clobber
+# each other). Keyed by story_id; independent from _ENRICH_LOCKS (which are
+# per (story_id, kind) and guard "is this kind already running").
 
 # Set once per process by recover_orphaned_refreshes().
 _RECOVERY_DONE = False
@@ -54,6 +60,35 @@ _RECOVERY_DONE = False
 # Legacy values "refreshing" (busy) and "done" (terminal) are still
 # recognized when *reading* old stories, but are never written anymore.
 BUSY_STATES = ("pending", "refreshing", "running")
+
+# ---------------------------------------------------------------------------
+# Refresh-state model (#53/#54)
+# ---------------------------------------------------------------------------
+# Refresh work is tracked PER KIND, not with a single busy flag:
+#
+# - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"`` and
+#   ``"images"`` are independent and may run concurrently (#54); ``"reset"``
+#   is destructive and exclusive; ``"enrich"`` is the save-time enrichment
+#   and also exclusive with manual refreshes.
+# - ``refresh_busy`` (frontmatter, list of kind names): the kinds currently
+#   running. A list round-trips through _dump_frontmatter/_parse_frontmatter
+#   (nested dicts do not — never store one in frontmatter).
+# - ``refresh_outcome_pending`` (frontmatter, list of JSON strings): one
+#   entry per finished kind, ``{"kind", "status", "note"}``. The UI toasts
+#   each entry exactly once and drains it. JSON-per-entry keeps the
+#   hand-rolled frontmatter format honest.
+#
+# The legacy single-flag format (``enrichment_status`` + ``refresh_kind``)
+# is still read by refresh_busy_kinds() as a migration fallback, and
+# ``enrichment_status``/``refresh_note`` are still WRITTEN (back-compat),
+# but they are no longer authoritative for "is anything busy".
+#
+# All read-modify-write cycles on the frontmatter go through
+# _meta_write_lock(story_id): concurrent per-kind workers must not clobber
+# each other's updates. Lock order is always kind-lock (_ENRICH_LOCKS) THEN
+# meta-lock — never the reverse (deadlock avoidance).
+_REFRESH_KINDS = ("hashtags", "images", "reset", "enrich")
+_EXCLUSIVE_KINDS = ("reset", "enrich")
 
 # Hard wall-clock bound for one AI hashtag-discovery call inside a refresh.
 _AI_HASHTAG_TIMEOUT_S = 45
@@ -375,15 +410,168 @@ def list_stories() -> List[Dict[str, Any]]:
     return stories
 
 
+def _meta_write_lock(story_id: str) -> threading.RLock:
+    """Return the per-story RLock guarding frontmatter read-modify-write.
+
+    A single module-level dict of locks (not a global lock) keeps
+    concurrent workers on DIFFERENT stories fully parallel; workers on the
+    same story serialize only for the brief file update (#53/#54).
+    """
+    return _META_WRITE_LOCKS.setdefault(story_id, threading.RLock())
+
+
+def _read_meta_body(story_id: str) -> Optional[tuple]:
+    """Read (meta, body) for a story, or None if the file is gone.
+
+    Callers hold _meta_write_lock(story_id) so the returned meta is a
+    consistent snapshot for an atomic read-modify-write cycle.
+    """
+    path = story_path(story_id)
+    if not path.exists():
+        return None
+    return _parse_frontmatter(path.read_text(encoding="utf-8"))
+
+
+def _write_meta_body(story_id: str, meta: Dict[str, Any], body: str) -> None:
+    """Persist (meta, body); caller must hold _meta_write_lock(story_id)."""
+    story_path(story_id).write_text(
+        f"{_dump_frontmatter(meta)}\n\n{body.strip()}\n", encoding="utf-8")
+
+
+def refresh_busy_kinds(meta: Optional[Dict[str, Any]]) -> Set[str]:
+    """Return the set of refresh kinds currently running for this story.
+
+    Reads the authoritative ``refresh_busy`` list first. Stories written
+    before the per-kind model (#53/#54) carry only the legacy single-flag
+    ``enrichment_status`` (+ ``refresh_kind``): a busy status with a known
+    kind maps to that kind; a busy status with an unknown/empty kind maps
+    to ``{"enrich"}`` (exclusive — the old code blocked everything while
+    busy, so exclusivity is the safe migration). Never raises: unreadable
+    state reads as idle; start_refresh re-checks honestly before kicking.
+    """
+    if not isinstance(meta, dict):
+        return set()
+    raw = meta.get("refresh_busy")
+    if isinstance(raw, list):
+        return {k for k in raw if k in _REFRESH_KINDS}
+    # Legacy single-flag fallback.
+    if meta.get("enrichment_status") in BUSY_STATES:
+        kind = meta.get("refresh_kind")
+        if kind in _REFRESH_KINDS:
+            return {kind}
+        return {"enrich"}
+    return set()
+
+
+def _outcome_entry_kind(entry: Any) -> Optional[str]:
+    """Return the kind recorded in a refresh_outcome_pending entry, or None
+    if the entry is malformed (it is then dropped by the drain)."""
+    parsed = parse_refresh_outcome(entry)
+    return parsed["kind"] if parsed else None
+
+
+def parse_refresh_outcome(entry: Any) -> Optional[Dict[str, str]]:
+    """Parse one refresh_outcome_pending entry.
+
+    Returns {"kind", "status", "note"} (all strings) or None when the
+    entry is malformed. The UI uses this to toast finished outcomes (#53);
+    malformed entries are reported loudly and dropped, never toasted.
+    """
+    if not isinstance(entry, str):
+        return None
+    try:
+        data = json.loads(entry)
+    except (json.JSONDecodeError, ValueError):
+        return None
+    if not isinstance(data, dict):
+        return None
+    kind = data.get("kind")
+    status = data.get("status")
+    if kind not in _REFRESH_KINDS or not isinstance(status, str):
+        return None
+    return {"kind": kind, "status": status,
+            "note": str(data.get("note") or "")}
+
+
+def _drop_pending_outcomes(meta: Dict[str, Any], kind: str) -> None:
+    """Remove pending outcome entries for kind (a new run toasts fresh)."""
+    pending = meta.get("refresh_outcome_pending")
+    if not isinstance(pending, list):
+        meta.pop("refresh_outcome_pending", None)
+        return
+    kept = [e for e in pending if _outcome_entry_kind(e) != kind]
+    if kept:
+        meta["refresh_outcome_pending"] = kept
+    else:
+        meta.pop("refresh_outcome_pending", None)
+
+
+def _set_refresh_busy(story_id: str, kind: str) -> bool:
+    """Mark kind busy (idempotent). Clears that kind's stale pending
+    outcomes and makes the per-kind list authoritative (legacy single-flag
+    fields are reset). Returns False if the story file is gone."""
+    with _meta_write_lock(story_id):
+        snap = _read_meta_body(story_id)
+        if snap is None:
+            return False
+        meta, body = snap
+        busy = sorted(refresh_busy_kinds(meta) | {kind})
+        meta["refresh_busy"] = busy
+        meta["enrichment_status"] = "running"
+        meta["refresh_kind"] = ""
+        _drop_pending_outcomes(meta, kind)
+        _write_meta_body(story_id, meta, body)
+        return True
+
+
+def _finish_refresh(story_id: str, kind: str, status: str, note: str) -> bool:
+    """Clear kind's busy flag and record its outcome (atomic, per-kind).
+
+    Only kind's own state is touched — a concurrently running sibling kind
+    keeps its busy flag and its pending outcomes (#54). While any kind is
+    still busy the legacy ``enrichment_status`` stays "running"; otherwise
+    it takes this run's terminal status. Returns False if the story file
+    is gone (e.g. deleted mid-refresh — nothing left to record).
+    """
+    with _meta_write_lock(story_id):
+        snap = _read_meta_body(story_id)
+        if snap is None:
+            return False
+        meta, body = snap
+        busy = sorted(refresh_busy_kinds(meta) - {kind})
+        if busy:
+            meta["refresh_busy"] = busy
+        else:
+            meta.pop("refresh_busy", None)
+        pending = meta.get("refresh_outcome_pending")
+        if not isinstance(pending, list):
+            pending = []
+        pending = [e for e in pending if _outcome_entry_kind(e) != kind]
+        pending.append(json.dumps(
+            {"kind": kind, "status": status, "note": note or ""}))
+        meta["refresh_outcome_pending"] = pending
+        meta["enrichment_status"] = "running" if busy else status
+        meta["refresh_kind"] = ""
+        meta["refresh_note"] = note or ""
+        _write_meta_body(story_id, meta, body)
+        return True
+
+
 def update_story_fields(story_id: str, **fields: Any) -> bool:
-    """Merge fields into the story's frontmatter (body untouched)."""
+    """Merge fields into the story's frontmatter (body untouched).
+
+    Serialized per story via _meta_write_lock: refresh workers and the UI
+    may update the same file concurrently (#53/#54) and must not clobber
+    each other's read-modify-write cycles.
+    """
     path = story_path(story_id)
     if not path.exists():
         return False
-    meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
-    meta.update(fields)
-    path.write_text(
-        f"{_dump_frontmatter(meta)}\n\n{body.strip()}\n", encoding="utf-8")
+    with _meta_write_lock(story_id):
+        meta, body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+        meta.update(fields)
+        path.write_text(
+            f"{_dump_frontmatter(meta)}\n\n{body.strip()}\n", encoding="utf-8")
     return True
 
 
@@ -843,15 +1031,16 @@ def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
 
 
 def _enrich_worker(story_id: str, topic: str, do_work) -> None:
-    """Run do_work under the per-story lock; write back an honest state.
+    """Run do_work under the per-kind lock; write back an honest state.
 
-    ``do_work`` returns ``(changed, note)``. The story's
-    ``enrichment_status`` becomes ``succeeded`` / ``no_change`` /
-    ``failed`` accordingly — a failure is never recorded as a success,
-    and the real error text lands in ``refresh_note``. A failure to
-    persist the final state is printed loudly, never swallowed.
+    ``do_work`` returns ``(changed, note)``. The outcome is recorded
+    honestly (``succeeded`` / ``no_change`` / ``failed``) — a failure is
+    never recorded as a success, and the real error text lands in the
+    note. A failure to persist the final state is printed loudly, never
+    swallowed. Save-time enrichment is the exclusive "enrich" kind: it
+    never clobbers a manual refresh's per-kind state (#53/#54).
     """
-    lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
+    lock = _ENRICH_LOCKS.setdefault((story_id, "enrich"), threading.Lock())
     if not lock.acquire(blocking=False):
         return
     try:
@@ -862,8 +1051,7 @@ def _enrich_worker(story_id: str, topic: str, do_work) -> None:
             status = "failed"
             note = f"Enrichment failed: {type(e).__name__}: {e}"
         try:
-            update_story_fields(story_id, enrichment_status=status,
-                                refresh_kind="", refresh_note=note or "")
+            _finish_refresh(story_id, "enrich", status, note or "")
         except Exception:
             traceback.print_exc()
     finally:
@@ -874,12 +1062,14 @@ def recover_orphaned_refreshes() -> int:
     """Mark stories stuck in a busy refresh state as interrupted.
 
     Refresh workers live only in this process's memory: when the
-    Streamlit process restarts, any persisted busy state (``pending`` /
-    ``refreshing`` / ``running``) is orphaned and its buttons would stay
-    stuck forever. Runs once per process — at process start no worker of
-    ours can be alive, so every busy state found here is orphaned by
-    definition. Recovered stories get ``interrupted`` plus an honest
-    note; nothing else is touched. Returns the number recovered.
+    Streamlit process restarts, any persisted busy state is orphaned and
+    its buttons would stay stuck forever. Runs once per process — at
+    process start no worker of ours can be alive, so every busy state
+    found here is orphaned by definition. Each orphaned kind is cleared
+    and gets an ``interrupted`` pending-outcome entry so the UI toasts
+    the honest note (#53); nothing else is touched. Understands both the
+    current per-kind ``refresh_busy`` list and the legacy single-flag
+    ``enrichment_status`` format. Returns the number recovered.
     """
     global _RECOVERY_DONE
     if _RECOVERY_DONE:
@@ -896,19 +1086,39 @@ def recover_orphaned_refreshes() -> int:
             continue
         if not story:
             continue
-        if (story.get("meta") or {}).get("enrichment_status") in BUSY_STATES:
-            try:
-                update_story_fields(
-                    sid,
-                    enrichment_status="interrupted",
-                    refresh_kind="",
-                    refresh_note=("A previous refresh was interrupted (the app "
-                                  "restarted while it was running). Nothing was "
-                                  "changed — try again."),
-                )
-                recovered += 1
-            except Exception:
-                traceback.print_exc()
+        try:
+            with _meta_write_lock(sid):
+                snap = _read_meta_body(sid)
+                if snap is None:
+                    continue
+                meta, body = snap
+                busy = refresh_busy_kinds(meta)
+                if not busy:
+                    continue
+                meta.pop("refresh_busy", None)
+                pending = meta.get("refresh_outcome_pending")
+                if not isinstance(pending, list):
+                    pending = []
+                noted = {_outcome_entry_kind(e) for e in pending}
+                for kind in sorted(busy):
+                    if kind not in noted:
+                        pending.append(json.dumps({
+                            "kind": kind,
+                            "status": "interrupted",
+                            "note": ("A previous refresh was interrupted (the "
+                                     "app restarted while it was running). "
+                                     "Nothing was changed — try again."),
+                        }))
+                meta["refresh_outcome_pending"] = pending
+                meta["enrichment_status"] = "interrupted"
+                meta["refresh_kind"] = ""
+                meta["refresh_note"] = ("A previous refresh was interrupted (the "
+                                        "app restarted while it was running). "
+                                        "Nothing was changed — try again.")
+                _write_meta_body(sid, meta, body)
+            recovered += 1
+        except Exception:
+            traceback.print_exc()
     return recovered
 
 
@@ -1873,21 +2083,23 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
 
 def _refresh_worker(story_id: str, kind: str, topic: str,
                     ai_engine: Optional[str] = None) -> None:
-    """Background worker for a manual hashtag/image refresh. Never raises.
+    """Background worker for one manual refresh kind. Never raises.
 
     Runs in a daemon thread so tab switches (st.rerun) can't stop it.
-    The outcome is recorded honestly in ``enrichment_status``
-    (``succeeded`` / ``no_change`` / ``failed``) with the real detail in
-    ``refresh_note`` — a failure is never written as a success, and the
-    toggle-off AI error surfaces verbatim.
+    Per-kind locking: "hashtags" and "images" are independent and run
+    concurrently (#54) — each kind owns only its own busy flag and
+    outcome, so finishing never clears a sibling kind's state (#53).
+    The outcome is recorded honestly (``succeeded`` / ``no_change`` /
+    ``failed``) with the real detail in the note — a failure is never
+    written as a success, and the toggle-off AI error surfaces verbatim.
     """
-    lock = _ENRICH_LOCKS.setdefault(story_id, threading.Lock())
+    lock = _ENRICH_LOCKS.setdefault((story_id, kind), threading.Lock())
     if not lock.acquire(blocking=False):
-        # Another worker owns this story's refresh state — leave it alone.
+        # Another worker owns this kind's refresh state — leave it alone.
         # Writing anything here (even "already running") would clobber the
-        # in-flight "running" state and flip the UI back to idle while
-        # work is still running. The owning worker writes the honest
-        # terminal state when it finishes.
+        # in-flight busy state and flip the UI back to idle while work is
+        # still running. The owning worker writes the honest terminal state
+        # when it finishes.
         return
     try:
         try:
@@ -1906,8 +2118,7 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
                      "reset": "Reset"}.get(kind, kind)
             note = f"{label} refresh failed: {e}"
         try:
-            update_story_fields(story_id, enrichment_status=status,
-                                refresh_note=note or "", refresh_kind="")
+            _finish_refresh(story_id, kind, status, note or "")
         except Exception:
             traceback.print_exc()
     finally:
@@ -1929,6 +2140,11 @@ def start_refresh(story_id: str, kind: str,
     Falls back to the story title when ``source_topic`` is missing so
     older stories can still refresh.
 
+    Concurrency (#54): "hashtags" and "images" are independent and may run
+    at the same time — a second kick is refused only for the SAME kind, or
+    when an exclusive kind ("reset", or save-time "enrich") is running.
+    "reset" stays exclusive: it refuses while ANY kind runs.
+
     Returns (started, reason): ``reason`` is "" when the refresh started,
     otherwise a human-readable explanation of why it could not start.
     """
@@ -1938,18 +2154,29 @@ def start_refresh(story_id: str, kind: str,
         story = load_story(story_id)
         if not story:
             return False, "Story not found."
-        if (story["meta"].get("enrichment_status") or "") in BUSY_STATES:
-            # The buttons disable while busy, but a double-kick can still
-            # race here — refuse instead of starting a second worker that
-            # would fight the first over the story's refresh state.
-            return False, "A refresh is already running — try again shortly."
+        busy = refresh_busy_kinds(story["meta"])
+        if kind == "reset":
+            if busy:
+                # The buttons disable while busy, but a double-kick can still
+                # race here — refuse instead of starting a second worker that
+                # would fight the first over the story's refresh state.
+                return False, ("A refresh is already running — reset clears "
+                               "hashtags, images and news links, so it can't "
+                               "run alongside it. Try again when it's done.")
+        elif kind in busy:
+            return False, (f"A {kind} refresh is already running — "
+                           "try again shortly.")
+        elif busy & set(_EXCLUSIVE_KINDS):
+            blocker = "reset" if "reset" in busy else "enrichment"
+            return False, (f"A {blocker} is already running — "
+                           "try again shortly.")
         topic = (story["meta"].get("source_topic")
                  or story["meta"].get("title") or "").strip()
         if not topic:
             return False, "No topic or title to refresh."
         _check_id(story_id)
-        update_story_fields(story_id, enrichment_status="running", refresh_note="",
-                            refresh_kind=kind)
+        if not _set_refresh_busy(story_id, kind):
+            return False, "Story not found."
         t = threading.Thread(
             target=_refresh_worker, args=(story_id, kind, topic, ai_engine),
             daemon=True, name=f"refresh-{kind}-{story_id}")
@@ -2255,12 +2482,14 @@ def start_enrichment(story_id: str, topic: str) -> Tuple[bool, str]:
     try:
         _check_id(story_id)
         if not (topic or "").strip():
-            update_story_fields(story_id, enrichment_status="no_change",
-                                refresh_note="No topic — enrichment skipped.",
-                                refresh_kind="")
+            # Nothing to enrich: record the honest terminal state (and a
+            # pending outcome so the UI can toast it) without touching any
+            # other kind's state.
+            _finish_refresh(story_id, "enrich", "no_change",
+                            "No topic — enrichment skipped.")
             return False, "No topic — enrichment skipped."
-        update_story_fields(story_id, enrichment_status="running",
-                            refresh_kind="enrich", refresh_note="")
+        if not _set_refresh_busy(story_id, "enrich"):
+            return False, "Story not found."
         t = threading.Thread(
             target=_enrich_worker, args=(story_id, topic.strip(), _do_enrich),
             daemon=True, name=f"enrich-{story_id}")

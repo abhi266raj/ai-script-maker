@@ -36,6 +36,22 @@ def _make_story(**kw):
     return lib.save_story(**kw)
 
 
+def _settle_enrichment(sid):
+    """Production-faithful setup for manual-refresh tests.
+
+    ``save_story`` seeds ``enrichment_status="pending"`` and production
+    always settles it via ``start_enrichment`` before any manual refresh
+    can run. Tests that drive ``_refresh_worker`` directly must settle
+    the seed first, otherwise the legacy fallback reads it as a phantom
+    busy "enrich" kind.
+    """
+    lib._set_refresh_busy(sid, "enrich")
+    lib._finish_refresh(sid, "enrich", "succeeded", "save-time enrichment done")
+    # Drain the settled outcome: like the UI's first render, the toast has
+    # been "shown" — manual-refresh tests start from a clean idle state.
+    lib.update_story_fields(sid, refresh_outcome_pending=[])
+
+
 # ---------------------------------------------------------------------------
 # AI engine options + persisted prefs
 # ---------------------------------------------------------------------------
@@ -244,6 +260,19 @@ def test_start_refresh_refuses_while_busy(libdir):
     assert meta["refresh_kind"] == "hashtags"
 
 
+def test_start_refresh_refuses_while_busy_new_format(libdir):
+    # Same contract on the per-kind format (#53/#54): the same kind
+    # re-kicked while busy is refused and the in-flight state is kept.
+    sid = _make_story()
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "hashtags")
+    ok, reason = lib.start_refresh(sid, "hashtags")
+    assert not ok and "already running" in reason
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "running"
+    assert lib.refresh_busy_kinds(meta) == {"hashtags"}
+
+
 def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
     sid = _make_story()
 
@@ -251,6 +280,11 @@ def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(lib, "refresh_hashtags", _boom)
+    # Production flow: the starter marks the kind busy, the worker only
+    # finishes it. (Without the mark, the save-seeded legacy "pending"
+    # state would read as a phantom busy kind.)
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "hashtags")
     lib._refresh_worker(sid, "hashtags", "chubby dogs voting contest")
     meta = lib.load_story(sid)["meta"]
     assert meta["enrichment_status"] == "failed"
@@ -263,6 +297,8 @@ def test_refresh_worker_no_change_state(libdir, monkeypatch):
     sid = _make_story()
     monkeypatch.setattr(lib, "refresh_images",
                         lambda sid_, topic: (False, "No new images found; kept 1 existing."))
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "images")
     lib._refresh_worker(sid, "images", "chubby dogs voting contest")
     meta = lib.load_story(sid)["meta"]
     assert meta["enrichment_status"] == "no_change"
@@ -272,18 +308,19 @@ def test_refresh_worker_no_change_state(libdir, monkeypatch):
 
 def test_refresh_worker_busy_lock_leaves_state_untouched(libdir):
     sid = _make_story()
-    lib.update_story_fields(sid, enrichment_status="running", refresh_kind="hashtags")
-    lock = lib._ENRICH_LOCKS.setdefault(sid, threading.Lock())
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "hashtags")
+    lock = lib._ENRICH_LOCKS.setdefault((sid, "hashtags"), threading.Lock())
     assert lock.acquire(blocking=False)
     try:
         lib._refresh_worker(sid, "hashtags", "chubby dogs voting contest")
     finally:
         lock.release()
     meta = lib.load_story(sid)["meta"]
-    # The losing worker must not clobber the in-flight "running" state —
-    # the UI keeps showing the loader instead of flipping to idle.
+    # The losing worker must not clobber the in-flight busy state — the UI
+    # keeps showing the spinner instead of flipping to idle.
     assert meta["enrichment_status"] == "running"
-    assert meta["refresh_kind"] == "hashtags"
+    assert lib.refresh_busy_kinds(meta) == {"hashtags"}
 
 
 # ---------------------------------------------------------------------------
@@ -1001,9 +1038,11 @@ class _FakeSt:
         self.popover_kwargs = None
         self.popovers = []  # every popover's kwargs, in render order
         self.buttons = []  # (label, key) in render order
+        self.button_kwargs = []  # full kwargs per button, in render order
         self.link_buttons = []  # (label, url) in render order
         self.codes = []
         self.markup = []  # raw markdown html, in render order
+        self.toasts = []  # (message, icon) in render order
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
@@ -1022,11 +1061,15 @@ class _FakeSt:
 
     def button(self, label, key=None, on_click=None, **k):
         self.buttons.append((label, key))
+        self.button_kwargs.append({"label": label, "key": key, **k})
         if key in self._clicks:
             if on_click is not None:
                 on_click()
             return True
         return False
+
+    def toast(self, msg, icon=None):
+        self.toasts.append((msg, icon))
 
     def columns(self, spec):
         n = spec if isinstance(spec, int) else len(spec)
@@ -1053,7 +1096,8 @@ def _ui_with_fake_st(clicks=()):
     try:
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
-                     "button", "columns", "popover", "link_button", "code"):
+                     "button", "columns", "popover", "link_button", "code",
+                     "toast"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -1326,6 +1370,8 @@ def test_refresh_worker_reset_failure_is_failed_not_done(libdir):
     # AI off -> _do_reset raises the disabled message -> failed, and the
     # stored rows are untouched (the write never happened).
     sid = _make_story(hashtags=["#KeepMe"])
+    _settle_enrichment(sid)
+    lib._set_refresh_busy(sid, "reset")
     lib._refresh_worker(sid, "reset", "chubby dogs voting contest",
                         ai_engine=None)
     meta = lib.load_story(sid)["meta"]
@@ -1457,8 +1503,7 @@ def test_action_dropdowns_have_no_actions_header(monkeypatch):
 
 def test_reset_popover_idle_wiring():
     lui, fake = _ui_with_fake_st()
-    lui._render_reset_popover("sid1", busy=False, refresh_kind="",
-                              ai_engine=None)
+    lui._render_reset_popover("sid1", set(), ai_engine=None)
     assert fake.popover_kwargs["label"] == "Reset"
     assert fake.popover_kwargs["key"] == "lib_resetpop_sid1"
     assert fake.popover_kwargs["disabled"] is False
@@ -1468,12 +1513,23 @@ def test_reset_popover_idle_wiring():
     assert ("Cancel", "lib_resetpop_sid1-no") in fake.buttons
 
 
-def test_reset_popover_busy_shows_resetting_and_disabled():
+def test_reset_popover_busy_label_stable_and_disabled():
+    # #53: the trigger label NEVER changes to "Resetting…" — it keeps
+    # "Reset", shows the CSS spinner and stays disabled while resetting.
     lui, fake = _ui_with_fake_st()
-    lui._render_reset_popover("sid1", busy=True, refresh_kind="reset",
-                              ai_engine=None)
-    assert fake.popover_kwargs["label"] == "Resetting…"
+    lui._render_reset_popover("sid1", {"reset"}, ai_engine=None)
+    assert fake.popover_kwargs["label"] == "Reset"
     assert fake.popover_kwargs["disabled"] is True
+
+
+def test_reset_popover_blocked_by_other_kind_no_spinner():
+    # #54: Reset is exclusive — disabled (but no spinner: it is blocked,
+    # not working) while another kind runs.
+    lui, fake = _ui_with_fake_st()
+    lui._render_reset_popover("sid1", {"hashtags"}, ai_engine=None)
+    assert fake.popover_kwargs["label"] == "Reset"
+    assert fake.popover_kwargs["disabled"] is True
+    assert 'data-marker="lib-spin-reset"' not in "".join(fake.markup)
 
 
 def test_reset_popover_destructive_kicks_reset_refresh(monkeypatch):
@@ -1482,7 +1538,7 @@ def test_reset_popover_destructive_kicks_reset_refresh(monkeypatch):
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (
                             calls.append((sid, kind, ai_engine)) or (True, "")))
-    kw = dict(story_id="sid1", busy=False, refresh_kind="", ai_engine="eng1")
+    kw = dict(story_id="sid1", busy_kinds=set(), ai_engine="eng1")
     lui._render_reset_popover(**kw)  # run 1: destructive clicked -> flags armed
     fake._clicks.clear()
     lui._render_reset_popover(**kw)  # run 2: confirmation consumed
@@ -1495,7 +1551,7 @@ def test_reset_popover_destructive_failure_is_loud(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_resetpop_sid1-yes",))
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (False, "boom"))
-    kw = dict(story_id="sid1", busy=False, refresh_kind="", ai_engine=None)
+    kw = dict(story_id="sid1", busy_kinds=set(), ai_engine=None)
     lui._render_reset_popover(**kw)  # run 1: arm the confirmation
     fake._clicks.clear()
     lui._render_reset_popover(**kw)  # run 2: start fails -> loud, reopened
@@ -1690,11 +1746,12 @@ def test_confirm_popover_marker_immediately_precedes_popover(monkeypatch):
 def test_detail_toolbar_weights_fit_full_labels():
     """#38: the Delete trigger was ellipsized to "D..." in the 1.0-weight
     column, and "Update Hashtags"/"Update Images" also showed "…". Every
-    action column must be weighted to fit its longest label state
-    ("Updating Hashtags…", "Updating Images…", "Resetting…", "Delete" +
-    chevron). #46: Share/Copy joined the same row — Delete stays the
-    trailing (last) column and each toolbar total is unchanged (10.0) so
-    the overall layout — and the #24 baseline alignment — is preserved."""
+    action column must be weighted to fit its label — #53: labels never
+    change mid-work, so the static labels ("Update Hashtags",
+    "Update Images", "Reset", "Delete" + chevron) are the longest state.
+    #46: Share/Copy joined the same row — Delete stays the trailing (last)
+    column and each toolbar total is unchanged (10.0) so the overall
+    layout — and the #24 baseline alignment — is preserved."""
     lui, _fake = _ui_with_fake_st()
     assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.0
     assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0

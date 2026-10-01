@@ -428,6 +428,39 @@ def inject_library_css() -> None:
         border-bottom: 1px solid rgba(128, 128, 128, 0.25);
         margin: 4px 0 12px 0;
     }
+    /* v1.6 (#53) HIG progress: the button that starts work owns its loading
+       state — its label NEVER changes, it shows a spinner and stays
+       disabled while the work runs. A hidden marker
+       (data-marker="lib-spin-<kind>") is emitted directly before the
+       running button's element container; the spinner is painted via
+       ::before with currentColor so it follows the light/dark theme
+       automatically. Width stability comes from use_container_width on
+       the toolbar buttons (each fills its fixed column slot), so no width
+       CSS is needed and nothing shoves its neighbours. */
+    @keyframes lib-spin {
+        to { transform: rotate(360deg); }
+    }
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-spin-"]) {
+        display: none !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-hashtags"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-images"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-reset"])
+        + div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
+        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"]::before {
+        content: "";
+        display: inline-block;
+        width: 13px;
+        height: 13px;
+        margin-right: 7px;
+        vertical-align: -2px;
+        border: 2px solid currentColor;
+        border-top-color: transparent;
+        border-radius: 50%;
+        animation: lib-spin 0.9s linear infinite;
+    }
     /* macOS HIG section header: plain semibold text, no emoji, no boxes */
     .lib-section {
         font-size: 15px;
@@ -635,8 +668,9 @@ def _confirm_popover(*, trigger_label: str, popover_key: str, title: str,
     bold wrapper or inject a link. ``fail_label`` prefixes the loud error
     (e.g. "Delete", "Reset"); ``destructive_label`` is the explicit red
     button verb (e.g. "Delete story", "Reset media"). ``disabled`` disables
-    the trigger (e.g. while its work is running) — the trigger label can
-    then carry the loading state ("Resetting…").
+    the trigger (e.g. while its work is running). Per the HIG progress
+    contract (#53) the trigger label NEVER changes to show progress — a
+    separate marker carries the spinner while the work runs.
     """
     _go_key = f"{popover_key}-go"
     _err_key = f"{popover_key}-err"
@@ -708,17 +742,52 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
     )
 
 
-def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
-                          ai_engine) -> None:
+def _render_kind_button(*, story_id: str, kind: str, label: str,
+                       button_key: str, help_text: str, kick_label: str,
+                       busy_kinds, ai_engine) -> None:
+    """One toolbar refresh button (#53/#54).
+
+    The label NEVER changes; while ``kind`` runs the button shows the CSS
+    spinner (``lib-spin-<kind>`` marker, painted via ::before) and stays
+    disabled. ``use_container_width`` keeps the width stable — the button
+    fills its fixed column slot, so nothing shoves its neighbours. Each
+    kind disables only while IT runs: hashtags and images are independent
+    and stay clickable while the other runs (#54).
+    """
+    running = kind in busy_kinds
+    if running:
+        st.markdown(f'<div data-marker="lib-spin-{kind}" style="display:none"></div>',
+                    unsafe_allow_html=True)
+    if st.button(label, key=button_key, help=help_text,
+                 disabled=running, use_container_width=True):
+        ok, reason = lib.start_refresh(story_id, kind, ai_engine=ai_engine)
+        if ok:
+            st.rerun()
+        else:
+            st.error(f"Could not start the {kick_label} refresh: {reason}" if reason
+                     else f"Could not start the {kick_label} refresh.")
+
+
+def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
     """Toolbar Reset: destructive confirm popover (red "Reset media" /
     standard "Cancel", #58).
 
-    The trigger owns its loading state ("Resetting…") and stays disabled
-    while any refresh is busy. Confirming kicks a "reset" refresh —
-    hashtags, fetched images and news links are discarded and re-fetched
-    fresh (uploads and the screenplay are never touched).
+    #53 HIG progress: the trigger label NEVER changes — while resetting it
+    keeps "Reset", shows the CSS spinner (``lib-spin-reset`` marker) and
+    stays disabled. #54: Reset is destructive and exclusive — the trigger
+    also disables while any OTHER kind runs (no spinner then: it is
+    blocked, not working). Confirming kicks a "reset" refresh — hashtags,
+    fetched images and news links are discarded and re-fetched fresh
+    (uploads and the screenplay are never touched).
+
+    The spin marker is emitted BEFORE _confirm_popover's danger marker so
+    the danger trigger's ``+`` sibling selectors keep matching.
     """
-    resetting = refresh_kind == "reset"
+    resetting = "reset" in busy_kinds
+    blocked = bool(set(busy_kinds) - {"reset"})
+    if resetting:
+        st.markdown('<div data-marker="lib-spin-reset" style="display:none"></div>',
+                    unsafe_allow_html=True)
 
     def _on_reset_yes() -> None:
         # Raises loudly on failure: the popover shows it and stays open.
@@ -731,7 +800,7 @@ def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
                 else "Could not start the reset.")
 
     _confirm_popover(
-        trigger_label="Resetting…" if resetting else "Reset",
+        trigger_label="Reset",
         popover_key=f"lib_resetpop_{story_id}",
         title="Reset media rows?",
         message=("Clears all hashtags, fetched images and news links, "
@@ -741,8 +810,55 @@ def _render_reset_popover(story_id: str, busy: bool, refresh_kind: str,
         trigger_help="Clear and re-fetch hashtags, images and news links",
         fail_label="Reset",
         destructive_label="Reset media",
-        disabled=busy,
+        use_container_width=True,
+        disabled=resetting or blocked,
     )
+
+
+def _refresh_outcome_icon(status: str) -> str:
+    """Toast icon for a finished refresh outcome (#53)."""
+    return {"succeeded": "✅", "no_change": "ℹ️",
+            "failed": "⚠️", "interrupted": "⚠️"}.get(status, "ℹ️")
+
+
+def _refresh_toast_text(kind: str, status: str, note: str) -> str:
+    """One-line toast text for a finished refresh outcome (#53).
+
+    Pure helper (kept pure for unit tests): the kind label, an outcome
+    head, and the worker's honest note.
+    """
+    label = {"hashtags": "Hashtags", "images": "Images",
+             "reset": "Reset", "enrich": "Enrichment"}.get(kind, kind)
+    head = {"succeeded": f"{label} updated",
+            "no_change": f"{label}: nothing new",
+            "failed": f"{label} failed",
+            "interrupted": f"{label} interrupted"}.get(status, label)
+    return f"{head} — {note}" if note else head
+
+
+def _fire_refresh_toasts(story_id: str, meta: dict) -> None:
+    """Toast each freshly-finished refresh outcome exactly once (#53).
+
+    Workers append to ``refresh_outcome_pending`` (persisted in the
+    story file, one JSON entry per finished kind). The first render that
+    sees an entry toasts it and drains it from the file — so the toast
+    fires exactly once even across reruns, and entries written while the
+    detail page was closed still surface when it opens. Malformed entries
+    are reported loudly with st.error and dropped (never toasted).
+    """
+    pending = meta.get("refresh_outcome_pending") or []
+    if not isinstance(pending, list) or not pending:
+        return
+    for entry in pending:
+        outcome = lib.parse_refresh_outcome(entry)
+        if outcome is None:
+            st.error(f"Could not read a saved refresh outcome "
+                     f"({str(entry)[:80]}); dropped.")
+            continue
+        st.toast(_refresh_toast_text(outcome["kind"], outcome["status"],
+                                     outcome["note"]),
+                 icon=_refresh_outcome_icon(outcome["status"]))
+    lib.update_story_fields(story_id, refresh_outcome_pending=[])
 def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     """Tiny ×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).
 
@@ -1284,7 +1400,8 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
     deep-links straight into the installed WhatsApp Mac app (#28).
     """
     with st.popover("Share", key=f"lib_sharepop_{story_id}",
-                     help="Share this story's news links and hashtags"):
+                     help="Share this story's news links and hashtags",
+                     use_container_width=True):
         if share_text:
             _copy_button("Copy News Link + Hashtags", share_text,
                          f"n-{story_id}")
@@ -1306,7 +1423,8 @@ def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
     state ("Copied ✓") via _copy_button — no second click.
     """
     with st.popover("Copy", key=f"lib_copypop_{story_id}",
-                     help="Copy the screenplay in different formats"):
+                     help="Copy the screenplay in different formats",
+                     use_container_width=True):
         if script_md:
             _copy_button("Script", _script_plain_text(script_md),
                          f"s-{story_id}")
@@ -1361,11 +1479,12 @@ def _copy_button(label: str, text: str, key: str) -> None:
     )
 
 
-# v1.6 (#38, #46): story-detail toolbar column weights. Streamlit
+# v1.6 (#38, #46, #53): story-detail toolbar column weights. Streamlit
 # ellipsizes ("…") any button/popover label wider than its column, so every
-# action column is weighted to fit its longest label state — "Updating
-# Hashtags…", "Updating Images…", "Resetting…", "Delete" + chevron. Share /
-# Copy are short native-popover labels; a slim spacer keeps Delete visually
+# action column is weighted to fit its label — #53: labels never change
+# mid-work ("Update Hashtags", "Update Images", "Reset", "Delete" +
+# chevron), so the static labels are the longest state. Share / Copy are
+# short native-popover labels; a slim spacer keeps Delete visually
 # trailing. Each total is unchanged (10.0) so the overall layout is
 # preserved and the #24 baseline alignment is untouched.
 _DETAIL_TOOLBAR_WEIGHTS = [2.2, 2.0, 1.4, 1.1, 1.1, 0.5, 1.7]
@@ -1385,22 +1504,22 @@ def _render_story_detail(story_id: str) -> None:
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
     # toolbar — Update Hashtags, Update Images, Reset, Share, Copy — with
     # Delete trailing (#46). The title carries its own inline ✏️ edit icon
-    # next to the centered title text. Progress lives inside the initiating
-    # button (in-button loader); there are no detached progress messages.
-    # Refreshes run in daemon threads, so tab switches never interrupt them.
-    _status = meta.get("enrichment_status")
-    _refresh_kind = meta.get("refresh_kind", "") if _status in lib.BUSY_STATES else ""
-    _busy = bool(_refresh_kind)
+    # next to the centered title text.
+    #
+    # #53 HIG progress: a refresh button NEVER changes its label. While
+    # its kind runs the button keeps its label, shows a CSS spinner (the
+    # lib-spin-<kind> marker, painted via ::before) and stays disabled.
+    # Stable width comes from use_container_width — each button fills its
+    # fixed column slot, so nothing shoves its neighbours. Refreshes run
+    # in daemon threads, so tab switches never interrupt them.
+    #
+    # #54 concurrency: "hashtags" and "images" are independent — each
+    # button disables only while ITS kind runs. Reset is destructive and
+    # exclusive: its trigger disables while ANY kind runs.
+    _busy_kinds = lib.refresh_busy_kinds(meta)
+    _busy = bool(_busy_kinds)
     _editing = bool(st.session_state.get(f"lib_edit_title_{story_id}"))
     _ai_engine = _library_ai_engine()
-
-    def _kick_refresh(kind: str, label: str) -> None:
-        ok, reason = lib.start_refresh(story_id, kind, ai_engine=_ai_engine)
-        if ok:
-            st.rerun()
-        else:
-            st.error(f"Could not start the {label} refresh: {reason}" if reason
-                     else f"Could not start the {label} refresh.")
 
     def _story_delete_popover() -> None:
         # #58: the confirmation names the story, quoted — the title is
@@ -1414,6 +1533,7 @@ def _render_story_detail(story_id: str) -> None:
             on_yes=lambda: _confirm_delete_story(story_id),
             trigger_help="Delete this story",
             destructive_label="Delete story",
+            use_container_width=True,
         )
 
     if _editing:
@@ -1440,31 +1560,34 @@ def _render_story_detail(story_id: str) -> None:
     else:
         tc1, tc2, tc3, tc4, tc5, _tsp, tc6 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
         with tc1:
-            _loading = _refresh_kind == "hashtags"
-            if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
-                         key=f"lib_tags_{story_id}",
-                         help="Find hashtags for this story's topic and add them",
-                         disabled=_busy):
-                _kick_refresh("hashtags", "hashtag")
+            _render_kind_button(
+                story_id=story_id, kind="hashtags", label="Update Hashtags",
+                button_key=f"lib_tags_{story_id}", kick_label="hashtag",
+                help_text="Find hashtags for this story's topic and add them",
+                busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc2:
-            _loading = _refresh_kind == "images"
-            if st.button("Updating Images…" if _loading else "Update Images",
-                         key=f"lib_imgs_{story_id}",
-                         help="Re-fetch news images for this story's topic",
-                         disabled=_busy):
-                _kick_refresh("images", "image")
+            _render_kind_button(
+                story_id=story_id, kind="images", label="Update Images",
+                button_key=f"lib_imgs_{story_id}", kick_label="image",
+                help_text="Re-fetch news images for this story's topic",
+                busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc3:
             # Reset is destructive: it confirms via the same native popover
             # pattern as Delete (red explicit verb / standard Cancel, #58).
-            # The trigger owns its loading state ("Resetting…") and stays
-            # disabled while busy.
-            _render_reset_popover(story_id, _busy, _refresh_kind, _ai_engine)
+            # #53: the trigger label never changes; #54: it stays disabled
+            # while any kind runs (exclusive).
+            _render_reset_popover(story_id, _busy_kinds, _ai_engine)
         with tc4:
             _render_share_popover(story_id, _share_text)
         with tc5:
             _render_copy_popover(story_id, meta, script_md)
         with tc6:
             _story_delete_popover()
+    # #53: toast each freshly-finished refresh outcome exactly once, then
+    # drain it. The file (not session state) is the drain record, so a
+    # toast never fires twice and outcomes that finished while this page
+    # was closed still surface when it opens.
+    _fire_refresh_toasts(story_id, meta)
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
 
     # Title at top: big, multiline, centered, with a small inline edit icon.
@@ -1566,7 +1689,9 @@ def _render_story_detail(story_id: str) -> None:
                         else:
                             st.error("Could not remove the image — "
                                      "the story may have been deleted.")
-    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
+    elif not (_busy_kinds & {"images", "reset", "enrich"}):
+        # #54: only kinds that (re-)fetch images suppress the hint — a
+        # concurrent hashtag run leaves it visible.
         st.caption("No images yet — try Reset or upload manually below.")
 
     # News links: ONE horizontal scroll row. Each verified link is a chip
@@ -1598,7 +1723,8 @@ def _render_story_detail(story_id: str) -> None:
                         st.error(str(e))
                     else:
                         st.rerun()
-    elif meta.get("enrichment_status") not in lib.BUSY_STATES:
+    elif not (_busy_kinds & {"reset", "enrich"}):
+        # #54: only kinds that re-verify links suppress the hint.
         st.caption("No news links yet.")
 
     # Whole script — always through the color-coded renderer so dialogue
@@ -1696,10 +1822,11 @@ def _render_story_detail(story_id: str) -> None:
     # never repaint on completion — and the loader painted by the kickoff
     # rerun could miss its window entirely. While busy, re-render on a
     # short cadence; the moment the worker writes its terminal state the
-    # page settles to the idle buttons plus the honest result note. Fully
-    # automatic — no "click to check status" hunting. The loop always
-    # terminates: workers always write a terminal state, and startup
-    # recovery clears anything a dead process left behind.
+    # page settles to the idle buttons and _fire_refresh_toasts reports
+    # the honest outcome. Fully automatic — no "click to check status"
+    # hunting. The loop always terminates: workers always write a
+    # terminal state, and startup recovery clears anything a dead process
+    # left behind.
     if _busy:
         _time.sleep(1.0)
         st.rerun()
