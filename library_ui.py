@@ -791,7 +791,8 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
                      fail_label: str = "Confirm",
                      destructive_label: str,
                      disabled: bool = False,
-                     spin_marker: str = "") -> None:
+                     spin_marker: str = "",
+                     as_dialog: bool = False) -> None:
     """Apple-style confirmation: native popover, explicit red destructive
     verb, standard Cancel. (#58)
 
@@ -830,10 +831,18 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
     label — icon-only trigger, tooltip keeps the text label. When only
     ``trigger_label`` is given (e.g. "Delete All") the trigger is a plain
     text button with no icon.
+
+    #119 ``as_dialog``: for destructive actions the trigger must be a
+    direct control — no dropdown chevron (Apple HIG). The trigger becomes
+    a plain ``st.button`` (icon-only when ``trigger_icon`` is given) and
+    the confirmation renders in a native modal dialog instead of a
+    popover. The confirmation content — title, message, Cancel +
+    solid-red destructive verb, loud error on failure — is identical;
+    only the trigger affordance and the container change.
     """
     _go_key = f"{popover_key}-go"
     _err_key = f"{popover_key}-err"
-    # Marker first: it must sit directly before the popover's element
+    # Marker first: it must sit directly before the trigger's element
     # container for the #24 collapse rule (the marker's wrapper would
     # otherwise push the trigger one gap lower than its siblings).
     st.markdown(f'<div data-marker="lib-danger-pop-{popover_key}" style="display:none"></div>',
@@ -846,23 +855,19 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
         except Exception as e:
             st.session_state[_err_key] = str(e)
             st.session_state[popover_key] = True  # reopen so the error is seen
-    with st.popover(trigger_label,
-                    icon=_TB_ICON_SPINNER if spin_marker else (trigger_icon or None),
-                    key=popover_key, on_change="rerun",
-                    help=trigger_help or None,
-                    use_container_width=use_container_width,
-                    disabled=disabled):
-        # v1.6 (#38): anchor marker for the HIG popover caret. The popover
-        # body lives in a floating overlay portal, unreachable from the
-        # trigger marker, so this marker rides inside the body itself. It is
-        # emitted first so the red-button `+` sibling rules (which match on
-        # DOM order) never see a button-bearing container after it.
+
+    def _confirmation_body() -> None:
+        # Shared by the popover and dialog (#119) containers: anchor
+        # marker, loud error, title, message, then "Cancel" (standard,
+        # left) and the destructive verb (red, right) side by side.
         st.markdown('<div data-marker="lib-danger-pop-body" style="display:none"></div>',
                     unsafe_allow_html=True)
         _failure = st.session_state.pop(_err_key, None)
         if _failure:
             st.error(f"{fail_label} failed: {_failure}")
-        st.markdown(f"**{_md_escape(title)}**")
+        if not as_dialog:
+            # The dialog carries the title as its own header.
+            st.markdown(f"**{_md_escape(title)}**")
         st.caption(message)
         _bc, _bd = st.columns(2)
         with _bc:
@@ -878,6 +883,29 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
                     {popover_key: False, _go_key: True}),
             )
 
+    if as_dialog:
+        # #119: a destructive action is a direct control — no dropdown
+        # chevron (Apple HIG). The trigger is a plain button; tapping it
+        # opens the same confirmation in a native modal dialog.
+        if st.button(trigger_label,
+                     icon=trigger_icon or None,
+                     key=f"{popover_key}-trigger",
+                     help=trigger_help or None,
+                     use_container_width=use_container_width,
+                     disabled=disabled):
+            st.session_state[popover_key] = True
+        if st.session_state.get(popover_key):
+            st.dialog(title)(_confirmation_body)()
+        return
+
+    with st.popover(trigger_label,
+                    icon=_TB_ICON_SPINNER if spin_marker else (trigger_icon or None),
+                    key=popover_key, on_change="rerun",
+                    help=trigger_help or None,
+                    use_container_width=use_container_width,
+                    disabled=disabled):
+        _confirmation_body()
+
 
 def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
                     message: str, on_yes: Callable[[], None],
@@ -888,13 +916,17 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
     """Apple-style delete confirmation: neutral trigger, red explicit
     destructive verb + Cancel inside (#58).
 
-    Thin wrapper over :func:`_confirm_popover` with the failure label set
-    to "Delete" (kept for the existing delete flows and their tests).
-    ``trigger_icon`` (#90/#111): a native Streamlit material icon shortcode
-    for an icon-only trigger (rendered via ``icon=`` with an empty text
-    label); when empty the text ``trigger_label`` is used instead.
+    #119: the trigger is a DIRECT button — no popover, no dropdown chevron
+    (Apple HIG). Tapping it opens the same confirmation in a native modal
+    dialog. Thin wrapper over :func:`_confirm_popover` with the failure
+    label set to "Delete" (kept for the existing delete flows and their
+    tests). ``trigger_icon`` (#90/#111): a native Streamlit material icon
+    shortcode for an icon-only trigger (rendered via ``icon=`` with an
+    empty text label); when empty the text ``trigger_label`` is used
+    instead.
     """
     _confirm_popover(
+        as_dialog=True,
         trigger_icon=trigger_icon,
         trigger_label=trigger_label,
         popover_key=popover_key,

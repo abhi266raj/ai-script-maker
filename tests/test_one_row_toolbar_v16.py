@@ -62,9 +62,9 @@ def _ui_with_recording_st(clicks=()):
     try:
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
-                     "button", "columns", "popover", "expander", "link_button",
-                     "code", "image", "video", "text_area", "text_input",
-                     "file_uploader", "radio"):
+                     "button", "columns", "popover", "dialog", "expander",
+                     "link_button", "code", "image", "video", "text_area",
+                     "text_input", "file_uploader", "radio"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -110,7 +110,7 @@ def test_detail_toolbar_weights_single_row():
     assert w[5] >= 1.0  # copy icon + native chevron (#90)
     assert w[6] > 1.0   # #71/#80: spacer absorbs the freed icon-column weight
     assert w[7] >= 1.5  # delete icon stays trailing (#90)
-    assert w[7] >= 1.5  # delete icon + native chevron, trailing (#90)
+    # #119: delete is a direct button now — no native chevron.
 
 
 def test_title_edit_toolbar_weights_single_row():
@@ -129,14 +129,21 @@ def test_toolbar_renders_share_copy_in_same_row(monkeypatch):
                 if isinstance(s, list) and len(s) == 8
                 and abs(sum(s) - 10.0) < 1e-9]
     assert len(toolbars) == 1  # exactly one 8-column toolbar row
-    # Render order inside that row: Reset, Share, Copy, Delete popovers.
+    # Render order inside that row: Reset, Share, Copy popovers.
     # (#84 reverted #60's title popover — every popover here is a toolbar
-    # action; #90: icon-only triggers. #94 adds the "⬆" upload popover
-    # at the end of the detail view.)
-    assert [p["label"] for p in fake.popovers] == ["", "", "", "", "⬆"]
-    assert [p.get("icon") for p in fake.popovers[:4]] == [
-        lui._TB_ICON_RESET, lui._TB_ICON_SHARE,
-        lui._TB_ICON_COPY, lui._TB_ICON_DELETE]
+    # action; #90: icon-only triggers. #114: the upload popover is
+    # icon-only now and renders at the end of the detail view.
+    # #119: Delete is a direct button, not a popover — no dropdown
+    # chevron.)
+    assert [p["label"] for p in fake.popovers] == ["", "", "", ""]
+    assert [p.get("icon") for p in fake.popovers] == [
+        lui._TB_ICON_RESET, lui._TB_ICON_SHARE, lui._TB_ICON_COPY,
+        lui._TB_ICON_UPLOAD]
+    _del_trig = [k for k in fake.button_kwargs
+                 if k.get("key") == "lib_delpop_sid1-trigger"]
+    assert len(_del_trig) == 1
+    assert _del_trig[0]["label"] == ""
+    assert _del_trig[0]["icon"] == lui._TB_ICON_DELETE
 
 
 def test_title_edit_toolbar_renders_share_copy(monkeypatch):
@@ -148,10 +155,15 @@ def test_title_edit_toolbar_renders_share_copy(monkeypatch):
                 if isinstance(s, list) and len(s) == 6
                 and abs(sum(s) - 10.0) < 1e-9]
     assert len(toolbars) == 1
-    # #94: the "⬆" upload popover renders at the end of the detail view.
-    assert [p["label"] for p in fake.popovers] == ["", "", "", "⬆"]
-    assert [p.get("icon") for p in fake.popovers[:3]] == [
-        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_DELETE]
+    # #114: the icon-only upload popover renders at the end of the detail
+    # view. #119: Delete is a direct button, not a popover.
+    assert [p["label"] for p in fake.popovers] == ["", "", ""]
+    assert [p.get("icon") for p in fake.popovers] == [
+        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_UPLOAD]
+    _del_trig = [k for k in fake.button_kwargs
+                 if k.get("key") == "lib_delpop_sid1-trigger"]
+    assert len(_del_trig) == 1
+    assert _del_trig[0]["icon"] == lui._TB_ICON_DELETE
 
 
 # ---------------------------------------------------------------------------

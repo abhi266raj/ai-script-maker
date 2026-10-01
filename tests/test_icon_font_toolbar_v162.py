@@ -72,17 +72,24 @@ def test_all_seven_toolbar_controls_are_icon_only(monkeypatch):
     assert [b[0] for b in fake.buttons[:3]] == ["", "", ""]
     assert [k.get("icon") for k in fake.button_kwargs[:3]] == [
         lui._TB_ICON_TAG, lui._TB_ICON_IMAGE, lui._TB_ICON_NEWS]
-    # Popovers: Reset, Share, Copy, Delete (#84 reverted the title popover —
-    # every popover here is a toolbar action). #94: the "⬆" upload popover
-    # is not a toolbar control — it lives in the upload row, so it is
-    # excluded from the icon-only assertion.
-    toolbar_pops = [p for p in fake.popovers if p["label"] != "⬆"]
-    assert [p["label"] for p in toolbar_pops] == ["", "", "", ""]
+    # Popovers: Reset, Share, Copy (#84 reverted the title popover —
+    # every popover here is a toolbar action). #114: the upload popover
+    # is icon-only now — it lives in the upload row, so it is excluded
+    # from the icon-only assertion by its upload icon. #119: Delete is a
+    # direct button, not a popover — no dropdown chevron (Apple HIG).
+    toolbar_pops = [p for p in fake.popovers
+                    if p.get("icon") != lui._TB_ICON_UPLOAD]
+    assert [p["label"] for p in toolbar_pops] == ["", "", ""]
     assert [p.get("icon") for p in toolbar_pops] == [
-        lui._TB_ICON_RESET, lui._TB_ICON_SHARE,
-        lui._TB_ICON_COPY, lui._TB_ICON_DELETE]
+        lui._TB_ICON_RESET, lui._TB_ICON_SHARE, lui._TB_ICON_COPY]
+    _del_trig = [k for k in fake.button_kwargs
+                 if k.get("key") == "lib_delpop_sid1-trigger"]
+    assert len(_del_trig) == 1
+    assert _del_trig[0]["label"] == ""
+    assert _del_trig[0]["icon"] == lui._TB_ICON_DELETE
     for icon in ([k.get("icon") for k in fake.button_kwargs[:3]]
-                 + [p.get("icon") for p in toolbar_pops]):
+                 + [p.get("icon") for p in toolbar_pops]
+                 + [_del_trig[0]["icon"]]):
         assert _is_material_icon(icon), f"not a material icon: {icon!r}"
 
 
@@ -130,7 +137,12 @@ def test_toolbar_tooltips_keep_text_labels(monkeypatch):
     assert pop_helps[("", lui._TB_ICON_RESET)] == _TOOLTIP_TEXT["reset"]
     assert pop_helps[("", lui._TB_ICON_SHARE)] == _TOOLTIP_TEXT["share"]
     assert pop_helps[("", lui._TB_ICON_COPY)] == _TOOLTIP_TEXT["copy"]
-    assert pop_helps[("", lui._TB_ICON_DELETE)] == _TOOLTIP_TEXT["delete"]
+    # #119: Delete is a direct button now — its tooltip rides on the
+    # button, not a popover.
+    _del_trig = [k for k in fake.button_kwargs
+                 if k.get("key") == "lib_delpop_sid1-trigger"]
+    assert len(_del_trig) == 1
+    assert _del_trig[0]["help"] == _TOOLTIP_TEXT["delete"]
 
 
 # ---------------------------------------------------------------------------
@@ -224,13 +236,17 @@ def test_no_global_fill_stroke_forcing():
 
 def test_delete_all_trigger_stays_text():
     """Out of scope: the master-section "Delete All" trigger keeps its
-    text label — only the toolbar Delete becomes icon-only."""
-    lui, fake = _ui_with_fake_st()
+    text label — only the toolbar Delete becomes icon-only. #119: it is
+    now a direct button (no popover, no chevron), still text-labeled."""
+    lui, fake = _ui_with_fake_st(clicks=("dp-all-trigger",))
     lui._delete_popover(trigger_label="Delete All", popover_key="dp-all",
                         title="T", message="M", on_yes=lambda: None,
                         destructive_label="Delete all stories")
-    assert fake.popover_kwargs["label"] == "Delete All"
-    assert fake.popover_kwargs.get("icon") is None
+    assert fake.popovers == []
+    _trig = fake.button_kwargs[0]
+    assert _trig["label"] == "Delete All"
+    assert _trig.get("icon") is None
+    assert fake.dialogs[0]["title"] == "T"
     # And the real call site never opts into an icon.
     src = (Path(__file__).resolve().parent.parent / "library_ui.py").read_text()
     seg = src[src.index('popover_key="lib_delpop_all"'):]

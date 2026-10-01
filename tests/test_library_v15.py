@@ -1040,6 +1040,7 @@ class _FakeSt:
         self.reran = False
         self.popover_kwargs = None
         self.popovers = []  # every popover's kwargs, in render order
+        self.dialogs = []  # every dialog's kwargs, in render order (#119)
         self.expanders = []  # every expander's kwargs, in render order (#66)
         self.buttons = []  # (label, key) in render order
         self.button_kwargs = []  # full kwargs per button, in render order
@@ -1085,6 +1086,16 @@ class _FakeSt:
         self.popovers.append(self.popover_kwargs)
         return _FakeCtx()
 
+    def dialog(self, title, **k):
+        # #119: st.dialog is a decorator — record the call and return a
+        # decorator that records and returns the body function unchanged.
+        self.dialogs.append({"title": title, **k})
+
+        def _deco(fn):
+            return fn
+
+        return _deco
+
     def expander(self, label, expanded=False, **k):
         # #66: the story-detail uploaders live in a collapsed expander.
         self.expanders.append({"label": label, "expanded": expanded})
@@ -1106,8 +1117,8 @@ def _ui_with_fake_st(clicks=()):
     try:
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
-                     "button", "columns", "popover", "expander", "link_button",
-                     "code", "toast"):
+                     "button", "columns", "popover", "dialog", "expander",
+                     "link_button", "code", "toast"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -1128,20 +1139,51 @@ def _pop_kwargs(**kw):
 
 
 def test_delete_popover_renders_cancel_and_destructive_verb():
+    # #119: the trigger is a direct button — no popover, no dropdown
+    # chevron. Tapping it opens the confirmation in a modal dialog.
+    lui, fake = _ui_with_fake_st(clicks=("dp-trigger",))
+    lui._delete_popover(**_pop_kwargs(on_yes=lambda: None))
+    assert fake.popovers == []
+    assert fake.dialogs[0]["title"] == "Delete this story?"
+    # #58: explicit red verb + standard Cancel, never Yes/No. Cancel leads.
+    assert fake.buttons == [("Delete", "dp-trigger"),
+                            ("Cancel", "dp-no"),
+                            ("Delete story", "dp-yes")]
+    # trigger is a plain button (no spinner/icon for delete flows)
+    _trig = fake.button_kwargs[0]
+    assert _trig.get("icon") is None
+    assert _trig["disabled"] is False
+
+
+def test_delete_popover_icon_trigger_passes_icon():
+    # #119: the icon-only delete trigger renders the material icon on a
+    # direct button (no chevron); the tooltip keeps the text label.
+    lui, fake = _ui_with_fake_st(clicks=("dp-trigger",))
+    lui._delete_popover(trigger_label="", trigger_icon=":material/delete:",
+                        popover_key="dp", title="Delete?", message="M",
+                        on_yes=lambda: None, destructive_label="Delete story",
+                        trigger_help="Delete this story")
+    _trig = fake.button_kwargs[0]
+    assert _trig["label"] == ""
+    assert _trig["icon"] == ":material/delete:"
+    assert _trig["help"] == "Delete this story"
+    assert fake.popovers == []
+    assert fake.dialogs[0]["title"] == "Delete?"
+
+
+def test_delete_popover_dialog_stays_closed_until_trigger():
+    # #119: without a trigger click the dialog never opens.
     lui, fake = _ui_with_fake_st()
     lui._delete_popover(**_pop_kwargs(on_yes=lambda: None))
-    assert fake.popover_kwargs["label"] == "Delete"
-    assert fake.popover_kwargs["key"] == "dp"
-    assert fake.popover_kwargs["on_change"] == "rerun"
-    # #58: explicit red verb + standard Cancel, never Yes/No. Cancel leads.
-    assert fake.buttons == [("Cancel", "dp-no"), ("Delete story", "dp-yes")]
+    assert fake.dialogs == []
+    assert fake.buttons == [("Delete", "dp-trigger")]
 
 
 def test_delete_popover_destructive_runs_callback_and_closes():
-    lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
+    lui, fake = _ui_with_fake_st(clicks=("dp-trigger", "dp-yes"))
     fired = []
     kw = _pop_kwargs(on_yes=lambda: fired.append(1))
-    lui._delete_popover(**kw)  # run 1: destructive clicked -> close + go flags armed
+    lui._delete_popover(**kw)  # run 1: trigger opens dialog, destructive clicked -> close + go flags armed
     assert fired == []
     assert fake.session_state["dp"] is False
     assert fake.session_state["dp-go"] is True
@@ -1153,7 +1195,7 @@ def test_delete_popover_destructive_runs_callback_and_closes():
 
 
 def test_delete_popover_cancel_dismisses_without_deleting():
-    lui, fake = _ui_with_fake_st(clicks=("dp-no",))
+    lui, fake = _ui_with_fake_st(clicks=("dp-trigger", "dp-no"))
     fired = []
     lui._delete_popover(**_pop_kwargs(on_yes=lambda: fired.append(1)))
     assert fired == []
@@ -1162,15 +1204,15 @@ def test_delete_popover_cancel_dismisses_without_deleting():
 
 
 def test_delete_popover_destructive_failure_is_loud():
-    lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
+    lui, fake = _ui_with_fake_st(clicks=("dp-trigger", "dp-yes"))
 
     def _boom():
         raise RuntimeError("disk gone")
 
     kw = _pop_kwargs(on_yes=_boom)
-    lui._delete_popover(**kw)  # run 1: arm the confirmation
+    lui._delete_popover(**kw)  # run 1: trigger opens dialog, destructive clicked -> arm
     fake._clicks.clear()
-    lui._delete_popover(**kw)  # run 2: on_yes raises -> loud error, popover reopened
+    lui._delete_popover(**kw)  # run 2: on_yes raises -> loud error, dialog reopened
     assert fake.errors == ["Delete failed: disk gone"]
     assert fake.session_state.get("dp") is True
 
