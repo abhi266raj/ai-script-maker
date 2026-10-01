@@ -1270,8 +1270,13 @@ def _reset_mocks(monkeypatch, tags, images, articles):
                         lambda story, topic, ai_engine=None: (tags, "AI tags."))
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: images)
-    monkeypatch.setattr(lib, "_fetch_news_articles",
-                        lambda topic, limit=6: articles)
+    # _do_reset fetches news via _fetch_news_link_candidates (#82),
+    # which returns link dicts (not article objects).
+    monkeypatch.setattr(
+        lib, "_fetch_news_link_candidates",
+        lambda topic, count=5, exclude_urls=(): [
+            {"title": a.title, "url": a.link, "source": a.source}
+            for a in articles][:count])
     # Reset now content-hashes fresh images: distinct bytes per URL.
     monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
 

@@ -50,8 +50,13 @@ def _enrich_mocks(monkeypatch, tags=(), images=(), articles=()):
                         lambda topic, story=None: (list(tags), "tags note"))
     monkeypatch.setattr(lib, "_fetch_images_for_story",
                         lambda story, topic, **k: list(images))
-    monkeypatch.setattr(lib, "_fetch_news_articles",
-                        lambda topic, limit=6: list(articles))
+    # _do_enrich fetches news via _fetch_news_link_candidates (#82),
+    # which returns link dicts (not article objects).
+    monkeypatch.setattr(
+        lib, "_fetch_news_link_candidates",
+        lambda topic, count=5, exclude_urls=(): [
+            {"title": a.title, "url": a.link, "source": a.source}
+            for a in articles][:count])
     monkeypatch.setattr(lib, "_fetch_image_bytes", fetch_for())
 
 
