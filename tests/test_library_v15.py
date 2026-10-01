@@ -277,7 +277,7 @@ def test_fetch_images_for_story_tries_verified_links_first(libdir, monkeypatch):
         calls.append(list(urls))
         return ["https://img.example/hero.jpg"]
 
-    monkeypatch.setattr(lib, "_grab_og_images", _grab)
+    monkeypatch.setattr(lib, "_grab_article_images", _grab)
     monkeypatch.setattr(lib, "_fetch_news_articles",
                         lambda topic, limit=6: (_ for _ in ()).throw(
                             AssertionError("topic search must not run")))
@@ -289,8 +289,165 @@ def test_fetch_images_for_story_tries_verified_links_first(libdir, monkeypatch):
 def test_fetch_images_for_story_falls_back_to_topic(libdir, monkeypatch):
     sid = _make_story()  # no verified links
     story = lib.load_story(sid)
-    monkeypatch.setattr(lib, "_grab_og_images", lambda urls, tries=3: [])
+    monkeypatch.setattr(lib, "_grab_article_images",
+                        lambda urls, tries=3: [])
     monkeypatch.setattr(lib, "_fetch_article_images",
                         lambda articles, topic="", tries=3: ["https://img.example/t.jpg"])
     found = lib._fetch_images_for_story(story, "chubby dogs voting contest")
     assert found == ["https://img.example/t.jpg"]
+
+
+# ---------------------------------------------------------------------------
+# image fetch: article <img> tags, not just og:image
+# ---------------------------------------------------------------------------
+
+_ARTICLE_HTML = """<html><head>
+<meta property="og:image" content="https://publisher.example/hero.jpg">
+</head><body><article>
+<img src="/photos/dog1.jpg" alt="dogs">
+<img data-src="https://cdn.example/lazy/dog2.jpg" alt="lazy">
+<img src="https://publisher.example/assets/logo.png" alt="logo">
+<img src="https://tracker.example/pixel.gif" alt="t">
+</article></body></html>"""
+
+
+class _FakeResp:
+    def __init__(self, text, status=200, ctype="text/html; charset=utf-8"):
+        self.text = text
+        self.status_code = status
+        self.headers = {"content-type": ctype}
+
+
+def _fake_httpx_get(html, status=200, ctype="text/html; charset=utf-8"):
+    def _get(url, **kw):
+        return _FakeResp(html, status, ctype)
+    return _get
+
+
+def test_grab_article_images_extracts_body_img_tags(libdir, monkeypatch):
+    monkeypatch.setattr("httpx.get", _fake_httpx_get(_ARTICLE_HTML))
+    found = lib._grab_article_images(["https://publisher.example/story"],
+                                     tries=1)
+    # og:image first, then in-article photos; relative + lazy-load absolutized.
+    assert found[0] == "https://publisher.example/hero.jpg"
+    assert "https://publisher.example/photos/dog1.jpg" in found
+    assert "https://cdn.example/lazy/dog2.jpg" in found
+    # Logos and tracking pixels are filtered out.
+    assert not any("logo" in u or "pixel" in u for u in found)
+
+
+def test_grab_article_images_skips_non_html(libdir, monkeypatch):
+    monkeypatch.setattr("httpx.get",
+                        _fake_httpx_get("{}", ctype="application/json"))
+    assert lib._grab_article_images(["https://publisher.example/api"],
+                                    tries=1) == []
+
+
+def test_grab_article_images_skips_failed_pages(libdir, monkeypatch):
+    def _boom(url, **kw):
+        raise RuntimeError("connection refused")
+    monkeypatch.setattr("httpx.get", _boom)
+    assert lib._grab_article_images(["https://publisher.example/down"],
+                                    tries=1) == []
+
+
+# ---------------------------------------------------------------------------
+# refresh_images: merge, never replace
+# ---------------------------------------------------------------------------
+
+def test_refresh_images_merges_not_replaces(libdir, monkeypatch):
+    sid = _make_story(image_urls=["https://img.example/old.jpg"])
+    monkeypatch.setattr(
+        lib, "_fetch_images_for_story",
+        lambda story, topic, **k: ["https://img.example/old.jpg",
+                                  "https://img.example/new.jpg"])
+    changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
+    assert changed is True
+    meta = lib.load_story(sid)["meta"]
+    # Existing URLs keep their order; new ones are appended, deduplicated.
+    assert meta["image_urls"] == ["https://img.example/old.jpg",
+                                 "https://img.example/new.jpg"]
+    assert "Added 1 new image(s)" in note and "kept 1 existing" in note
+
+
+def test_refresh_images_keeps_existing_when_fetch_empty(libdir, monkeypatch):
+    sid = _make_story(image_urls=["https://img.example/old.jpg"])
+    monkeypatch.setattr(lib, "_fetch_images_for_story",
+                        lambda story, topic, **k: [])
+    changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
+    assert changed is False
+    assert lib.load_story(sid)["meta"]["image_urls"] == [
+        "https://img.example/old.jpg"]
+    assert "kept 1 existing" in note
+
+
+def test_refresh_images_no_change_when_nothing_new(libdir, monkeypatch):
+    sid = _make_story(image_urls=["https://img.example/old.jpg"])
+    monkeypatch.setattr(lib, "_fetch_images_for_story",
+                        lambda story, topic, **k: ["https://img.example/old.jpg"])
+    changed, note = lib.refresh_images(sid, "chubby dogs voting contest")
+    assert changed is False
+    assert lib.load_story(sid)["meta"]["image_urls"] == [
+        "https://img.example/old.jpg"]
+
+
+def test_do_media_refresh_merges_images(libdir, monkeypatch):
+    sid = _make_story(image_urls=["https://img.example/old.jpg"],
+                      news_links=[{"title": "T", "url": "https://example.com/x",
+                                   "source": "E"}])
+    monkeypatch.setattr(lib, "_fetch_images_for_story",
+                        lambda story, topic, **k: ["https://img.example/new.jpg"])
+    monkeypatch.setattr(lib, "_suggest_hashtags",
+                        lambda story, topic, ai_engine=None: ([], ""))
+    note = lib._do_media_refresh(sid, "chubby dogs voting contest")
+    meta = lib.load_story(sid)["meta"]
+    assert meta["image_urls"] == ["https://img.example/old.jpg",
+                                 "https://img.example/new.jpg"]
+    assert "Added 1 new image(s)" in note
+    # Retry never touches verified links or the script.
+    assert meta["news_links"][0]["url"] == "https://example.com/x"
+    assert "AARAV" in lib.load_story(sid)["script"]
+
+
+# ---------------------------------------------------------------------------
+# update_fetched_image_url: edit control, fail loudly
+# ---------------------------------------------------------------------------
+
+def test_update_fetched_image_url(libdir):
+    sid = _make_story(image_urls=["https://img.example/a.jpg",
+                                 "https://img.example/b.jpg"])
+    assert lib.update_fetched_image_url(sid, 1, "https://img.example/c.jpg") is True
+    assert lib.load_story(sid)["meta"]["image_urls"] == [
+        "https://img.example/a.jpg", "https://img.example/c.jpg"]
+
+
+def test_update_fetched_image_url_rejects_bad_values(libdir):
+    sid = _make_story(image_urls=["https://img.example/a.jpg"])
+    for bad in ("", "   ", "ftp://img.example/a.jpg", "not a url"):
+        try:
+            lib.update_fetched_image_url(sid, 0, bad)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for {bad!r}")
+    # The original is untouched after rejected edits.
+    assert lib.load_story(sid)["meta"]["image_urls"] == [
+        "https://img.example/a.jpg"]
+
+
+def test_update_fetched_image_url_rejects_bad_index_and_story(libdir):
+    sid = _make_story(image_urls=["https://img.example/a.jpg"])
+    for index in (-1, 1, 99):
+        try:
+            lib.update_fetched_image_url(sid, index, "https://img.example/c.jpg")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(f"expected ValueError for index {index}")
+    try:
+        lib.update_fetched_image_url("no-such-story", 0,
+                                    "https://img.example/c.jpg")
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("expected ValueError for unknown story")

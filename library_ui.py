@@ -918,12 +918,37 @@ def _render_story_detail(story_id: str) -> None:
     img_urls = meta.get("image_urls") or []
     uploaded = meta.get("uploaded_images") or []
     if img_urls:
-        st.caption("Auto-fetched from news — remove any to overwrite, or upload your own below.")
+        st.caption("Auto-fetched from news — remove any to overwrite, edit an address, or upload your own below.")
         for i, url in enumerate(img_urls):
+            edit_key = f"lib_editimg_{story_id}_{i}"
+            if st.session_state.get(edit_key):
+                st.text_input("Image address", value=url,
+                              key=f"lib_edimg_url_{story_id}_{i}")
+                ec1, ec2 = st.columns(2)
+                with ec1:
+                    if st.button("Save", key=f"lib_edimg_save_{story_id}_{i}"):
+                        try:
+                            new_url = st.session_state.get(
+                                f"lib_edimg_url_{story_id}_{i}", "")
+                            lib.update_fetched_image_url(story_id, i, new_url)
+                        except ValueError as e:
+                            st.error(str(e))
+                        else:
+                            st.session_state.pop(edit_key, None)
+                            st.rerun()
+                with ec2:
+                    if st.button("Cancel", key=f"lib_edimg_cancel_{story_id}_{i}"):
+                        st.session_state.pop(edit_key, None)
+                        st.rerun()
+                continue
             ic1, ic2 = st.columns([5, 1])
             with ic1:
                 st.image(url, width=220)
             with ic2:
+                if st.button("Edit", key=f"lib_edimg_{story_id}_{i}",
+                             help="Edit this image's address"):
+                    st.session_state[edit_key] = True
+                    st.rerun()
                 if st.button("✕", key=f"lib_rmimg_{story_id}_{i}",
                              help="Remove this fetched image"):
                     lib.remove_fetched_image(story_id, url)

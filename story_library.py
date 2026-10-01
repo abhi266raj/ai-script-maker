@@ -420,6 +420,27 @@ def remove_fetched_image(story_id: str, url: str) -> bool:
     return True
 
 
+def update_fetched_image_url(story_id: str, index: int, new_url: str) -> bool:
+    """Replace one auto-fetched image URL by list position (the edit control).
+
+    Fails loudly with ValueError when the story is unknown, the index is
+    out of range, or the new value is not a non-empty http(s) URL — the
+    caller surfaces the error instead of silently keeping a bad value.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise ValueError(f"Unknown story: {story_id!r}")
+    urls = list(story["meta"].get("image_urls") or [])
+    if not 0 <= index < len(urls):
+        raise ValueError(f"No fetched image at position {index}.")
+    u = (new_url or "").strip()
+    if not u.lower().startswith(("http://", "https://")):
+        raise ValueError("The new image address must be a non-empty http(s) URL.")
+    urls[index] = u
+    update_story_fields(story_id, image_urls=urls)
+    return True
+
+
 def remove_uploaded_image(story_id: str, filename: str) -> bool:
     """Remove one manually uploaded image file and its frontmatter entry."""
     story = load_story(story_id)
@@ -623,6 +644,66 @@ def _grab_og_images(urls: List[str], tries: int = 3) -> List[str]:
     return found
 
 
+def _grab_article_images(urls: List[str], tries: int = 3,
+                         per_page: int = 3) -> List[str]:
+    """Parallel article-page image extraction from a list of page URLs.
+
+    Each article's HTML is fetched (httpx, timeout, retries) and passed to
+    ``tools.story_link.extract_story_images``, which pulls og:image →
+    twitter:image → JSON-LD → in-article <img>/<figure> photos. News pages
+    carry their real photos in body <img> tags, so this finds images that
+    an og:image-only grab misses. Relative and lazy-load URLs are
+    absolutized; logos, sprites, SVGs and tracking pixels are filtered.
+    """
+    from tools.story_link import extract_story_images
+
+    found: List[str] = []
+    found_lock = threading.Lock()
+    threads: List[threading.Thread] = []
+
+    def _grab(url: str) -> None:
+        html = ""
+        for attempt in range(tries):
+            try:
+                import httpx
+                resp = httpx.get(
+                    url, timeout=12.0, follow_redirects=True,
+                    headers={
+                        "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                                       "AppleWebKit/537.36 (KHTML, like Gecko) "
+                                       "Chrome/126.0.0.0 Safari/537.36"),
+                        "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+                                   "image/avif,image/webp,*/*;q=0.8"),
+                        "Accept-Language": "en-US,en;q=0.9",
+                    })
+                ctype = resp.headers.get("content-type", "")
+                if resp.status_code == 200 and "html" in ctype.lower():
+                    html = resp.text
+                    break
+            except Exception:
+                html = ""
+            time.sleep(1.0 * (attempt + 1))
+        if not html:
+            return
+        try:
+            imgs = extract_story_images(html, url, limit=per_page)
+        except Exception:
+            return
+        with found_lock:
+            for img in imgs:
+                if img not in found:
+                    found.append(img)
+
+    for link in urls:
+        if link:
+            t = threading.Thread(target=_grab, args=(link,), daemon=True)
+            t.start()
+            threads.append(t)
+    for t in threads:
+        t.join(timeout=30.0)
+    return found
+
+
 def _story_direct_link_urls(story: Optional[Dict[str, Any]]) -> List[str]:
     """Direct publisher URLs from the story's verified Stage-1 news links.
 
@@ -643,15 +724,18 @@ def _story_direct_link_urls(story: Optional[Dict[str, Any]]) -> List[str]:
 
 def _fetch_images_for_story(story: Optional[Dict[str, Any]], topic: str,
                             tries: int = 3) -> List[str]:
-    """Hero images for a story: verified story links first, then topic search.
+    """Images for a story: verified story links first, then topic search.
 
     The story's own verified news links point at the exact story's publisher
-    pages, so their hero images are the most on-topic. Only when those yield
-    nothing do we fall back to topic-search articles and web image search.
+    pages, so their article images are the most on-topic. Each page's HTML
+    is fetched and its og:image → twitter:image → JSON-LD → in-article
+    <img> photos are extracted (news sites carry real photos in body <img>
+    tags). Only when those yield nothing do we fall back to topic-search
+    articles and web image search.
     """
     direct = _story_direct_link_urls(story)
     if direct:
-        found = _grab_og_images(direct[:6], tries=tries)
+        found = _grab_article_images(direct[:6], tries=tries)
         if found:
             return found[:6]
     articles = _fetch_news_articles(topic, limit=6)
@@ -924,25 +1008,36 @@ def refresh_hashtags(story_id: str, topic: str = "",
     return changed, note
 
 
-def refresh_images(story_id: str, topic: str = "") -> bool:
-    """Re-fetch news images for the story's topic and replace the fetched set.
+def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
+    """Re-fetch news images and ADD them to the story's image list.
 
-    Tries the story's verified news links first (exact-story publisher pages),
-    then topic search. Returns True when new images were found and saved.
-    The existing fetched set and manual uploads are kept when the fetch finds
-    nothing. Never touches hashtags, links, or story content.
+    Tries the story's verified news links first (exact-story publisher
+    pages, images pulled from the article's own <img> tags), then topic
+    search. New images are merged after the existing URLs, deduplicated —
+    the user's curated list is never wiped. When the fetch finds nothing,
+    the existing list is left untouched. Returns (changed, note).
+    Never touches hashtags, links, or story content.
     """
     story = load_story(story_id)
     if not story:
-        return False
+        return False, "Story not found — images unchanged."
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
-        return False
+        return False, "No topic to search — images unchanged."
     found = _fetch_images_for_story(story, topic)
+    existing = list(story["meta"].get("image_urls") or [])
     if not found:
-        return False
-    update_story_fields(story_id, image_urls=found)
-    return True
+        return False, f"No new images found; kept {len(existing)} existing."
+    merged = list(existing)
+    added = 0
+    for u in found:
+        if u not in merged:
+            merged.append(u)
+            added += 1
+    if not added:
+        return False, f"No new images found; kept {len(existing)} existing."
+    update_story_fields(story_id, image_urls=merged)
+    return True, f"Added {added} new image(s); kept {len(existing)} existing."
 
 
 def _refresh_worker(story_id: str, kind: str, topic: str,
@@ -965,8 +1060,7 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
         if kind == "hashtags":
             _ok, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
         else:
-            ok = refresh_images(story_id, topic)
-            note = "Images updated." if ok else "No images found — kept the existing ones."
+            _ok, note = refresh_images(story_id, topic)
     except Exception as e:
         note = f"Refresh failed: {e}"
     finally:
@@ -1030,14 +1124,21 @@ def _do_media_refresh(story_id: str, topic: str,
             if t not in merged_tags:
                 merged_tags.append(t)
                 tags_added += 1
+        merged_images = list(meta.get("image_urls") or [])
+        images_added = 0
+        for u in image_urls:
+            if u not in merged_images:
+                merged_images.append(u)
+                images_added += 1
         update_story_fields(
             story_id,
-            image_urls=image_urls or meta.get("image_urls") or [],
+            image_urls=merged_images,
             hashtags=merged_tags,
         )
         parts = []
-        parts.append(f"Images updated ({len(image_urls)} found)."
-                     if image_urls else "No new images found — kept the existing ones.")
+        parts.append(f"Added {images_added} new image(s); kept "
+                     f"{len(merged_images) - images_added} existing."
+                     if images_added else "No new images found — kept the existing ones.")
         parts.append(f"{tags_added} new hashtag(s) added."
                      if tags_added else "No new hashtags found — kept the existing ones.")
         if ai_note:
