@@ -122,9 +122,9 @@ def test_toolbar_renders_share_copy_in_same_row(monkeypatch):
                 and abs(sum(s) - 10.0) < 1e-9]
     assert len(toolbars) == 1  # exactly one 8-column toolbar row
     # Render order inside that row: Reset, Share, Copy, Delete popovers.
-    # (#60's 🎬 title popover renders below the toolbar — not part of it.)
-    assert [p["label"] for p in fake.popovers
-            if p["label"] != lui._STORY_ICON_GLYPH] == [
+    # (#84 reverted #60's 🎬 title popover — every popover here is a
+    # toolbar action.)
+    assert [p["label"] for p in fake.popovers] == [
         "Reset", "Share", "Copy", "Delete"]
 
 
