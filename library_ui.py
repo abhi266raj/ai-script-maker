@@ -2373,7 +2373,10 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
     attached; (2) the news links. The bot token resolves by precedence —
     ``~/Documents/telegrambot/bot_token.txt`` (default), then the custom
     ``telegram_bot_token`` in prefs; the chat id is discovered once from
-    the bot's updates and remembered (``telegram_chat_id``).
+    the bot's updates and remembered — in app prefs (``telegram_chat_id``)
+    and in ``~/.cache/telegram_bot_chat_id.json`` — so discovery only
+    needs to succeed once even if another process consumes the bot's
+    updates afterwards.
 
     #179: after the DM share, the same two messages are broadcast to every
     group/supergroup the bot is in (the user's own chat id is skipped —
@@ -2392,7 +2395,10 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
     chat_id = prefs.get("telegram_chat_id")
     if not chat_id:
         # Raises loudly (including when no token is configured yet).
-        chat_id = _tg.discover_chat_id(token)
+        # resolve_chat_id persists the id on disk, so discovery via
+        # getUpdates only has to succeed once — a relay process consuming
+        # the bot's updates afterwards can't break later shares.
+        chat_id = _tg.resolve_chat_id(token)
         lib.save_prefs({"telegram_chat_id": chat_id})
     caption, links_text = _telegram_share_parts(meta)
     video_path = _story_video_path(story_id, meta)  # None, or raises loudly
