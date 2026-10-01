@@ -1408,3 +1408,81 @@ def test_reset_popover_yes_failure_is_loud(monkeypatch):
     lui._render_reset_popover(**kw)  # run 2: start fails -> loud, reopened
     assert fake.errors == ["Reset failed: Could not start the reset: boom"]
     assert fake.session_state.get("lib_resetpop_sid1") is True
+
+
+# ---------------------------------------------------------------------------
+# v1.5.2 — detail visual hierarchy: × floats OVER its card (z-axis),
+# uniform card baselines, one 38px action-button system.
+# ---------------------------------------------------------------------------
+
+def _capture_library_css(lui, monkeypatch):
+    """Capture the <style> HTML emitted by inject_library_css."""
+    chunks = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: chunks.append(a[0] if a else ""))
+    lui.inject_library_css()
+    return "\n".join(chunks)
+
+
+def test_overlay_button_marker_immediately_precedes_button(monkeypatch):
+    """DOM prerequisite for the × overlay: the marker element must be the
+    immediate predecessor of the button element, otherwise the
+    adjacent-sibling CSS selector has nothing to match and the × would
+    render as an in-flow button beside the card."""
+    lui, _fake = _ui_with_fake_st()
+    seq = []
+    monkeypatch.setattr(lui.st, "markdown",
+                        lambda *a, **k: seq.append(("md", a[0] if a else "")))
+    orig_button = lui.st.button
+
+    def rec_button(label, key=None, **k):
+        seq.append(("btn", label, key))
+        return orig_button(label, key=key, **k)
+
+    monkeypatch.setattr(lui.st, "button", rec_button)
+    assert lui._overlay_button("lib-x-r", "k1", "×", help="Remove x") is False
+    assert [s[0] for s in seq] == ["md", "btn"]
+    assert 'data-marker="lib-x-r"' in seq[0][1]
+    assert seq[1][1:] == ("×", "k1")
+
+
+def test_overlay_css_pins_button_over_card_not_beside_it(monkeypatch):
+    """The × overlay CSS must pin the button's element container absolute
+    over the card with a z-index — and must use descendant (not child)
+    combinators past the column, because Streamlit nests element
+    containers inside the column's vertical block. The old child-selector
+    form never matched, leaving the × as a normal button beside the card."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_library_css(lui, monkeypatch)
+    # Braces balanced — a truncated <style> block would silently drop rules.
+    assert css.count("{") == css.count("}")
+    assert '> div[data-testid="column"]' in css  # positioning context still set
+    broken = ('> div[data-testid="column"]\n        > div[data-testid="stElementContainer"]')
+    assert broken not in css
+    for needle in ("position: absolute", "z-index: 10", "top: 4px",
+                   "backdrop-filter: blur(6px)"):
+        assert needle in css, needle
+
+
+def test_image_cards_share_one_baseline(monkeypatch):
+    """Image columns holding an stImage get a fixed card size; the image
+    covers the frame (cropped, never distorted) — the row shares a
+    horizontal baseline instead of ragged aspect-ratio heights."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_library_css(lui, monkeypatch)
+    assert 'div[data-testid="column"]:has([data-testid="stImage"])' in css
+    for needle in ("flex: 0 0 180px", "height: 120px",
+                   "object-fit: cover", "border-radius: 10px"):
+        assert needle in css, needle
+
+
+def test_actions_row_buttons_share_38px_height(monkeypatch):
+    """The WhatsApp link button selector must include the sibling step
+    (it was missing, so the rule never matched), and the copy-button
+    iframe height must equal the 38px action system."""
+    lui, _fake = _ui_with_fake_st()
+    css = _capture_library_css(lui, monkeypatch)
+    assert ('[data-marker="lib-actions"])\n        + div[data-testid="stElementContainer"]'
+            ' [data-testid="stLinkButton"]') in css
+    assert "min-height: var(--lib-act-h)" in css
+    assert lui._LIB_ACTION_BTN_H_PX == 38
