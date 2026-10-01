@@ -10,6 +10,7 @@ from __future__ import annotations
 import streamlit as st
 
 import story_library as lib
+from core.screenplay_formatter import format_industry_screenplay
 
 TAB_STUDIO = "🎬 Studio"
 TAB_LIBRARY = "📚 Library"
@@ -36,6 +37,10 @@ def inject_library_css() -> None:
         --lib-script-text: #1E3A6E;
         --lib-chip-bg: #F0E9DB;
         --lib-chip-text: #6B5433;
+        /* IDE-style token colors for the full script view */
+        --lib-spk: #1D4ED8;
+        --lib-said: #047857;
+        --lib-key: #0E7490;
     }
     :root[data-theme="dark"],
     html[data-theme="dark"],
@@ -52,6 +57,10 @@ def inject_library_css() -> None:
         --lib-script-text: #C9D9F5;
         --lib-chip-bg: #3A3129;
         --lib-chip-text: #D8C49A;
+        /* IDE-style token colors for the full script view */
+        --lib-spk: #93C5FD;
+        --lib-said: #6EE7B7;
+        --lib-key: #67E8F9;
     }
     /* macOS segmented tab bar — centers the control like a native tab strip */
     .lib-tabbar { display: flex; justify-content: center; margin: 6px 0 14px 0; }
@@ -110,6 +119,10 @@ def inject_library_css() -> None:
         padding: 8px 12px;
         margin: 8px 0;
     }
+    /* IDE-style syntax colors inside the script view */
+    .lib-spk { color: var(--lib-spk); font-weight: 700; }
+    .lib-said { color: var(--lib-said); }
+    .lib-key { color: var(--lib-key); font-weight: 600; font-style: normal; }
     .lib-chip {
         display: inline-block;
         background: var(--lib-chip-bg);
@@ -237,6 +250,47 @@ def maybe_autosave_story(batch_result, script) -> None:
     st.toast("💾 Saved to Library — fetching images & news links…", icon="📚")
 
 
+def _verified_news_links(batch_result) -> list:
+    """Stage-1 verified sources — the exact articles the story was built from.
+
+    Saved as the story's news links so they always point at the same story;
+    the background enrichment keeps them and never overwrites them.
+    """
+    links: list = []
+    verif = getattr(batch_result, "verification", None)
+    for s in (getattr(verif, "sources", None) or []):
+        if isinstance(s, dict):
+            title = s.get("title", "") or ""
+            url = s.get("link", "") or s.get("url", "") or ""
+            source = s.get("source", "") or ""
+        else:
+            title = getattr(s, "title", "") or ""
+            url = getattr(s, "link", "") or getattr(s, "url", "") or ""
+            source = getattr(s, "source", "") or ""
+        if url and all(l["url"] != url for l in links):
+            links.append({"title": title, "url": url, "source": source})
+    return links
+
+
+def _full_script_markdown(script) -> str:
+    """The complete final-stage screenplay, via the app's own formatter.
+
+    This is the same clean plain screenplay the Studio offers for
+    copy-pasting — [Format Requirement] header, SCENE DETAIL, CHARACTERS &
+    CLOTHING, all beats. Nothing is added or dropped by the library.
+    Falls back to the field-by-field reconstruction only if the industry
+    formatter refuses (its fail-loud contract); the save itself must not
+    break.
+    """
+    try:
+        # Mirrors app.format_plain_script: the clean plain screenplay ready
+        # for copy-pasting (imported from core to avoid an app↔library cycle).
+        return format_industry_screenplay(
+            script, include_overlays=True, include_sfx=True).strip()
+    except Exception:
+        return _script_markdown(script)
+
+
 def _save_current_story(batch_result, script) -> str:
     hashtag = st.session_state.get("active_hashtag", "") or ""
     hashtags = [hashtag] if hashtag else []
@@ -250,9 +304,10 @@ def _save_current_story(batch_result, script) -> str:
         tone=tone,
         hashtags=hashtags,
         dialogue_md="",
-        script_md=_script_markdown(script),
+        script_md=_full_script_markdown(script),
         source_topic=topic,
         source_headline=headline,
+        news_links=_verified_news_links(batch_result),
     )
 
 
@@ -325,25 +380,135 @@ def render_library_page() -> None:
 
 
 def _render_full_script(script_md: str) -> None:
-    """Render the whole script; ``> ...`` blockquote lines are highlighted as dialogue."""
+    """Render the saved full script as styled HTML.
+
+    Handles the final-stage industry screenplay (plain text: [Format
+    Requirement] header, SCENE DETAIL / CHARACTERS & CLOTHING sections,
+    ``SPEAKER: "dialogue"`` lines) and the older Markdown reconstruction
+    (``> **Speaker:** line`` blockquotes). Spoken dialogue gets the amber
+    highlight with IDE-style syntax colors — speaker like a keyword,
+    spoken words like a string.
+    """
     import html as _html
     import re as _re
 
-    def _inline(md: str) -> str:
-        s = _html.escape(md.strip())
-        return _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+    _SPEAKER_RE = _re.compile(r'^([A-Z][A-Z0-9 .\'-]{1,40}):\s*"(.*)"\s*$')
+    _SECTION_RE = _re.compile(r"^([A-Z][A-Z &/()\-]{2,}):$")
+    _LABEL_RE = _re.compile(r"^([A-Za-z][A-Za-z &/()\-]{1,40}):")
+
+    def _inline(text: str) -> str:
+        s = _html.escape(text.strip())
+        s = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", s)
+        s = _re.sub(r"\*([^*]+?):\*", r'<span class="lib-key">\1:</span>', s)
+        return s
+
+    def _dialogue_div(speaker: str, said: str) -> str:
+        said_html = _re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", _html.escape(said.strip()))
+        return (f'<div class="lib-dialogue-line"><span class="lib-spk">{_html.escape(speaker.strip())}:</span> '
+                f'<span class="lib-said">{said_html}</span></div>')
 
     chunks: list[str] = []
+    pending: list[str] = []
+
+    def _flush_pending() -> None:
+        if pending:
+            chunks.append('<div class="lib-script-line">' + "<br>".join(pending) + "</div>")
+            pending.clear()
+
     for para in script_md.split("\n\n"):
-        para = para.strip()
-        if not para:
-            continue
-        if para.startswith(">"):
-            text = _inline(para.lstrip(">").strip())
-            chunks.append(f'<div class="lib-dialogue-line">{text}</div>')
-        else:
-            chunks.append(f'<div class="lib-script-line">{_inline(para)}</div>')
+        for raw in para.split("\n"):
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("[Format Requirement:"):
+                _flush_pending()
+                chunks.append(
+                    f'<div class="lib-script-line" style="opacity:0.75;font-style:italic;">'
+                    f'{_html.escape(line)}</div>')
+                continue
+            if line.startswith(">"):
+                _flush_pending()
+                # Older reconstruction format: "> **Speaker:** line"
+                m = _re.match(r"\*\*(.+?):\*\*\s*(.*)", line.lstrip(">").strip(), _re.DOTALL)
+                if m:
+                    chunks.append(_dialogue_div(m.group(1), m.group(2)))
+                else:
+                    chunks.append(f'<div class="lib-dialogue-line"><span class="lib-said">'
+                                  f'{_inline(line.lstrip(">").strip())}</span></div>')
+                continue
+            m = _SPEAKER_RE.match(line)
+            if m:
+                _flush_pending()
+                chunks.append(_dialogue_div(m.group(1), m.group(2)))
+                continue
+            m = _SECTION_RE.match(line)
+            if m:
+                _flush_pending()
+                chunks.append(f'<div class="lib-script-line"><span class="lib-key"><b>'
+                              f'{_html.escape(line)}</b></span></div>')
+                continue
+            m = _LABEL_RE.match(line)
+            if m:
+                pending.append(f'<span class="lib-key">{_html.escape(m.group(1))}:</span> '
+                               + _inline(line[m.end():].strip()))
+            else:
+                pending.append(_inline(line))
+        _flush_pending()
     st.markdown("".join(chunks) or "<p>—</p>", unsafe_allow_html=True)
+
+
+def _script_plain_text(md: str) -> str:
+    """Full-script Markdown → clean plain text for copying."""
+    import re as _re
+    s = _re.sub(r"\*\*(.+?)\*\*", r"\1", md)
+    s = _re.sub(r"\*([^*]+?):\*", r"\1:", s)
+    s = _re.sub(r"^>\s?", "", s, flags=_re.M)
+    return s.strip()
+
+
+def _compose_share_text(meta: dict, script_md: str, with_media: bool, with_tags: bool) -> str:
+    """Compose the copy text: the full final-stage script plus optional
+    media links and hashtags. News article links are never added."""
+    parts = [_script_plain_text(script_md)]
+    if with_media:
+        media = list(meta.get("image_urls") or []) + list(meta.get("uploaded_images") or [])
+        media = [u for u in dict.fromkeys(media) if u]
+        if media:
+            parts.append("Media:\n" + "\n".join(f"- {u}" for u in media))
+    if with_tags:
+        tags = meta.get("hashtags") or []
+        if tags:
+            parts.append(" ".join(tags))
+    return "\n\n".join(p for p in parts if p).strip()
+
+
+def _copy_button(label: str, text: str, key: str) -> None:
+    """One-click copy-to-clipboard button (clipboard API with execCommand fallback)."""
+    import html as _html
+    import json as _json
+    import streamlit.components.v1 as components
+    payload = _json.dumps(text)
+    btn_id = f"libcp-{key}"
+    components.html(
+        f"""<button id="{btn_id}" style="width:100%;padding:8px 4px;border:1px solid #bbb;border-radius:8px;
+        background:#f5f5f5;color:#222;cursor:pointer;font-size:13px;">{_html.escape(label)}</button>
+        <script>
+        document.getElementById("{btn_id}").addEventListener("click", async () => {{
+            const t = {payload};
+            try {{ await navigator.clipboard.writeText(t); }}
+            catch (e) {{
+                const ta = document.createElement("textarea");
+                ta.value = t; document.body.appendChild(ta); ta.select();
+                try {{ document.execCommand("copy"); }} catch (_e) {{}}
+                ta.remove();
+            }}
+            const b = document.getElementById("{btn_id}");
+            const old = b.textContent; b.textContent = "Copied \\u2713";
+            setTimeout(() => {{ b.textContent = old; }}, 1500);
+        }});
+        </script>""",
+        height=50,
+    )
 
 
 def _render_story_detail(story_id: str) -> None:
@@ -354,8 +519,12 @@ def _render_story_detail(story_id: str) -> None:
         return
     meta = story["meta"]
 
-    # Title at top
-    st.markdown(f"# {meta.get('title', 'Untitled Story')}")
+    # Title at top — editable; saves on change
+    new_title = st.text_input("Title", value=meta.get("title", "Untitled Story"),
+                              key=f"lib_title_{story_id}")
+    if new_title.strip() and new_title.strip() != meta.get("title", ""):
+        lib.update_story_fields(story_id, title=new_title.strip())
+        st.rerun()
     created = (meta.get("created_at", "") or "").replace("T", " ")
     st.caption(f"Created {created}" + (f" · Tone: {meta.get('tone')}" if meta.get("tone") else ""))
 
@@ -374,21 +543,29 @@ def _render_story_detail(story_id: str) -> None:
     if _note:
         st.caption(f"🔄 Last refresh: {_note}")
 
-    # Whole script; dialogue lines highlighted in a distinct color.
+    # Whole script — always through the color-coded renderer so dialogue
+    # never falls back to plain markdown.
     script_md = story["script"].strip()
     if script_md:
         st.markdown("### 🎬 Full Script")
-        if "\n>" in script_md or script_md.startswith(">"):
-            _render_full_script(script_md)
-        elif story["dialogue"].strip():
-            # Old-format files (saved before the blockquote change): two-box rendering.
-            st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
-                        unsafe_allow_html=True)
-            st.markdown(f'<div class="lib-script">{_md_to_html(script_md)}</div>',
-                        unsafe_allow_html=True)
-        else:
-            st.markdown(f'<div class="lib-script">{_md_to_html(script_md)}</div>',
-                        unsafe_allow_html=True)
+        _render_full_script(script_md)
+    elif story["dialogue"].strip():
+        # Old-format files (saved before the blockquote change): two-box rendering.
+        st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
+                    unsafe_allow_html=True)
+
+    # Copy options: the full final-stage script, pure — nothing added.
+    if script_md:
+        st.markdown("### 📋 Copy")
+        cc1, cc2, cc3, cc4 = st.columns(4)
+        with cc1:
+            _copy_button("📋 Script", _script_plain_text(script_md), f"s-{story_id}")
+        with cc2:
+            _copy_button("🖼️ + Media", _compose_share_text(meta, script_md, True, False), f"m-{story_id}")
+        with cc3:
+            _copy_button("#️⃣ + Tags", _compose_share_text(meta, script_md, False, True), f"h-{story_id}")
+        with cc4:
+            _copy_button("📦 All", _compose_share_text(meta, script_md, True, True), f"a-{story_id}")
 
     # Images + news links at the bottom
     st.markdown("### 🖼️ Media & Links")

@@ -20,6 +20,7 @@ from __future__ import annotations
 import datetime
 import re
 import threading
+import time
 import uuid
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -190,6 +191,7 @@ def save_story(
     script_md: str,
     source_topic: str = "",
     source_headline: str = "",
+    news_links: Optional[List[Dict[str, str]]] = None,
 ) -> str:
     """Save a story immediately (no network). Returns the story id."""
     story_id = new_story_id()
@@ -199,7 +201,7 @@ def save_story(
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "tone": tone or "",
         "hashtags": [h for h in (hashtags or []) if h],
-        "news_links": [],
+        "news_links": [dict(l) for l in (news_links or [])],
         "image_urls": [],
         "uploaded_images": [],
         "video_file": "",
@@ -390,35 +392,77 @@ def remove_uploaded_image(story_id: str, filename: str) -> bool:
 # ---------------------------------------------------------------------------
 
 def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
-    """Best-effort og:image extraction from an article page."""
+    """Best-effort hero-image extraction from an article page.
+
+    Checks og:image / twitter:image, JSON-LD structured data (where many
+    publishers put the hero image), and older link/itemprop fallbacks.
+    """
     try:
         import httpx
+        import json as _json
         from bs4 import BeautifulSoup
         resp = httpx.get(
             article_url, timeout=timeout, follow_redirects=True,
-            headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)"})
+            headers={
+                "User-Agent": ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                               "AppleWebKit/537.36 (KHTML, like Gecko) "
+                               "Chrome/126.0.0.0 Safari/537.36"),
+                "Accept": ("text/html,application/xhtml+xml,application/xml;q=0.9,"
+                           "image/avif,image/webp,*/*;q=0.8"),
+                "Accept-Language": "en-US,en;q=0.9",
+            })
         if resp.status_code != 200:
             return None
         soup = BeautifulSoup(resp.text, "html.parser")
-        for prop in ("og:image", "twitter:image"):
+
+        def _ok(url: str) -> Optional[str]:
+            url = urljoin(article_url, url.strip())
+            if url.startswith(("http://", "https://")):
+                return url
+            return None
+
+        for prop in ("og:image", "og:image:secure_url", "twitter:image"):
             tag = soup.find("meta", property=prop) or soup.find("meta", attrs={"name": prop})
             if tag and tag.get("content"):
-                url = urljoin(article_url, tag["content"].strip())
-                if url.startswith(("http://", "https://")) and not url.startswith("data:"):
-                    return url
+                hit = _ok(tag["content"])
+                if hit:
+                    return hit
+        # JSON-LD structured data — many publishers put the hero image here.
+        for ld in soup.find_all("script", type="application/ld+json"):
+            try:
+                data = _json.loads(ld.get_text() or "")
+            except Exception:
+                continue
+            items = data if isinstance(data, list) else [data]
+            queue = list(items)
+            while queue:
+                item = queue.pop(0)
+                if not isinstance(item, dict):
+                    continue
+                graph = item.get("@graph")
+                if isinstance(graph, list):
+                    queue.extend(graph)
+                img = item.get("image")
+                cands = img if isinstance(img, list) else [img]
+                for c in cands:
+                    u = c.get("url") if isinstance(c, dict) else c
+                    if isinstance(u, str) and u.strip():
+                        hit = _ok(u)
+                        if hit:
+                            return hit
         # Fallbacks some publishers use instead of og:image.
         link_src = soup.find("link", rel="image_src")
         if link_src and link_src.get("href"):
-            url = urljoin(article_url, link_src["href"].strip())
-            if url.startswith(("http://", "https://")):
-                return url
+            hit = _ok(link_src["href"])
+            if hit:
+                return hit
         item = soup.find(attrs={"itemprop": "image"})
         if item:
             content = (item.get("content") or item.get("src") or "").strip()
             if content:
-                url = urljoin(article_url, content)
-                if url.startswith(("http://", "https://")):
-                    return url
+                hit = _ok(content)
+                if hit:
+                    return hit
     except Exception:
         pass
     return None
@@ -452,27 +496,82 @@ def _fetch_news_articles(topic: str, limit: int = 6):
         return []
 
 
-def _fetch_article_images(articles) -> List[str]:
-    """Best-effort og:image extraction from article pages, in parallel."""
+def _url_is_image(url: str) -> bool:
+    """Light preflight: accept only URLs that actually serve an image."""
+    try:
+        import httpx
+        try:
+            r = httpx.head(url, timeout=8, follow_redirects=True,
+                           headers={"User-Agent": "Mozilla/5.0"})
+            if r.status_code == 200:
+                return r.headers.get("content-type", "").startswith("image/")
+        except Exception:
+            pass
+        # Some hosts reject HEAD — do a minimal GET and check the content type.
+        with httpx.stream("GET", url, timeout=8, follow_redirects=True,
+                          headers={"User-Agent": "Mozilla/5.0"}) as r:
+            return r.status_code == 200 and r.headers.get("content-type", "").startswith("image/")
+    except Exception:
+        return False
+
+
+def _search_web_images(topic: str, limit: int = 4) -> List[str]:
+    """Fallback: web image search via the bundled image-search CLI.
+
+    Only used when article-page extraction finds nothing at all.
+    """
+    try:
+        import json as _json
+        import subprocess
+        proc = subprocess.run(
+            ["/opt/hatch/bin/image-search", topic, "--max-results", str(limit)],
+            capture_output=True, text=True, timeout=45)
+        data = _json.loads(proc.stdout or "{}")
+        urls: List[str] = []
+        for r in data.get("results") or []:
+            u = r.get("media_url") or r.get("thumbnail_cdn_url") or ""
+            if u.startswith("https://") and u not in urls:
+                urls.append(u)
+                if len(urls) >= limit:
+                    break
+        return urls
+    except Exception:
+        return []
+
+
+def _fetch_article_images(articles, topic: str = "", tries: int = 3) -> List[str]:
+    """Hero images for a topic.
+
+    First tries hero-image extraction from the article pages (parallel, with
+    retries). If that finds nothing at all, falls back to a web image search
+    for the topic so the story still gets images.
+    """
     found: List[str] = []
     found_lock = threading.Lock()
     threads: List[threading.Thread] = []
 
     def _grab(url: str) -> None:
-        img = _og_image(url)
-        if img:
-            with found_lock:
-                if img not in found:
-                    found.append(img)
+        for attempt in range(tries):
+            img = _og_image(url)
+            if img:
+                with found_lock:
+                    if img not in found:
+                        found.append(img)
+                return
+            time.sleep(1.0 * (attempt + 1))
 
-    for a in articles[:4]:
+    for a in articles[:6]:
         link = getattr(a, "link", "")
         if link:
             t = threading.Thread(target=_grab, args=(link,), daemon=True)
             t.start()
             threads.append(t)
     for t in threads:
-        t.join(timeout=12.0)
+        t.join(timeout=30.0)
+    if not found and topic.strip():
+        for u in _search_web_images(topic.strip(), limit=4):
+            if _url_is_image(u) and u not in found:
+                found.append(u)
     return found[:6]
 
 
@@ -487,9 +586,45 @@ def _tag_words(tag: str) -> set:
     return words
 
 
-def _fetch_trending_hashtags(topic: str) -> List[str]:
-    """Trending hashtags matching the topic's words (best-effort)."""
+_HASHTAG_STOPWORDS = {
+    "with", "from", "have", "this", "that", "will", "would", "about",
+    "into", "over", "after", "before", "between", "through", "during",
+    "under", "their", "there", "these", "those", "what", "when", "where",
+    "which", "while", "your", "yours", "news", "viral", "video", "watch",
+    "says", "said", "told", "more", "most", "very", "just",
+}
+
+
+def _keyword_list(text: str) -> List[str]:
+    """Significant English keywords of a title, in order, de-duplicated."""
+    out: List[str] = []
+    seen: set = set()
+    for w in re.findall(r"[A-Za-z]{4,}", text or ""):
+        lw = w.lower()
+        if lw in _HASHTAG_STOPWORDS or lw in seen:
+            continue
+        seen.add(lw)
+        out.append(w)
+    return out
+
+
+def _camel_tag(words: List[str], max_words: int = 3) -> str:
+    """Build a CamelCase hashtag from keywords, e.g. ['Fat','Dogs','Delhi'] → #FatDogsDelhi."""
+    parts = [w[:1].upper() + w[1:].lower() for w in words[:max_words]]
+    tag = "#" + "".join(parts)
+    return tag if len(tag) > 4 else ""
+
+
+def _fetch_trending_hashtags(topic: str, articles=None) -> List[str]:
+    """Smart hashtag discovery for a topic. Always returns at least one tag.
+
+    1. Trending hashtags matching the topic's words.
+    2. Tags derived from news article titles about the topic.
+    3. A tag derived from the topic itself.
+    4. Guaranteed fallback so a story never ends up hashtag-less.
+    """
     tags: List[str] = []
+    # 1. trending matches
     try:
         from tools.news_fetcher import news_fetcher
         trending = news_fetcher.fetch_famous_english_hashtags(limit=12) or []
@@ -502,7 +637,25 @@ def _fetch_trending_hashtags(topic: str) -> List[str]:
                 break
     except Exception:
         pass
-    return tags
+    # 2. derive from article titles about the topic
+    if articles is None:
+        articles = _fetch_news_articles(topic, limit=6)
+    for a in (articles or [])[:6]:
+        t = _camel_tag(_keyword_list(getattr(a, "title", "")))
+        if t and t not in tags and len(tags) < 8:
+            tags.append(t)
+    # 3. derive from the topic itself
+    t = _camel_tag(_keyword_list(topic))
+    if t and t not in tags and len(tags) < 8:
+        tags.append(t)
+    # 4. guarantee: never return empty
+    if not tags:
+        words = re.findall(r"[A-Za-z]{3,}", topic)
+        if words:
+            tags.append("#" + "".join(w.capitalize() for w in words[:3]))
+        else:
+            tags.append("#HindiReelStudio")
+    return tags[:8]
 
 
 def refresh_hashtags(story_id: str, topic: str = "") -> bool:
@@ -543,7 +696,7 @@ def refresh_images(story_id: str, topic: str = "") -> bool:
     topic = (topic or story["meta"].get("source_topic") or "").strip()
     if not topic:
         return False
-    found = _fetch_article_images(_fetch_news_articles(topic, limit=6))
+    found = _fetch_article_images(_fetch_news_articles(topic, limit=6), topic)
     if not found:
         return False
     update_story_fields(story_id, image_urls=found)
@@ -612,8 +765,9 @@ def _do_media_refresh(story_id: str, topic: str) -> None:
 
     Never touches news_links and never touches the story content.
     """
-    image_urls = _fetch_article_images(_fetch_news_articles(topic, limit=6))
-    new_tags = _fetch_trending_hashtags(topic)
+    articles = _fetch_news_articles(topic, limit=6)
+    image_urls = _fetch_article_images(articles, topic)
+    new_tags = _fetch_trending_hashtags(topic, articles)
     story = load_story(story_id)
     if not story:
         return
@@ -638,8 +792,8 @@ def _do_enrich(story_id: str, topic: str) -> None:
             "url": getattr(a, "link", ""),
             "source": getattr(a, "source", ""),
         })
-    image_urls = _fetch_article_images(articles)
-    new_tags = _fetch_trending_hashtags(topic)
+    image_urls = _fetch_article_images(articles, topic)
+    new_tags = _fetch_trending_hashtags(topic, articles)
     story = load_story(story_id)
     if not story:
         return
