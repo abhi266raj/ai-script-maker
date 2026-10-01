@@ -744,8 +744,8 @@ def test_compose_news_tags_text_title_then_tags_then_links():
         "hashtags": ["#DogShowdown", "#Reel"],
     }
     assert lui._compose_news_tags_text(meta, "My Story Title") == (
-        "My Story Title\n\n#DogShowdown #Reel\n\n"
-        "https://a.example/1\nhttps://b.example/2"
+        "My Story Title\n#DogShowdown #Reel\n\n"
+        "S1: https://a.example/1\nb.example: https://b.example/2"
     )
 
 
@@ -760,12 +760,31 @@ def test_compose_news_tags_text_dedupes_and_skips_blanks():
         ],
         "hashtags": [],
     }
-    assert lui._compose_news_tags_text(meta, "T") == "T\n\nhttps://a.example/1\nhttps://b.example/2"
+    assert lui._compose_news_tags_text(meta, "T") == (
+        "T\n\na.example: https://a.example/1\nb.example: https://b.example/2"
+    )
+
+
+def test_compose_news_tags_text_source_fallback_never_blank():  # #151
+    lui = _library_ui_module()
+    meta = {
+        "news_links": [
+            {"url": "https://www.mypunepulse.com/story", "source": ""},
+            {"url": "https://indianexpress.com/story", "source": "Indian Express"},
+            {"url": "not-a-url", "source": ""},
+        ],
+    }
+    assert lui._compose_news_tags_text(meta, "T") == (
+        "T\n\n"
+        "www.mypunepulse.com: https://www.mypunepulse.com/story\n"
+        "Indian Express: https://indianexpress.com/story\n"
+        "not-a-url: not-a-url"
+    )
 
 
 def test_compose_news_tags_text_tags_only_and_empty():
     lui = _library_ui_module()
-    assert lui._compose_news_tags_text({"hashtags": ["#Only"]}, "T") == "T\n\n#Only"
+    assert lui._compose_news_tags_text({"hashtags": ["#Only"]}, "T") == "T\n#Only"
     assert lui._compose_news_tags_text({}, "") == ""
     assert lui._compose_news_tags_text({"news_links": [], "hashtags": []}, "") == ""
     assert lui._compose_news_tags_text({"hashtags": ["#Only"]}) == "#Only"

@@ -1828,29 +1828,54 @@ def _compose_share_text(meta: dict, script_md: str, with_media: bool, with_tags:
 
 
 def _compose_news_tags_text(meta: dict, title: str = "") -> str:
-    """Share text: title, then hashtags, then verified news link(s).
+    """Share text: title, hashtags, then site-named news link(s).
+
+    #151: format is
+        <title>
+        #tag1 #tag2
+
+        <site name>: <url>
+        <site name>: <url>
 
     Formatted for pasting straight into a social-media post — title first,
-    hashtags space-separated on the next line, then one link per line.
+    hashtags space-separated on the next line, then a blank line and one
+    "<source>: <url>" line per news link. The site name is the link's
+    ``source`` field; when it is missing or empty the URL's domain is
+    used instead — the prefix is never blank. URLs are deduped.
     Returns "" when the story has neither title, news links nor hashtags,
     so the caller can say so plainly instead of copying nothing.
     """
-    links = [
-        (lk.get("url") or "").strip()
-        for lk in (meta.get("news_links") or [])
-        if isinstance(lk, dict)
-    ]
-    links = [u for u in dict.fromkeys(links) if u]
+    import urllib.parse as _up
+    seen_urls: set = set()
+    link_lines = []
+    for lk in (meta.get("news_links") or []):
+        if not isinstance(lk, dict):
+            continue
+        url = (lk.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        source = (lk.get("source") or "").strip()
+        if not source:
+            # Fail-loud-friendly: the prefix is never blank; the domain
+            # is the best available site name, the raw URL the last resort.
+            try:
+                source = _up.urlparse(url).netloc or url
+            except Exception:
+                source = url
+        link_lines.append(f"{source}: {url}")
     tags = [t for t in (meta.get("hashtags") or []) if t]
-    parts = []
+    head = []
     title = (title or "").strip()
     if title:
-        parts.append(title)
+        head.append(title)
     if tags:
-        parts.append(" ".join(tags))
-    if links:
-        parts.append("\n".join(links))
-    return "\n\n".join(parts)
+        head.append(" ".join(tags))
+    body = "\n".join(head)
+    if link_lines:
+        links_text = "\n".join(link_lines)
+        return f"{body}\n\n{links_text}" if body else links_text
+    return body
 
 
 def _whatsapp_share_url(text: str) -> str:
