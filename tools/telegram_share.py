@@ -12,20 +12,29 @@ Two messages per share (user-approved):
   2. the news links, one "site: url" line each.
 
 #179: after the DM share, the same two messages are broadcast to every
-group/supergroup the bot is a member of (discovered via getUpdates,
-remembered in ~/.cache/telegram_bot_groups.json). The user's own chat id
-is skipped (it already got the messages). Every group is attempted; the
-summary names any failures loudly — never a silent skip. Prerequisite: the
-bot must be added to each group (Telegram only lets bots post where they
-are members).
+group/supergroup the bot is a member of. #184: broadcast targets come
+from ``~/Documents/telegrambot/group_ids.txt`` (one chat ID per line —
+created for you with a guidance header if missing) UNION the groups
+auto-discovered via getUpdates (remembered in
+~/.cache/telegram_bot_groups.json), deduped, minus the user's own chat id
+(it already got the messages). The Bot API has no "list my groups" call,
+so the file is the reliable source; discovery is best-effort backup. Every
+group is attempted; the summary names any failures loudly — never a silent
+skip. Prerequisite: the bot must be added to each group (Telegram only lets
+bots post where they are members).
 
 One-time setup (guided in the Share popover):
   1. message @BotFather on Telegram -> /newbot -> copy the token;
   2. open the new bot and tap Start (it needs one message from you);
   3. token source, by precedence (see resolve_token):
      a. DEFAULT: save it as ~/Documents/telegrambot/bot_token.txt —
-        the app picks it up automatically;
+        the file is created for you with a guidance header if missing;
      b. custom: paste it in the Share popover (stored in app prefs);
+  4. group broadcast: put each group's chat ID on its own line in
+     ~/Documents/telegrambot/group_ids.txt (also created for you with a
+     guidance header if missing). Get an ID by forwarding any message from
+     the group to @getmyid_bot — it replies with the chat ID (group IDs
+     look like -100...).
   the chat id is discovered automatically from the bot's updates and
   remembered in prefs.
 
@@ -49,6 +58,27 @@ MAX_TEXT_CHARS = 4096  # Telegram text-message limit
 # so ~ is the user's home). The file holds the raw token, nothing else.
 DEFAULT_TOKEN_PATH = Path.home() / "Documents" / "telegrambot" / "bot_token.txt"
 
+# Default group-IDs location (#184): one Telegram chat ID per line. The
+# Bot API has no "list my groups" call, so this file is the reliable source
+# of broadcast targets; getUpdates discovery is best-effort backup.
+DEFAULT_GROUP_IDS_PATH = (
+    Path.home() / "Documents" / "telegrambot" / "group_ids.txt")
+
+# Written into bot_token.txt when the app creates it: the token goes on its
+# own line; comment lines are ignored when the file is read.
+TOKEN_FILE_HEADER = (
+    "# Paste your Telegram bot token below (one line, from @BotFather).\n"
+    "# Lines starting with # are ignored.\n"
+)
+
+# Written into group_ids.txt when the app creates it.
+GROUP_IDS_FILE_HEADER = (
+    "# Telegram group chat IDs for broadcast — one per line.\n"
+    "# Get an ID by forwarding any message from the group to @getmyid_bot\n"
+    "# (it replies with the chat ID; group IDs look like -100...).\n"
+    "# Blank lines and lines starting with # are ignored.\n"
+)
+
 # Transport: callable (url, *, data, files, timeout) -> response exposing
 # .json() and .status_code. Defaults to httpx (lazy import).
 Transport = Callable[..., Any]
@@ -58,34 +88,60 @@ class TelegramShareError(RuntimeError):
     """Anything that stops a Telegram share — always actionable, never silent."""
 
 
+def _ensure_token_file(path: Path) -> None:
+    """Create the token file with a guidance header if it doesn't exist.
+
+    Best-effort: an uncreatable location is ignored — ``resolve_token``
+    still fails loudly below when no token is configured anywhere.
+    """
+    try:
+        if not path.exists():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(TOKEN_FILE_HEADER, encoding="utf-8")
+    except OSError:
+        pass
+
+
+def _read_token_file(path: Path) -> str:
+    """First non-blank, non-``#`` line of the token file, or ``""``."""
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return ""
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            return stripped
+    return ""
+
+
 def resolve_token(prefs_token: Optional[str] = None,
                   token_path: Optional[Any] = None) -> str:
     """Return the effective bot token, by precedence.
 
-    1. DEFAULT: ``~/Documents/telegrambot/bot_token.txt`` — read and
-       stripped. A missing, unreadable, or blank file is skipped silently
+    1. DEFAULT: ``~/Documents/telegrambot/bot_token.txt`` — created with a
+       guidance header when missing; the first non-blank, non-``#`` line is
+       the token. A missing, unreadable, or blank file is skipped silently
        (it simply isn't the configured source).
     2. The custom token stored in app prefs (set via the Share popover).
-    3. Otherwise raise TelegramShareError with setup guidance — never None,
-       never a silent no-op.
+    3. Otherwise raise TelegramShareError with setup guidance naming the
+       token file explicitly — never None, never a silent no-op.
 
     ``token_path`` overrides the default file location (for tests).
     """
     path = Path(token_path) if token_path is not None else DEFAULT_TOKEN_PATH
-    try:
-        file_token = path.read_text(encoding="utf-8").strip()
-    except (OSError, UnicodeDecodeError):
-        file_token = ""
+    _ensure_token_file(path)
+    file_token = _read_token_file(path)
     if file_token:
         return file_token
     custom = (prefs_token or "").strip()
     if custom:
         return custom
     raise TelegramShareError(
-        "No Telegram bot token found. Save it as "
-        "~/Documents/telegrambot/bot_token.txt, or create a bot with "
-        "@BotFather and paste the token in the app's Share popover, then "
-        "try again.")
+        "No Telegram bot token found. Paste the token @BotFather gave you "
+        "into ~/Documents/telegrambot/bot_token.txt (one line; lines "
+        "starting with # are ignored), or paste it in the app's Share "
+        "popover, then try again.")
 
 
 def _httpx_post(url: str, *, data: Optional[dict] = None,
@@ -161,6 +217,52 @@ DEFAULT_GROUPS_PATH = Path.home() / ".cache" / "telegram_bot_groups.json"
 
 _GROUP_CHAT_TYPES = ("group", "supergroup")
 _BOT_GONE_STATUSES = ("left", "kicked")
+
+
+def load_group_ids_from_file(
+        groups_path: Optional[Any] = None) -> list:
+    """Return the broadcast group chat IDs from ``group_ids.txt``.
+
+    #184: the Bot API has no "list my groups" call, so this plain file is
+    the reliable source of broadcast targets. A missing file is created
+    empty with a guidance header (one chat ID per line; get an ID by
+    forwarding a group message to @getmyid_bot) and ``[]`` is returned.
+    Blank lines and ``#`` comments are skipped. A non-empty line that is
+    not a valid integer raises TelegramShareError naming the file and the
+    offending line(s) — never a silent skip.
+
+    ``groups_path`` overrides the default file location (for tests).
+    """
+    path = (Path(groups_path) if groups_path is not None
+            else DEFAULT_GROUP_IDS_PATH)
+    if not path.exists():
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(GROUP_IDS_FILE_HEADER, encoding="utf-8")
+        except OSError:
+            pass  # best-effort; an uncreatable location just yields []
+        return []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return []
+    ids = []
+    bad = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        try:
+            ids.append(int(stripped))
+        except ValueError:
+            bad.append(f"line {lineno}: {stripped!r}")
+    if bad:
+        raise TelegramShareError(
+            f"Invalid chat ID(s) in {path}: "
+            + "; ".join(bad)
+            + ". Each non-comment line must be one Telegram chat ID "
+            "(e.g. -1001234567890).")
+    return ids
 
 
 def _load_known_group_ids(groups_path: Path) -> set:
