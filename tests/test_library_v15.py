@@ -1762,8 +1762,10 @@ def test_actions_row_buttons_share_38px_height(monkeypatch):
     css = _capture_library_css(lui, monkeypatch)
     # The lib-actions marker rule is gone…
     assert '[data-marker="lib-actions"]' not in css
-    # …and the flat-layout link-button height rule stays gone.
-    assert '[data-testid="stLinkButton"] a' not in css
+    # …and the flat-layout link-button height rule stays gone: it was
+    # scoped to the lib-actions marker, which no longer exists.
+    # (#134 adds a DIFFERENT [data-testid="stLinkButton"] a rule for
+    # news-link chips in hscroll rows — unrelated to the actions row.)
     assert lui._LIB_ACTION_BTN_H_PX == 38
 
 
