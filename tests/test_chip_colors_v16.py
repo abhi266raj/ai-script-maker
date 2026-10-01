@@ -109,11 +109,12 @@ def test_chip_text_contrast_meets_wcag_aa():
 
 def test_x_clearance_rules_untouched():
     """#25/#26 (as redesigned by #51): the × clearance lives in the
-    chip's own padding-right (34px, chip-scoped) — the × sits inside the
+    chip's own padding-right (44px, chip-scoped — #68 follow-up: the
+    user asked for more space for the ×) — the × sits inside the
     pill, so tag text can never slide underneath it."""
     css = _capture_library_css()
     assert 'div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])' in css
-    assert "padding-right: 34px !important;" in css
+    assert "padding-right: 44px !important;" in css
     assert "padding-right: 30px" not in css
     assert "padding-right: 26px" not in css
 

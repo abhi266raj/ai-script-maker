@@ -157,9 +157,9 @@ def test_chip_theme_colors_preserved():
 
 def test_chip_no_truncation_guarantee_preserved():
     """#25/#26: chips stay single-line with ellipsis; the label clears the
-    × via the pill's own 34px padding-right."""
+    × via the pill's own 44px padding-right (#68 follow-up)."""
     css = _capture_library_css()
     for needle in ("white-space: nowrap !important;",
                    "text-overflow: ellipsis;",
-                   "padding-right: 34px !important;"):
+                   "padding-right: 44px !important;"):
         assert needle in css, needle
