@@ -3548,6 +3548,7 @@ with col_output:
                             name=step.get("name", ""))
                         status_text.markdown(f"**{_ev_label}**")
                         status_box.update(label=_ev_label)
+                        live_tracker_box.empty()
                         with live_tracker_box.container():
                             st.markdown(f"### {_ev_label}")
                             for _sn in range(1, _ev_stage + 1):
@@ -3561,6 +3562,7 @@ with col_output:
                         # Stage started: live heading + fresh tracker.
                         _label = _live_stage_heading(step_num)
                         _init_live_stage(step_num)
+                        live_tracker_box.empty()
                         with live_tracker_box.container():
                             st.markdown(f"### {_label}")
                             for _sn in range(1, step_num + 1):
@@ -3578,6 +3580,7 @@ with col_output:
                                 if _ent.get("status") == "running":
                                     _ent["status"] = "pass"
                                     _ent["detail"] = _ent.get("detail") or "Completed"
+                        live_tracker_box.empty()
                         with live_tracker_box.container():
                             st.markdown(f"### {_label}")
                             for _sn in range(1, step_num + 1):
@@ -3595,6 +3598,7 @@ with col_output:
                         _sdata["retry_count"] = step.get("retry_count", 0)
                         st.session_state._stage_outputs[step_num] = _sdata
                     if st.session_state._stage_outputs:
+                        stage_output_box.empty()
                         with stage_output_box.container():
                             _render_cumulative_preview(
                                 st.session_state._stage_outputs, key_prefix="live_")
@@ -3632,6 +3636,7 @@ with col_output:
                     "failed_substep": _f_sub,
                 }
                 status_box.update(label=_fail_label, state="error")
+                live_tracker_box.empty()
                 with live_tracker_box.container():
                     st.markdown(f"### {_fail_label}")
                     _render_live_tracker(_f_step)
