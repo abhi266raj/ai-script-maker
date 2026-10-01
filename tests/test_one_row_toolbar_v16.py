@@ -87,6 +87,11 @@ def _story(monkeypatch, lui, **meta_over):
     monkeypatch.setattr(lui.lib, "load_story",
                         lambda sid: {"meta": meta, "script": "hello"})
     monkeypatch.setattr(lui.lib, "load_prefs", lambda: {})
+    # #104: the Full Script section renders per-version now; stub the
+    # versions call so detail renders don't hit the real id check.
+    monkeypatch.setattr(lui.lib, "get_script_versions",
+                        lambda sid: ([{"n": 1, "text": "hello",
+                                       "created_at": ""}], 1))
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: None)
 
