@@ -240,14 +240,18 @@ def inject_library_css() -> None:
     /* Horizontal scroll rows (hashtags / images / news links). Marker-scoped:
        a hidden [data-marker="lib-hscroll"] div sits directly before the
        st.columns() call, so these rules NEVER touch any other horizontal
-       block. Columns become non-wrapping flex items that scroll on overflow. */
+       block. Columns become non-wrapping flex items that scroll on overflow.
+       The row renders as a quiet tray (translucent neutral = theme-safe),
+       giving the stacked sections a layered z-axis read instead of flat. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"] {
         flex-wrap: nowrap !important;
         overflow-x: auto !important;
         gap: var(--lib-chip-gap) !important;
-        padding: 2px 2px 10px 2px !important;
+        padding: 10px 10px 12px 10px !important;
         align-items: start !important;
+        background: rgba(128, 128, 128, 0.08) !important;
+        border-radius: 14px !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"] > div[data-testid="column"] {
@@ -271,31 +275,61 @@ def inject_library_css() -> None:
         color: inherit !important;
         text-decoration: underline;
     }
-    /* × / ✎ overlay buttons at the card's top corners: absolute, quiet,
-       theme-safe (translucent neutral, inherits text color). */
+    /* Image cards: one uniform size so every card in the row shares a
+       baseline. Columns holding an image become fixed 180px cards; the
+       image covers a 120px-tall frame (cropped, never distorted) with
+       rounded corners. Scoped by :has(stImage) — no Python change needed. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
-        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
-        > div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
-        + div[data-testid="stElementContainer"] {
-        position: absolute !important;
-        top: 0 !important;
-        right: 0 !important;
-        width: auto !important;
-        z-index: 2;
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"]
+        div[data-testid="column"]:has([data-testid="stImage"]) {
+        flex: 0 0 180px !important;
+        width: 180px !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
-        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
-        > div[data-testid="stElementContainer"]:has([data-marker="lib-x-l"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"]
+        div[data-testid="column"]:has([data-testid="stImage"])
+        [data-testid="stImage"] img {
+        width: 100% !important;
+        height: 120px !important;
+        object-fit: cover !important;
+        border-radius: 10px !important;
+        display: block !important;
+    }
+    /* × / ✎ overlay buttons float OVER their card: the button's element
+       container (the sibling immediately after the marker's container) is
+       lifted out of flow and pinned to the card's top corner, ABOVE the
+       content in z-order. Descendant combinators (not child ">") are used
+       past the column because Streamlit nests element containers inside
+       the column's vertical block — a child selector misses and the button
+       would degrade to an in-flow button beside the card instead of over
+       it. Quiet and theme-safe (translucent neutral, inherits text color,
+       blurred backdrop + soft shadow so it reads over busy images). */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"]
+        div[data-testid="column"]:has([data-marker="lib-x-r"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
         + div[data-testid="stElementContainer"] {
         position: absolute !important;
-        top: 0 !important;
-        left: 0 !important;
+        top: 4px !important;
+        right: 4px !important;
         width: auto !important;
-        z-index: 2;
+        z-index: 10 !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
-        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
-        > div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"]
+        div[data-testid="column"]:has([data-marker="lib-x-l"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-l"])
+        + div[data-testid="stElementContainer"] {
+        position: absolute !important;
+        top: 4px !important;
+        left: 4px !important;
+        width: auto !important;
+        z-index: 10 !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"]
+        div[data-testid="column"]
+        div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
         width: var(--lib-x-size) !important;
         height: var(--lib-x-size) !important;
@@ -305,17 +339,21 @@ def inject_library_css() -> None:
         border-radius: 999px !important;
         font-size: 13px !important;
         line-height: 1 !important;
-        background: rgba(128, 128, 128, 0.25) !important;
+        background: rgba(128, 128, 128, 0.35) !important;
+        -webkit-backdrop-filter: blur(6px) !important;
+        backdrop-filter: blur(6px) !important;
+        box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25) !important;
         color: inherit !important;
-        border: 1px solid rgba(128, 128, 128, 0.4) !important;
+        border: 1px solid rgba(128, 128, 128, 0.45) !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
-        [data-testid="stHorizontalBlock"] > div[data-testid="column"]
-        > div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
+        + div[data-testid="stElementContainer"] [data-testid="stHorizontalBlock"]
+        div[data-testid="column"]
+        div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
-        background: rgba(128, 128, 128, 0.45) !important;
+        background: rgba(128, 128, 128, 0.55) !important;
         color: inherit !important;
-        border-color: rgba(128, 128, 128, 0.65) !important;
+        border-color: rgba(128, 128, 128, 0.7) !important;
     }
     /* Detail action buttons (Share/Copy) share the same system: one
        button height (--lib-act-h), one gap, top-aligned in their columns.
@@ -328,8 +366,11 @@ def inject_library_css() -> None:
         gap: var(--lib-chip-gap) !important;
         align-items: start !important;
     }
+    /* FIX (v1.5.2): the "+ div" sibling step was missing, so this rule
+       never matched — the WhatsApp link button now shares the 38px
+       action height with the copy buttons. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-actions"])
-        [data-testid="stLinkButton"] > a {
+        + div[data-testid="stElementContainer"] [data-testid="stLinkButton"] > a {
         min-height: var(--lib-act-h) !important;
         display: inline-flex !important;
         align-items: center !important;
@@ -599,9 +640,12 @@ def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     """Tiny ×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).
 
     ``marker`` is "lib-x-r" (top-right) or "lib-x-l" (top-left); the marker
-    div sits directly before the button so the CSS can position exactly this
-    button. If the selector ever misses, it degrades to a normal small
-    button — never broken.
+    div sits directly before the button so the CSS can pin exactly this
+    button's element container absolute over the card (z-index above the
+    content). Descendant selectors are used past the column because
+    Streamlit nests element containers inside the column's vertical block.
+    If the selector ever misses, it degrades to a normal small button —
+    never broken.
     """
     st.markdown(f'<div data-marker="{marker}" style="display:none"></div>',
                 unsafe_allow_html=True)
@@ -1075,7 +1119,7 @@ def _copy_button(label: str, text: str, key: str) -> None:
     payload = _json.dumps(text)
     btn_id = f"libcp-{key}"
     components.html(
-        f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;padding:7px 4px;border:1px solid rgba(0,0,0,0.12);
+        f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;box-sizing:border-box;padding:7px 4px;border:1px solid rgba(0,0,0,0.12);
         border-radius:8px;background:rgba(255,255,255,0.72);color:#1d1d1f;cursor:pointer;font-size:13px;
         font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;">{_html.escape(label)}</button>
         <script>
@@ -1093,7 +1137,7 @@ def _copy_button(label: str, text: str, key: str) -> None:
             setTimeout(() => {{ b.textContent = old; }}, 1500);
         }});
         </script>""",
-        height=50,
+        height=_LIB_ACTION_BTN_H_PX,
     )
 
 
