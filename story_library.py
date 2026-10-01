@@ -424,8 +424,8 @@ def _og_image(article_url: str, timeout: float = 8.0) -> Optional[str]:
     return None
 
 
-def _enrich_worker(story_id: str, topic: str) -> None:
-    """Fetch news links + images + trending hashtags; write back to the story.
+def _enrich_worker(story_id: str, topic: str, do_work) -> None:
+    """Run do_work under the per-story lock; write back to the story.
 
     The story's enrichment_status is ALWAYS flipped to done at the end —
     even if every fetch fails — so the UI never sticks on "pending".
@@ -434,7 +434,7 @@ def _enrich_worker(story_id: str, topic: str) -> None:
     if not lock.acquire(blocking=False):
         return
     try:
-        _do_enrich(story_id, topic)
+        do_work(story_id, topic)
     finally:
         try:
             update_story_fields(story_id, enrichment_status="done")
@@ -550,6 +550,28 @@ def refresh_images(story_id: str, topic: str = "") -> bool:
     return True
 
 
+def _do_media_refresh(story_id: str, topic: str) -> None:
+    """Retry path: refresh hashtags + images ONLY.
+
+    Never touches news_links and never touches the story content.
+    """
+    image_urls = _fetch_article_images(_fetch_news_articles(topic, limit=6))
+    new_tags = _fetch_trending_hashtags(topic)
+    story = load_story(story_id)
+    if not story:
+        return
+    meta = story["meta"]
+    merged_tags = list(meta.get("hashtags") or [])
+    for t in new_tags:
+        if t not in merged_tags:
+            merged_tags.append(t)
+    update_story_fields(
+        story_id,
+        image_urls=image_urls or meta.get("image_urls") or [],
+        hashtags=merged_tags,
+    )
+
+
 def _do_enrich(story_id: str, topic: str) -> None:
     articles = _fetch_news_articles(topic, limit=6)
     news_links: List[Dict[str, str]] = []
@@ -585,7 +607,7 @@ def start_enrichment(story_id: str, topic: str) -> bool:
             update_story_fields(story_id, enrichment_status="done")
             return False
         t = threading.Thread(
-            target=_enrich_worker, args=(story_id, topic.strip()),
+            target=_enrich_worker, args=(story_id, topic.strip(), _do_enrich),
             daemon=True, name=f"enrich-{story_id}")
         _ENRICH_THREADS[story_id] = t
         t.start()
@@ -595,10 +617,23 @@ def start_enrichment(story_id: str, topic: str) -> bool:
 
 
 def retry_enrichment(story_id: str) -> bool:
-    """Re-run the hashtag + image (+ news links) fetch for a story."""
+    """Re-run the hashtag + image fetch for a story — and nothing else.
+
+    News links and the story content are never touched by a retry.
+    """
     story = load_story(story_id)
     if not story:
         return False
-    topic = story["meta"].get("source_topic") or story["meta"].get("title") or ""
-    update_story_fields(story_id, enrichment_status="pending")
-    return start_enrichment(story_id, topic)
+    topic = (story["meta"].get("source_topic") or story["meta"].get("title") or "").strip()
+    if not topic:
+        return False
+    try:
+        _check_id(story_id)
+        update_story_fields(story_id, enrichment_status="pending")
+        t = threading.Thread(
+            target=_enrich_worker, args=(story_id, topic, _do_media_refresh),
+            daemon=True, name=f"retry-{story_id}")
+        t.start()
+        return True
+    except Exception:
+        return False
