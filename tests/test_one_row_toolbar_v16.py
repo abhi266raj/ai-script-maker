@@ -68,7 +68,7 @@ def _ui_with_recording_st(clicks=()):
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
                      "link_button", "code", "image", "video", "text_area",
-                     "text_input", "file_uploader", "radio"):
+                     "text_input", "file_uploader", "radio", "divider"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod

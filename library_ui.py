@@ -61,6 +61,8 @@ _TB_ICON_NEWS = ":material/newspaper:"       # Update News
 _TB_ICON_RESET = ":material/refresh:"        # Reset
 _TB_ICON_SHARE = ":material/share:"          # Share
 _TB_ICON_COPY = ":material/content_copy:"    # Copy
+_TB_ICON_CHAT = ":material/chat:"            # Send via WhatsApp (#78)
+_TB_ICON_SEND = ":material/send:"            # Share via Telegram (#78)
 _TB_ICON_DELETE = ":material/delete:"        # Delete
 _TB_ICON_UPLOAD = ":material/upload:"        # Upload (#114)
 _TB_ICON_EDIT = ":material/edit:"            # Edit title/script (no emoji)
@@ -2425,13 +2427,16 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
 
 
 def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
-    """Share dropdown (native popover, macOS HIG): sub-actions for the
+    """Share menu (native popover, macOS HIG): sub-actions for the
     story's news-links + hashtags share text.
 
-    #90/#111: the trigger is icon-only (native material share icon via
-    # ``icon=`` with an empty text label); the tooltip keeps the "Share"
-    # label. Streamlit's popover natively renders its own chevron, so
-    # nothing is baked into the label (#46).
+    #78: redesigned from a plain button stack into a real menu — icon-led
+    rows (leading Material icon + label, no button chrome), with a divider
+    separating the Copy action from the share destinations. #90/#111: the
+    trigger is icon-only (native material share icon via ``icon=`` with an
+    empty text label); the tooltip keeps the "Share" label. Streamlit's
+    popover natively renders its own chevron, so nothing is baked into the
+    label (#46).
 
     The redundant st.code(share_text) preview is gone (#27) — the dedicated
     Hashtags / News Links sections already show that content, and the text
@@ -2460,6 +2465,9 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
         if share_text:
             _copy_button("Copy News Link + Hashtags", share_text,
                          f"n-{story_id}")
+            # #78: the copy action is separated from the share destinations
+            # by a divider — the menu reads as two groups, not one stack.
+            st.divider()
             if _whatsapp_app_installed():
                 # #139/#144: a real button, not an anchor. The click runs
                 # _open_whatsapp_share on the server (which runs on the
@@ -2470,6 +2478,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                 # routing the custom URL scheme, which proved unreliable.
                 if st.button(
                     "Send via WhatsApp",
+                    icon=_TB_ICON_CHAT,
                     key=f"lib_wa_{story_id}",
                     help="Share via WhatsApp — opens the Mac app when "
                          "installed, otherwise your browser",
@@ -2518,6 +2527,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
             if _tg_token:
                 if st.button(
                     "Share via Telegram",
+                    icon=_TB_ICON_SEND,
                     key=f"lib_tg_{story_id}",
                     help="Send the video + caption, then the news links, "
                          "to Telegram via your bot — also broadcast to "
@@ -2571,15 +2581,17 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
 
 
 def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
-    """Copy dropdown (native popover, macOS HIG): Script / Script + Tags /
+    """Copy menu (native popover, macOS HIG): Script / Script + Tags /
     Script + Media / All — the same one-click copy texts as before, now
-    revealed as sub-actions.
+    presented as menu rows.
 
-    #90/#111: the trigger is icon-only (native material content_copy icon
-    via ``icon=`` with an empty text label); the tooltip keeps the "Copy"
-    label. Streamlit's native chevron is the only indicator (#46). Each
-    copy button owns its loading state ("Copied ✓") via _copy_button —
-    no second click.
+    #78: redesigned from a plain button stack into a real menu — each
+    sub-action is an icon-led row (leading copy icon + label, no button
+    chrome, hover highlight). #90/#111: the trigger is icon-only (native
+    material content_copy icon via ``icon=`` with an empty text label);
+    the tooltip keeps the "Copy" label. Streamlit's native chevron is the
+    only indicator (#46). Each copy row owns its loading state
+    ("Copied ✓") via _copy_button — no second click.
     """
     with st.popover("", icon=_TB_ICON_COPY, key=f"lib_copypop_{story_id}",
                      help="Copy the screenplay in different formats",
@@ -2608,40 +2620,45 @@ def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
 _LIB_ACTION_BTN_H_PX = 38
 
 
-def _copy_button(label: str, text: str, key: str) -> None:
-    """One-click copy-to-clipboard button (clipboard API with execCommand fallback).
+def _copy_button_html(label: str, text: str, key: str) -> str:
+    """Pure HTML for the _copy_button menu row (no Streamlit dependency).
 
-    #129: theme-aware — detects Streamlit's rendered theme (light/dark)
-    from the parent document and applies matching styles. Falls back to
-    the light appearance if theme detection fails (e.g. cross-origin).
-    Never hardcodes a single-theme color.
+    Split out so tests can assert the menu-row markup without importing
+    streamlit.components.v1.
     """
     import html as _html
     import json as _json
-    import streamlit.components.v1 as components
     payload = _json.dumps(text)
     btn_id = f"libcp-{key}"
-    components.html(
-        f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;box-sizing:border-box;padding:7px 4px;
-        border-radius:8px;cursor:pointer;font-size:13px;
-        font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;">{_html.escape(label)}</button>
+    # Material Symbols "content_copy" outline, drawn with currentColor so
+    # the glyph follows the theme text color — never a hardcoded fill.
+    _COPY_SVG = (
+        '<svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"'
+        ' aria-hidden="true"><path d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4'
+        'H8c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2'
+        'zm0 16H8V7h11v14z"/></svg>'
+    )
+    return (
+        f"""<button id="{btn_id}" style="width:100%;min-height:{_LIB_ACTION_BTN_H_PX}px;box-sizing:border-box;
+        display:flex;align-items:center;gap:10px;padding:7px 10px;margin:0;
+        background:transparent;border:none;border-radius:8px;cursor:pointer;
+        font-size:13px;text-align:left;
+        font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text',sans-serif;"
+        >{_COPY_SVG}<span id="{btn_id}-lbl">{_html.escape(label)}</span></button>
+        <style>#{btn_id}:hover{{background:rgba(0,0,0,0.05);}}
+        #{btn_id}[data-dark="1"]:hover{{background:rgba(255,255,255,0.10);}}
+        #{btn_id}:focus-visible{{outline:2px solid currentColor;outline-offset:-2px;}}</style>
         <script>
         (function() {{
             const btn = document.getElementById("{btn_id}");
+            const lbl = document.getElementById("{btn_id}-lbl");
             function applyTheme() {{
                 let dark = false;
                 try {{
                     dark = window.parent.document.body.getAttribute('data-theme') === 'dark';
                 }} catch (e) {{}}
-                if (dark) {{
-                    btn.style.background = 'rgba(255,255,255,0.10)';
-                    btn.style.color = '#FAF7F0';
-                    btn.style.border = '1px solid rgba(255,255,255,0.22)';
-                }} else {{
-                    btn.style.background = 'rgba(255,255,255,0.72)';
-                    btn.style.color = '#1d1d1f';
-                    btn.style.border = '1px solid rgba(0,0,0,0.12)';
-                }}
+                btn.setAttribute("data-dark", dark ? "1" : "0");
+                btn.style.color = dark ? '#FAF7F0' : '#1d1d1f';
             }}
             applyTheme();
             try {{
@@ -2658,15 +2675,34 @@ def _copy_button(label: str, text: str, key: str) -> None:
                     try {{ document.execCommand("copy"); }} catch (_e) {{}}
                     ta.remove();
                 }}
-                const old = btn.textContent; btn.textContent = "Copied \\u2713";
-                setTimeout(() => {{ btn.textContent = old; }}, 1500);
+                const old = lbl.textContent; lbl.textContent = "Copied \\u2713";
+                setTimeout(() => {{ lbl.textContent = old; }}, 1500);
             }});
         }})();
-        </script>""",
-        height=_LIB_ACTION_BTN_H_PX,
+        </script>"""
     )
 
 
+def _copy_button(label: str, text: str, key: str) -> None:
+    """One-click copy-to-clipboard menu row (clipboard API with execCommand fallback).
+
+    #78: redesigned from a plain button into an Apple-HIG menu row —
+    leading copy icon + label, no button chrome, hover highlight, so the
+    Share/Copy popovers read as menus instead of button stacks. #129:
+    theme-aware — detects Streamlit's rendered theme (light/dark) from
+    the parent document and applies matching styles. Falls back to the
+    light appearance if theme detection fails (e.g. cross-origin). Never
+    hardcodes a single-theme color; the icon uses ``currentColor``.
+
+    The click still copies one-click and morphs the row label to
+    "Copied ✓" for 1.5s (#30) — the initiating row owns its feedback, no
+    second click.
+    """
+    import streamlit.components.v1 as components
+    components.html(
+        _copy_button_html(label, text, key),
+        height=_LIB_ACTION_BTN_H_PX,
+    )
 # v1.6 (#38, #46, #53, #80) / v1.6.2 (#90): story-detail toolbar column
 # weights. Streamlit ellipsizes ("…") any button/popover label wider than
 # its column, so every action column is weighted to fit its label — #53:
