@@ -1863,8 +1863,7 @@ def _whatsapp_share_url(text: str) -> str:
     with the text prefilled. Unlike wa.me links, which always resolve in
     the browser (WhatsApp Web flow) even when the app is installed, the
     native scheme never touches the browser. No connection or connector
-    needed. The user explicitly declined any wa.me fallback — there is
-    none here.
+    needed.
 
     Note (#95): this URL must never go through st.link_button, which
     forces a new browser tab and defeats the deep link.
@@ -1873,53 +1872,90 @@ def _whatsapp_share_url(text: str) -> str:
     return "whatsapp://send?text=" + _up.quote(text, safe="")
 
 
-def _open_whatsapp_share(text: str) -> None:
-    """Hand the share text to the installed WhatsApp Mac app.
+def _whatsapp_web_share_url(text: str) -> str:
+    """wa.me share link carrying the EXACT share text (URL-encoded).
 
-    #139: the Streamlit server runs on the user's Mac, so we route the
-    ``whatsapp://send?text=`` deep link through macOS LaunchServices via
-    the ``open`` command. ``open`` launches WhatsApp with the text
-    prefilled and returns immediately; the user picks the chat in the
-    app. This replaces the old plain-anchor approach, which depended on
-    the *browser* routing the custom URL scheme — unreliable across
-    browsers — and proved broken.
+    #144: browser fallback when the native app handoff fails — wa.me
+    opens WhatsApp (Web, or the installed app if the browser routes the
+    link there) with the text prefilled. The user explicitly requested
+    this fallback (#144), reversing the earlier no-fallback rule.
+    """
+    import urllib.parse as _up
+    return "https://wa.me/?text=" + _up.quote(text, safe="")
 
-    Fails loudly: a non-macOS platform, a missing ``open`` command, a
-    timeout, or a non-zero exit (e.g. no app registered for the
-    whatsapp:// scheme) all raise RuntimeError carrying the underlying
-    detail. Never a silent no-op, never a wa.me browser fallback.
+
+def _open_whatsapp_share(text: str) -> str:
+    """Share via WhatsApp: native app first, browser fallback, loud failure.
+
+    #139/#144: the Streamlit server runs on the user's Mac. First tries
+    the installed WhatsApp Mac app: the ``whatsapp://send?text=`` deep
+    link is handed to macOS LaunchServices via the ``open`` command,
+    which launches WhatsApp with the text prefilled and returns
+    immediately; the user picks the chat in the app. This replaced the
+    old plain-anchor approach, which depended on the *browser* routing
+    the custom URL scheme — unreliable across browsers — and proved
+    broken.
+
+    #144: if the app cannot be opened (non-zero exit, timeout, missing
+    ``open`` command, no scheme handler — or a non-macOS server where
+    the app path can't work), falls back to opening
+    ``https://wa.me/?text=`` in the browser. The user explicitly
+    requested this browser fallback, reversing the earlier no-fallback
+    rule.
+
+    Returns "app" or "browser" naming the path that worked, so the
+    caller can confirm honestly. Raises RuntimeError only when BOTH
+    paths fail, carrying both failures' details. Never a silent no-op.
     """
     import platform as _platform
     import shutil as _shutil
     import subprocess as _sp
+    import webbrowser as _wb
 
-    if _platform.system() != "Darwin":
-        raise RuntimeError(
-            "WhatsApp handoff needs macOS (`open`); this server runs on "
-            f"{_platform.system()}."
+    failures = []
+
+    # Path 1 — native app handoff (macOS only).
+    opener = _shutil.which("open") if _platform.system() == "Darwin" else None
+    if opener is not None:
+        url = _whatsapp_share_url(text)
+        try:
+            proc = _sp.run(
+                [opener, url],
+                capture_output=True, text=True, timeout=15,
+            )
+        except _sp.TimeoutExpired as e:
+            failures.append(f"app handoff timed out after 15s: {e}")
+        except OSError as e:
+            failures.append(f"couldn't launch `open`: {e}")
+        else:
+            if proc.returncode == 0:
+                return "app"
+            detail = (proc.stderr or proc.stdout or "").strip()
+            failures.append(
+                "`open` couldn't hand off to WhatsApp "
+                f"(exit {proc.returncode})"
+                + (f": {detail}" if detail else
+                   ". Is WhatsApp installed and registered for whatsapp:// links?")
+            )
+    else:
+        failures.append(
+            "native app handoff needs macOS `open` "
+            f"(server runs on {_platform.system()})"
         )
-    opener = _shutil.which("open")
-    if opener is None:
-        raise RuntimeError("macOS `open` command not found on PATH.")
-    url = _whatsapp_share_url(text)
+
+    # Path 2 — browser fallback (#144).
+    web_url = _whatsapp_web_share_url(text)
     try:
-        proc = _sp.run(
-            [opener, url],
-            capture_output=True, text=True, timeout=15,
-        )
-    except _sp.TimeoutExpired as e:
-        raise RuntimeError(
-            f"`open` timed out handing off to WhatsApp: {e}")
-    except OSError as e:
-        raise RuntimeError(f"couldn't launch `open`: {e}")
-    if proc.returncode != 0:
-        detail = (proc.stderr or proc.stdout or "").strip()
-        raise RuntimeError(
-            "`open` couldn't hand off to WhatsApp "
-            f"(exit {proc.returncode})"
-            + (f": {detail}" if detail else
-               ". Is WhatsApp installed and registered for whatsapp:// links?")
-        )
+        if _wb.open(web_url):
+            return "browser"
+        failures.append("browser launch reported failure opening the wa.me link")
+    except Exception as e:
+        failures.append(f"browser fallback failed: {type(e).__name__}: {e}")
+
+    raise RuntimeError(
+        "Couldn't share via WhatsApp: the app handoff and the browser "
+        "fallback both failed (" + "; ".join(failures) + ")."
+    )
 
 
 @_lru_cache(maxsize=1)
@@ -1991,7 +2027,8 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
     stays one click away via "Copy News Link + Hashtags". "Send via WhatsApp"
     hands the share text to the installed WhatsApp Mac app (#28) via a
     server-side ``open`` of the whatsapp:// deep link (#139) — no browser
-    tab involved (#95), no wa.me fallback (user declined).
+    tab involved (#95) — with a wa.me browser fallback when the app can't
+    be opened (#144).
     """
     with st.popover("", icon=_TB_ICON_SHARE, key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
@@ -2000,30 +2037,35 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
             _copy_button("Copy News Link + Hashtags", share_text,
                          f"n-{story_id}")
             if _whatsapp_app_installed():
-                # #139: a real button, not an anchor. The click runs
+                # #139/#144: a real button, not an anchor. The click runs
                 # _open_whatsapp_share on the server (which runs on the
-                # user's Mac): macOS `open` routes the whatsapp:// deep
-                # link through LaunchServices straight to the app. The old
-                # plain-anchor approach depended on the *browser* routing
-                # the custom URL scheme, which proved unreliable.
+                # user's Mac): first the whatsapp:// deep link is handed
+                # to macOS `open` for the installed app; if the app can't
+                # be opened, a wa.me link opens in the browser instead.
+                # The old plain-anchor approach depended on the *browser*
+                # routing the custom URL scheme, which proved unreliable.
                 if st.button(
                     "Send via WhatsApp",
                     key=f"lib_wa_{story_id}",
-                    help="Open the installed WhatsApp Mac app with this "
-                         "text prefilled",
+                    help="Share via WhatsApp — opens the Mac app when "
+                         "installed, otherwise your browser",
                     use_container_width=True,
                 ):
                     try:
-                        _open_whatsapp_share(share_text)
+                        _how = _open_whatsapp_share(share_text)
                     except RuntimeError as e:
-                        st.error(f"Couldn't open WhatsApp: {e}")
+                        st.error(f"Couldn't share via WhatsApp: {e}")
                     else:
-                        st.toast("WhatsApp opened — pick a chat to send.")
+                        if _how == "app":
+                            st.toast("WhatsApp opened — pick a chat to send.")
+                        else:
+                            st.toast("Opening WhatsApp in your browser — "
+                                     "pick a chat to send.")
             else:
-                # Fail loudly: never a dead link, never a silent browser
-                # fallback (wa.me) — the user asked for direct app handoff.
+                # Fail loudly: never a dead link. The app may still open
+                # via the browser fallback when clicked.
                 st.caption("WhatsApp Mac app not installed — "
-                           "install it to send via WhatsApp.")
+                           "sharing will open WhatsApp in your browser.")
         else:
             st.caption("No news links or hashtags to share yet.")
 

@@ -1437,7 +1437,7 @@ def test_share_popover_whatsapp_click_opens_with_exact_text(monkeypatch):
     monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share",
-                        lambda text: opened.append(text))
+                        lambda text: opened.append(text) or "app")
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
     lui._render_share_popover("sid1", share_text)
     assert opened == [share_text]
@@ -1445,17 +1445,32 @@ def test_share_popover_whatsapp_click_opens_with_exact_text(monkeypatch):
     assert fake.errors == []
 
 
+def test_share_popover_whatsapp_browser_fallback_toast(monkeypatch):
+    # #144: when the app path fails and the browser fallback is used, the
+    # toast says so honestly instead of claiming the app opened.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share", lambda text: "browser")
+    lui._render_share_popover("sid1", "https://example.com/a")
+    assert fake.toasts == [("Opening WhatsApp in your browser \u2014 "
+                            "pick a chat to send.", None)]
+    assert fake.errors == []
+
+
 def test_share_popover_whatsapp_click_failure_is_loud(monkeypatch):
-    # #139: if the handoff fails, the error is loud - never silent.
+    # #139/#144: if both the app handoff and the browser fallback fail,
+    # the error is loud - never silent.
     lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
     def _boom(text):
-        raise RuntimeError("no handler for whatsapp://")
+        raise RuntimeError("app handoff and browser fallback both failed")
     monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share", _boom)
     lui._render_share_popover("sid1", "https://example.com/a")
     assert fake.errors == [
-        "Couldn't open WhatsApp: no handler for whatsapp://"]
+        "Couldn't share via WhatsApp: app handoff and browser fallback "
+        "both failed"]
     assert fake.toasts == []
 
 
@@ -1464,15 +1479,15 @@ def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key: copies.append((label, text, key)))
-    # #95: no WhatsApp.app → honest inline note; never a dead link, never a
-    # silent wa.me browser fallback (the user asked for direct app handoff).
+    # #144: no WhatsApp.app → honest inline note; the button still works
+    # via the browser fallback when clicked.
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: False)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
     lui._render_share_popover("sid1", share_text)
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
     assert fake.link_buttons == []
     assert not any("whatsapp://" in m for m in fake.markup)
-    assert any("not installed" in c for c in fake.captions)
+    assert any("browser" in c for c in fake.captions)
 
 
 def test_whatsapp_app_installed_detects_applications_dir(monkeypatch):
@@ -1610,7 +1625,8 @@ def test_open_whatsapp_share_calls_open_with_deep_link(monkeypatch):
                         lambda cmd: "/usr/bin/open" if cmd == "open" else None)
     monkeypatch.setattr(_sp, "run", _fake_run)
     text = "https://example.com/a\n\n#DogShowdown #Funny"
-    lui._open_whatsapp_share(text)  # must not raise
+    # #144: app path succeeds -> returns "app".
+    assert lui._open_whatsapp_share(text) == "app"
     assert seen["argv"][0] == "/usr/bin/open"
     url = seen["argv"][1]
     assert url.startswith("whatsapp://send?text=")
@@ -1619,30 +1635,62 @@ def test_open_whatsapp_share_calls_open_with_deep_link(monkeypatch):
     assert up.unquote(url.split("?text=", 1)[1]) == text
 
 
-def test_open_whatsapp_share_non_darwin_raises(monkeypatch):
+def test_whatsapp_web_share_url_carries_exact_text():
+    # #144: browser fallback URL is wa.me with the EXACT share text.
+    lui, _fake = _ui_with_fake_st()
+    text = ("https://example.com/a\nhttps://example.com/b\n\n"
+            "#DogShowdown #Funny")
+    url = lui._whatsapp_web_share_url(text)
+    assert url.startswith("https://wa.me/?text=")
+    assert "whatsapp://" not in url
+    import urllib.parse as up
+    assert up.unquote(url.split("?text=", 1)[1]) == text
+
+
+def test_open_whatsapp_share_non_darwin_uses_browser_fallback(monkeypatch):
+    # #144: non-macOS server can't do the app handoff -> straight to the
+    # browser fallback, which succeeds here.
     lui, _fake = _ui_with_fake_st()
     import platform as _plat
     monkeypatch.setattr(_plat, "system", lambda: "Linux")
+    import webbrowser as _wb
+    seen = {}
+    monkeypatch.setattr(_wb, "open",
+                        lambda url: seen.setdefault("url", url) or True)
+    assert lui._open_whatsapp_share("hi") == "browser"
+    assert seen["url"].startswith("https://wa.me/?text=")
+
+
+def test_open_whatsapp_share_non_darwin_both_fail_is_loud(monkeypatch):
+    # #144: non-Darwin AND browser launch fails -> loud error naming both.
+    lui, _fake = _ui_with_fake_st()
+    import platform as _plat
+    monkeypatch.setattr(_plat, "system", lambda: "Linux")
+    import webbrowser as _wb
+    monkeypatch.setattr(_wb, "open", lambda url: False)
     import pytest as _pt
-    with _pt.raises(RuntimeError, match="needs macOS"):
+    with _pt.raises(RuntimeError, match="browser fallback both failed"):
         lui._open_whatsapp_share("hi")
 
 
-def test_open_whatsapp_share_missing_open_raises(monkeypatch):
+def test_open_whatsapp_share_missing_open_falls_back_to_browser(monkeypatch):
+    # #144: no `open` on PATH -> app path skipped, browser fallback used.
     lui, _fake = _ui_with_fake_st()
     _darwin_platform(monkeypatch)
     import shutil as _shutil
     monkeypatch.setattr(_shutil, "which", lambda cmd: None)
-    import pytest as _pt
-    with _pt.raises(RuntimeError, match="not found on PATH"):
-        lui._open_whatsapp_share("hi")
+    import webbrowser as _wb
+    monkeypatch.setattr(_wb, "open", lambda url: True)
+    assert lui._open_whatsapp_share("hi") == "browser"
 
 
-def test_open_whatsapp_share_open_failure_is_loud(monkeypatch):
+def test_open_whatsapp_share_open_failure_falls_back_to_browser(monkeypatch):
+    # #144: `open` exits non-zero (no scheme handler) -> browser fallback.
     lui, _fake = _ui_with_fake_st()
     _darwin_platform(monkeypatch)
     import shutil as _shutil
     import subprocess as _sp
+    import webbrowser as _wb
 
     class _Result:
         returncode = 1
@@ -1651,25 +1699,51 @@ def test_open_whatsapp_share_open_failure_is_loud(monkeypatch):
 
     monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
     monkeypatch.setattr(_sp, "run", lambda argv, **kw: _Result())
-    import pytest as _pt
-    with _pt.raises(RuntimeError, match="The application does not exist"):
-        lui._open_whatsapp_share("hi")
+    seen = {}
+    monkeypatch.setattr(_wb, "open",
+                        lambda url: seen.setdefault("url", url) or True)
+    assert lui._open_whatsapp_share("hi") == "browser"
+    assert seen["url"].startswith("https://wa.me/?text=")
 
 
-def test_open_whatsapp_share_timeout_is_loud(monkeypatch):
+def test_open_whatsapp_share_both_fail_is_loud(monkeypatch):
+    # #144: app handoff fails AND browser launch fails -> loud error
+    # carrying both failures' details.
     lui, _fake = _ui_with_fake_st()
     _darwin_platform(monkeypatch)
     import shutil as _shutil
     import subprocess as _sp
+    import webbrowser as _wb
+
+    class _Result:
+        returncode = 1
+        stdout = ""
+        stderr = "The application does not exist."
+
+    monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
+    monkeypatch.setattr(_sp, "run", lambda argv, **kw: _Result())
+    monkeypatch.setattr(_wb, "open", lambda url: False)
+    import pytest as _pt
+    with _pt.raises(RuntimeError,
+                    match="The application does not exist.*wa.me"):
+        lui._open_whatsapp_share("hi")
+
+
+def test_open_whatsapp_share_timeout_falls_back_to_browser(monkeypatch):
+    # #144: `open` hangs -> timeout -> browser fallback.
+    lui, _fake = _ui_with_fake_st()
+    _darwin_platform(monkeypatch)
+    import shutil as _shutil
+    import subprocess as _sp
+    import webbrowser as _wb
 
     def _slow(argv, **kwargs):
         raise _sp.TimeoutExpired(cmd=argv, timeout=15)
 
     monkeypatch.setattr(_shutil, "which", lambda cmd: "/usr/bin/open")
     monkeypatch.setattr(_sp, "run", _slow)
-    import pytest as _pt
-    with _pt.raises(RuntimeError, match="timed out"):
-        lui._open_whatsapp_share("hi")
+    monkeypatch.setattr(_wb, "open", lambda url: True)
+    assert lui._open_whatsapp_share("hi") == "browser"
 
 
 def test_whatsapp_app_installed_group_container_signal(monkeypatch):
