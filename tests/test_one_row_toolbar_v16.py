@@ -68,7 +68,7 @@ def _ui_with_recording_st(clicks=()):
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
                      "link_button", "code", "image", "video", "text_area",
-                     "text_input", "file_uploader", "radio"):
+                     "text_input", "file_uploader", "radio", "divider"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -93,7 +93,7 @@ def _story(monkeypatch, lui, **meta_over):
                         lambda sid: ([{"n": 1, "text": "hello",
                                        "created_at": ""}], 1))
     monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: None)
+                        lambda label, text, key, icon=None: None)
 
 
 # ---------------------------------------------------------------------------
@@ -183,7 +183,7 @@ def test_title_edit_toolbar_renders_share_copy(monkeypatch):
 def test_share_copy_labels_have_no_baked_chevron(monkeypatch):
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: None)
+                        lambda label, text, key, icon=None: None)
     lui._render_share_popover("sid1", "https://example.com/a\n\n#X", {})
     lui._render_copy_popover("sid1", {"hashtags": []}, "script")
     labels = [p["label"] for p in fake.popovers]

@@ -114,6 +114,10 @@ class _FakeSt(types.ModuleType):
         # #159: share-progress spinner; a no-op context in tests.
         return _Ctx(self, "spinner", (text,), kwargs)
 
+    def divider(self, **kwargs):
+        # #78: menu section separator inside the Share popover.
+        self.events.append(("divider", kwargs))
+
 
 @pytest.fixture()
 def libdir(tmp_path, monkeypatch):

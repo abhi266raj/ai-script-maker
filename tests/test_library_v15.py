@@ -1068,6 +1068,7 @@ class _FakeSt:
         self.markup = []  # raw markdown html, in render order
         self.captions = []  # caption text, in render order (#95)
         self.toasts = []  # (message, icon) in render order
+        self.dividers = []  # st.divider kwargs, in render order (#78)
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
@@ -1095,6 +1096,10 @@ class _FakeSt:
 
     def toast(self, msg, icon=None):
         self.toasts.append((msg, icon))
+
+    def divider(self, **k):
+        # #78: menu section separators inside the Share popover.
+        self.dividers.append(k)
 
     def columns(self, spec):
         n = spec if isinstance(spec, int) else len(spec)
@@ -1149,7 +1154,7 @@ def _ui_with_fake_st(clicks=()):
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
-                     "link_button", "code", "toast",
+                     "link_button", "code", "toast", "divider",
                      "text_input", "spinner"):  # #159 Telegram setup/share
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
@@ -1433,7 +1438,7 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     lui, fake = _ui_with_fake_st()
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: copies.append((label, text, key)))
+                        lambda label, text, key, icon=None: copies.append((label, text, key)))
     # #95: WhatsApp.app present -> direct deep link, no browser tab.
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
@@ -1463,7 +1468,7 @@ def test_share_popover_whatsapp_click_opens_with_exact_text(monkeypatch):
     # EXACT share text and toasts a confirmation.
     lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
     opened = []
-    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share",
                         lambda text: opened.append(text) or "app")
@@ -1478,7 +1483,7 @@ def test_share_popover_whatsapp_browser_fallback_toast(monkeypatch):
     # #144: when the app path fails and the browser fallback is used, the
     # toast says so honestly instead of claiming the app opened.
     lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
-    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share", lambda text: "browser")
     lui._render_share_popover("sid1", "https://example.com/a", {})
@@ -1493,7 +1498,7 @@ def test_share_popover_whatsapp_click_failure_is_loud(monkeypatch):
     lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
     def _boom(text):
         raise RuntimeError("app handoff and browser fallback both failed")
-    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share", _boom)
     lui._render_share_popover("sid1", "https://example.com/a", {})
@@ -1538,7 +1543,7 @@ def test_share_popover_whatsapp_includes_video_path(monkeypatch, tmp_path):
     # tells the user to attach it manually (URL scheme can't carry media).
     lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
     opened = []
-    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share",
                         lambda text: opened.append(text) or "app")
@@ -1560,7 +1565,7 @@ def test_share_popover_whatsapp_video_missing_is_loud(monkeypatch):
     # #150: video referenced but file missing -> loud error, no handoff.
     lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
     opened = []
-    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key: None)
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
     monkeypatch.setattr(lui, "_open_whatsapp_share",
                         lambda text: opened.append(text) or "app")
@@ -1575,7 +1580,7 @@ def test_share_popover_whatsapp_not_installed_shows_honest_note(monkeypatch):
     lui, fake = _ui_with_fake_st()
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: copies.append((label, text, key)))
+                        lambda label, text, key, icon=None: copies.append((label, text, key)))
     # #144: no WhatsApp.app → honest inline note; the button still works
     # via the browser fallback when clicked.
     monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: False)
@@ -1863,7 +1868,7 @@ def test_whatsapp_app_installed_group_container_signal(monkeypatch):
 def test_share_popover_empty_state(monkeypatch):
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: (_ for _ in ()).throw(
+                        lambda label, text, key, icon=None: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
     lui._render_share_popover("sid1", "", {})
     assert fake.popover_kwargs["label"] == ""
@@ -1876,7 +1881,7 @@ def test_copy_popover_renders_four_actions(monkeypatch):
     lui, fake = _ui_with_fake_st()
     copies = []
     monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: copies.append((label, text, key)))
+                        lambda label, text, key, icon=None: copies.append((label, text, key)))
     meta = {"hashtags": ["#DogShowdown", "#Funny"],
             "image_urls": ["https://example.com/pic.jpg"],
             "uploaded_images": []}
@@ -1902,12 +1907,149 @@ def test_copy_popover_renders_four_actions(monkeypatch):
 def test_copy_popover_empty_state(monkeypatch):
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: (_ for _ in ()).throw(
+                        lambda label, text, key, icon=None: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
     lui._render_copy_popover("sid1", {}, "")
     assert fake.popover_kwargs["label"] == ""
     assert fake.popover_kwargs["icon"] == lui._TB_ICON_COPY
     assert fake.codes == []
+
+
+# ---------------------------------------------------------------------------
+# #78: Share/Copy popovers redesigned as HIG menus
+# ---------------------------------------------------------------------------
+
+def test_share_popover_menu_divider_separates_copy_from_share(monkeypatch):
+    # #78: one divider between the Copy action and the share destinations —
+    # the menu reads as two groups, not one button stack.
+    lui, fake = _ui_with_fake_st()
+    copies = []
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key, icon=None: copies.append((label, text, key)))
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui.lib, "load_prefs", lambda: {})
+    lui._render_share_popover("sid1", "https://example.com/a\n\n#X", {})
+    assert copies == [("Copy News Link + Hashtags",
+                       "https://example.com/a\n\n#X", "n-sid1")]
+    assert len(fake.dividers) == 1
+
+
+def test_share_popover_empty_state_has_no_divider(monkeypatch):
+    # #78: with nothing to share there is a single caption and no menu —
+    # no divider either.
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key, icon=None: (_ for _ in ()).throw(
+                            AssertionError("copy must not render")))
+    lui._render_share_popover("sid1", "", {})
+    assert fake.dividers == []
+    assert fake.captions == ["No news links or hashtags to share yet."]
+
+
+def test_share_popover_action_buttons_are_icon_led_menu_rows(monkeypatch):
+    # #78: the share-destination buttons carry leading Material icons so
+    # each menu row reads as icon + label (HIG menu affordance).
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui.lib, "load_prefs",
+                        lambda: {"telegram_bot_token": "TOK"})
+    lui._render_share_popover("sid1", "https://example.com/a\n\n#X", {})
+    by_key = {k["key"]: k for k in fake.button_kwargs}
+    assert by_key["lib_wa_sid1"]["icon"] == ":material/chat:"
+    assert by_key["lib_tg_sid1"]["icon"] == ":material/send:"
+
+
+def test_copy_popover_menu_divider_before_all(monkeypatch):
+    # #78 (Claude design): the Copy menu reads as two groups — the three
+    # format rows, then a divider, then "All".
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
+    lui._render_copy_popover("sid1", {}, "**Hook:** hello")
+    assert len(fake.dividers) == 1
+
+
+def test_copy_popover_empty_state_has_no_divider(monkeypatch):
+    # #78: with no script there is a single caption and no menu rows —
+    # no divider either.
+    lui, fake = _ui_with_fake_st()
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key, icon=None: (_ for _ in ()).throw(
+                            AssertionError("copy must not render")))
+    lui._render_copy_popover("sid1", {}, "")
+    assert fake.dividers == []
+    assert fake.captions == ["No script to copy yet."]
+
+
+def test_copy_button_html_is_menu_row(monkeypatch):
+    # #78: the copy control is an HIG menu row — the row's own leading
+    # icon + label, no button chrome, theme-safe (currentColor icon, no
+    # hardcoded single-theme colors), and the one-click "Copied ✓"
+    # feedback survives.
+    lui, _fake = _ui_with_fake_st()
+    html = lui._copy_button_html("Script", "hello", "s-x",
+                                 lui._COPY_ROW_ICON_DOC)
+    assert 'id="libcp-s-x"' in html
+    assert "<svg" in html and 'fill="currentColor"' in html
+    assert ">Script</span>" in html
+    assert "background:transparent" in html
+    assert "border:none" in html
+    assert "1px solid rgba(0,0,0,0.12)" not in html  # old button chrome
+    assert "1px solid rgba(255,255,255,0.22)" not in html
+    assert "\\u2713" in html  # "Copied ✓" morph on click
+    assert "navigator.clipboard.writeText" in html
+
+
+def test_copy_button_html_uses_given_row_icon(monkeypatch):
+    # #78 (Claude design): the icon rendered is the one passed in — each
+    # row carries its OWN meaningful icon, never a shared glyph.
+    lui, _fake = _ui_with_fake_st()
+    html = lui._copy_button_html("Script + Tags", "hello", "h-x",
+                                 lui._COPY_ROW_ICON_HASH)
+    assert ">#</text>" in html  # the # glyph, not the document path
+    assert "M14 2H6" not in html  # document icon must NOT leak in
+    html_doc = lui._copy_button_html("Script", "hello", "s-x",
+                                     lui._COPY_ROW_ICON_DOC)
+    assert "M14 2H6" in html_doc
+    assert ">#</text>" not in html_doc
+
+
+def test_copy_button_html_escapes_label_and_embeds_text(monkeypatch):
+    # Markup in the label must not break the row; the copied text is
+    # embedded as a JSON payload (execCommand fallback intact).
+    lui, _fake = _ui_with_fake_st()
+    html = lui._copy_button_html("<b>Hi</b>", 'say "hi"', "s-x",
+                                 lui._COPY_ROW_ICON_DOC)
+    assert "&lt;b&gt;Hi&lt;/b&gt;" in html
+    assert '"say \\"hi\\""' in html  # JSON payload, backslash-escaped quotes
+
+
+def test_copy_button_delegates_to_menu_row_html(monkeypatch):
+    # #78: _copy_button renders _copy_button_html, so the menu-row /
+    # theme properties asserted above are what actually reaches the page.
+    import inspect
+    lui, _fake = _ui_with_fake_st()
+    assert "_copy_button_html(label, text, key, icon)" in inspect.getsource(
+        lui._copy_button)
+
+
+def test_copy_popover_rows_carry_claude_icons_in_order(monkeypatch):
+    # #78 (Claude design): Script → document, Script + Tags → #,
+    # Script + Media → image, All → layers — each row its own icon.
+    lui, fake = _ui_with_fake_st()
+    seen = []
+    monkeypatch.setattr(lui, "_copy_button",
+                        lambda label, text, key, icon=None: seen.append(
+                            (label, icon)))
+    lui._render_copy_popover("sid1", {}, "**Hook:** hello")
+    labels = [s[0] for s in seen]
+    assert labels == ["Script", "Script + Tags", "Script + Media", "All"]
+    icons = [s[1] for s in seen]
+    assert "M14 2H6" in icons[0]      # document
+    assert ">#</text>" in icons[1]     # # glyph
+    assert "M8.5 13.5l2.5" in icons[2]  # image
+    assert "M11.99 18.54" in icons[3]   # layers
+    assert len(set(icons)) == 4  # no shared glyph across rows
 
 
 def test_action_dropdowns_have_no_actions_header(monkeypatch):
