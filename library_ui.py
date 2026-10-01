@@ -2377,12 +2377,14 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
     ``telegram_bot_token`` in prefs; the chat id is discovered once from
     the bot's updates and remembered (``telegram_chat_id``).
 
-    #179: after the DM share, the same two messages are broadcast to every
-    group/supergroup the bot is in (the user's own chat id is skipped —
-    it already got them). Discovery runs on every share so newly joined
-    groups are picked up; a discovery failure must not fail the DM share
-    that already went through — it is reported loudly in the summary
-    instead.
+    #179/#184: after the DM share, the same two messages are broadcast to
+    every group/supergroup the bot is in (the user's own chat id is
+    skipped — it already got them). Targets = chat IDs from
+    ~/Documents/telegrambot/group_ids.txt (one per line) UNION
+    auto-discovered IDs, deduped. Discovery runs on every share so newly
+    joined groups are picked up; a broadcast-stage failure must not fail
+    the DM share that already went through — it is reported loudly in the
+    summary instead.
 
     Raises TelegramShareError (or RuntimeError for a metadata-referenced
     video file missing from disk) with an actionable message on any
@@ -2409,20 +2411,37 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
         _tg.send_text(token, chat_id, links_text)
         n_links = len(links_text.splitlines())
         sent.append(f"{n_links} news link{'s' if n_links != 1 else ''}")
-    # #179: broadcast the same two messages to every group the bot is in.
+    # #179/#184: broadcast the same two messages to every group the bot is
+    # in. Targets = chat IDs from ~/Documents/telegrambot/group_ids.txt
+    # (one per line) UNION auto-discovered IDs, deduped, minus the user's
+    # own chat id (it already got the messages). Discovery runs on every
+    # share so newly joined groups are picked up. A broadcast-stage failure
+    # must not fail the DM share that already went through — it is reported
+    # loudly in the summary instead.
     try:
-        _group_ids = _tg.discover_group_ids(token)
+        _file_ids = _tg.load_group_ids_from_file()
+    except Exception as e:  # malformed file — loud, but keep going
+        sent.append(f"group broadcast skipped (bad group_ids.txt: {e})")
+        _file_ids = []
+    try:
+        _discovered_ids = _tg.discover_group_ids(token)
     except Exception as e:  # auxiliary step — never fail the DM share above
         sent.append(f"group broadcast skipped (couldn't list groups: {e})")
+        _discovered_ids = []
+    _own = str(chat_id)
+    _targets = sorted(g for g in set(_file_ids) | set(_discovered_ids)
+                      if str(g) != _own)
+    if _targets:
+        sent.append(_tg.broadcast_story(
+            token, _targets, video_path=video_path, caption=caption,
+            links_text=links_text))
+    elif _file_ids or _discovered_ids:
+        sent.append("no groups to broadcast to (add the bot to a group)")
     else:
-        _own = str(chat_id)
-        _targets = sorted(g for g in set(_group_ids) if str(g) != _own)
-        if _targets:
-            sent.append(_tg.broadcast_story(
-                token, _targets, video_path=video_path, caption=caption,
-                links_text=links_text))
-        else:
-            sent.append("no groups to broadcast to (add the bot to a group)")
+        sent.append(
+            "no group IDs configured — add chat IDs (one per line) to "
+            "~/Documents/telegrambot/group_ids.txt (forward a group message "
+            "to @getmyid_bot to get them)")
     return "Sent to Telegram: " + ", then ".join(sent) + "."
 
 
