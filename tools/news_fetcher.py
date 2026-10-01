@@ -453,17 +453,45 @@ class NewsFetcher:
                 break
         return articles
 
-    # -- #136 aggregator redirect resolution -------------------------------
+    # -- #136/#143 aggregator redirect resolution ----------------------------
 
-    _AGGREGATOR_REDIRECT_HOSTS = frozenset({"news.google.com", "www.news.google.com"})
+    # Hosts that are known to serve redirect/intermediate URLs rather than
+    # the final article. #143: this list is only used to decide
+    # fail-closed (skip loudly) vs fail-open (keep the original URL) when
+    # a URL cannot be fetched for resolution — the resolution itself is
+    # universal (every URL is followed through its redirect chain).
+    _AGGREGATOR_REDIRECT_HOSTS = frozenset({
+        "news.google.com", "www.news.google.com",
+        "www.bing.com", "bing.com",
+        "duckduckgo.com", "www.duckduckgo.com",
+        "bit.ly", "tinyurl.com", "t.co", "goo.gl", "ow.ly", "is.gd",
+        "news.yahoo.com", "www.news.yahoo.com",
+    })
 
-    def _resolve_publisher_url(self, url: str) -> str:
-        """Resolve an aggregator redirect URL to the final publisher URL (#136).
+    def resolve_final_url(self, url: str) -> str:
+        """Follow the FULL redirect chain to the final destination URL (#143).
 
-        Follows the redirect with the shared timeout/UA and returns the
-        final URL. Returns "" when it cannot be resolved — the caller
-        must skip the article, never keep the aggregator redirect URL.
+        Uses the shared timeout/UA with ``follow_redirects=True``, so
+        multi-hop chains (aggregator → shortener → publisher) are fully
+        resolved. Returns the final URL, or "" when it cannot be
+        determined (network error, non-200, non-http result) — the
+        caller decides whether to skip loudly or keep the original.
         """
+        url = (url or "").strip()
+        if not url:
+            return ""
+        # Protocol-relative URLs (//host/path) from scraped HTML.
+        if url.startswith("//"):
+            url = "https:" + url
+        # Repeatedly unquote: some aggregators double/triple-encode (#135).
+        prev = None
+        cur = url
+        while prev != cur:
+            prev = cur
+            cur = urllib.parse.unquote(cur)
+        url = cur
+        if not (url.startswith("http://") or url.startswith("https://")):
+            return ""
         try:
             r = self._http_get(url)
         except Exception:
@@ -473,42 +501,63 @@ class NewsFetcher:
         final = str(getattr(r, "url", "") or "").strip()
         if not final:
             return ""
+        if not (final.startswith("http://") or final.startswith("https://")):
+            return ""
         try:
-            host = urllib.parse.urlparse(final).netloc.lower()
+            if urllib.parse.urlparse(final).netloc.lower() in self._AGGREGATOR_REDIRECT_HOSTS:
+                return ""  # still an aggregator redirect — not resolved
         except Exception:
             return ""
-        if host in self._AGGREGATOR_REDIRECT_HOSTS:
-            return ""  # still an aggregator redirect — not resolved
-        if final.startswith("http://") or final.startswith("https://"):
-            return final
-        return ""
+        return final
+
+    def _resolve_publisher_url(self, url: str) -> str:
+        """Resolve an aggregator redirect URL to the final publisher URL (#136).
+
+        Kept for backwards compatibility; delegates to
+        :meth:`resolve_final_url` (#143).
+        """
+        return self.resolve_final_url(url)
 
     def _resolve_aggregator_links(
         self, articles: List[NewsArticle]
     ) -> Tuple[List[NewsArticle], int]:
-        """Rewrite aggregator redirect links to final publisher URLs (#136).
+        """Rewrite redirect links to final publisher URLs (#136, #143).
 
-        Returns (kept_articles, skipped_count). Articles whose redirect
-        cannot be resolved are dropped with a count the caller records
-        loudly — never stored with the redirect URL.
+        #143: EVERY article URL is followed through its complete redirect
+        chain (not just known aggregator hosts) — this catches Bing
+        redirects, URL shorteners, and any future aggregator pattern.
+        When the final URL differs, it replaces the original.
+
+        Returns (kept_articles, skipped_count). Articles that cannot be
+        resolved are handled loudly:
+        - URL on a known redirect/aggregator host → dropped, counted in
+          ``skipped`` (the redirect URL is useless; never stored).
+        - Other URLs → kept as-is (fail-open: a direct publisher link
+          that blocks bots still works in the user's browser).
         """
         kept: List[NewsArticle] = []
         skipped = 0
         for art in articles:
             link = (art.link or "").strip()
+            if not link:
+                skipped += 1
+                continue
             try:
                 host = urllib.parse.urlparse(link).netloc.lower()
             except Exception:
                 host = ""
-            if host not in self._AGGREGATOR_REDIRECT_HOSTS:
-                kept.append(art)
-                continue
-            final = self._resolve_publisher_url(link)
+            final = self.resolve_final_url(link)
             if final:
-                art.link = final
+                if final != link:
+                    art.link = final
                 kept.append(art)
-            else:
+            elif host in self._AGGREGATOR_REDIRECT_HOSTS:
+                # Known redirect URL that could not be resolved — useless.
                 skipped += 1
+            else:
+                # Fail-open: probably a direct link whose server blocks
+                # bots; it still works in the user's browser.
+                kept.append(art)
         return kept, skipped
 
     def _dedupe_rank_topic(self, articles: List[NewsArticle], query: str,
