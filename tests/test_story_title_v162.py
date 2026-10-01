@@ -4,8 +4,8 @@ Bug (#84): #60 replaced the story-detail title with a single static 🎬 glyph
 plus a title popover. The user called that the wrong design — the header
 must show the full title text again.
 
-Fix: restore the h2 (lib-doc-title) title — multiline, centered — with the
-✏️ inline title-edit flow. "Edited … ago" stays removed. The #79
+Fix: restore the h2 (lib-doc-title) title — multiline, left-aligned (#120) —
+with the inline title-edit flow. "Edited … ago" stays removed. The #79
 `.lib-doc-title a { display:none }` guard stays: with the h2 back,
 Streamlit would otherwise show its heading-anchor 🔗 link icon on the
 title (the user's screenshot that prompted the guard).
@@ -99,10 +99,10 @@ def test_render_source_has_no_icon_popover(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# #84 — the h2 title styling is centered, multiline, theme-safe
+# #120 — the h2 title styling is LEFT-aligned, multiline, theme-safe
 # ---------------------------------------------------------------------------
 
-def test_doc_title_css_centered_multiline_and_theme_safe():
+def test_doc_title_css_left_aligned_multiline_and_theme_safe():
     lui, fake = _ui_with_recording_st()
     css = _css(lui, fake)
     bodies = _rule_bodies(css, ".lib-doc-title")
@@ -111,7 +111,8 @@ def test_doc_title_css_centered_multiline_and_theme_safe():
     typo = [b for b in bodies if "text-align" in b]
     assert typo, "no .lib-doc-title typography rule in library CSS"
     body = typo[0]
-    assert "text-align: center" in body
+    assert "text-align: left" in body
+    assert "text-align: center" not in body
     assert "font-size: 30px" in body
     assert "overflow-wrap: anywhere" in body  # multiline, never clipped
     assert "fill:" not in body and "stroke:" not in body  # never forced paint
@@ -129,3 +130,55 @@ def test_story_title_heading_anchor_guard_pinned():
     assert bodies, "no .lib-doc-title anchor guard in library CSS"
     assert any("display: none !important;" in b for b in bodies), \
         "story-title heading anchor is not hidden"
+
+
+# ---------------------------------------------------------------------------
+# #120 — title left-aligned; edit icon hugs the title (quiet, borderless)
+# ---------------------------------------------------------------------------
+
+def test_title_edit_marker_emitted_before_button(monkeypatch):
+    _, fake = _render_detail(monkeypatch, "Some title")
+    idx = next((i for i, m in enumerate(fake.markup)
+                if 'data-marker="lib-title-edit"' in m), None)
+    assert idx is not None, "lib-title-edit marker not emitted"
+    # The h2 title is rendered in the same row (title column precedes it).
+    h2 = next((i for i, m in enumerate(fake.markup)
+               if "<h2 class='lib-doc-title'>" in m), None)
+    assert h2 is not None and h2 < idx, \
+        "title h2 should render before its edit marker in the same row"
+
+
+def test_title_edit_button_uses_material_icon_and_tooltip(monkeypatch):
+    _, fake = _render_detail(monkeypatch, "Some title")
+    kw = next((k for k in fake.button_kwargs
+               if k.get("key") == "lib_title_edit_sid1"), None)
+    assert kw is not None, "title edit button not rendered"
+    assert kw.get("icon") == ":material/edit:", \
+        "title edit must use the native material edit icon"
+    assert kw.get("label") == "", "title edit must stay icon-only"
+    assert kw.get("help") == "Edit title", "tooltip/accessibility label kept"
+
+
+def test_title_edit_button_borderless_quiet_css():
+    lui, fake = _ui_with_recording_st()
+    css = _css(lui, fake)
+    assert '[data-marker="lib-title-edit"]' in css, \
+        "no lib-title-edit marker rule in library CSS"
+    bodies = _rule_bodies(css, '[data-marker="lib-title-edit"]')
+    assert bodies, "no lib-title-edit CSS rule bodies found"
+    joined = " ".join(bodies)
+    assert "border: none !important;" in joined, \
+        "title edit button must be borderless (no boxed widget)"
+    assert "background: transparent !important;" in joined
+    assert "color: inherit !important;" in joined, \
+        "title edit icon must follow the theme, not a hard-coded color"
+    assert "fill:" not in joined and "stroke:" not in joined, \
+        "never force SVG paint"
+
+
+def test_title_row_uses_narrow_trailing_edit_column(monkeypatch):
+    _, fake = _render_detail(monkeypatch, "Some title")
+    # The title row is [11, 1]: title fills the row left-aligned, the edit
+    # icon-button hugs it in the narrow trailing column.
+    assert [11, 1] in fake.column_specs, \
+        f"title row should use [11, 1] columns; specs were {fake.column_specs}"
