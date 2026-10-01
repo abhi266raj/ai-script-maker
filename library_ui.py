@@ -482,36 +482,9 @@ def inject_library_css() -> None:
         border: none !important;
         box-shadow: none !important;
     }
-    /* v1.6 (#27/#28/#30): the WhatsApp link button moved inside the Share
-       popover, which renders in a portal outside the marker's subtree, so the
-       old marker-scoped 38px height rule no longer applies. The popover's
-       link button uses use_container_width and Streamlit's native button
-       metrics — no custom height needed. */
-    /* v1.6.2 (#95): "Send via WhatsApp" is a plain anchor with NO
-       target="_blank" (st.link_button forces a new browser tab, defeating
-       the whatsapp:// deep link). Styled to read as a popover button;
-       theme-safe via inherit + neutral gray. Vector icons keep their own
-       paint — nothing here touches them. */
-    a.lib-wa-direct {
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        width: 100%;
-        box-sizing: border-box;
-        padding: 0.4rem 1rem;
-        border: 1px solid rgba(128, 128, 128, 0.45);
-        border-radius: 0.5rem;
-        color: inherit !important;
-        text-decoration: none !important;
-        font-size: 1rem;
-        line-height: 1.6;
-        cursor: pointer;
-    }
-    a.lib-wa-direct:hover {
-        border-color: currentColor;
-        color: inherit !important;
-        text-decoration: none !important;
-    }
+    /* v1.6.2 (#139): "Send via WhatsApp" is a native st.button whose click
+       hands the whatsapp:// deep link to macOS via `open` on the server —
+       no custom anchor CSS needed. */
     /* macOS HIG: deference — toolbar rows use a hairline, not a heavy box */
     .lib-hairline {
         border-bottom: 1px solid rgba(128, 128, 128, 0.25);
@@ -1818,19 +1791,71 @@ def _compose_news_tags_text(meta: dict, title: str = "") -> str:
 
 def _whatsapp_share_url(text: str) -> str:
     """whatsapp:// deep link carrying the EXACT share text (URL-encoded for
-    transport only — the text itself is never reformatted). macOS routes the
-    whatsapp:// scheme to the installed WhatsApp Mac app, opening it directly
-    with the text prefilled — unlike wa.me links, which always resolve in the
-    browser (WhatsApp Web flow) even when the app is installed. No connection
-    or connector needed.
+    transport only — the text itself is never reformatted).
 
-    Note (#95): this URL must be rendered as a plain anchor WITHOUT
-    target="_blank". st.link_button forces a new browser tab, which defeats
-    the deep link — the browser opens a blank tab before macOS can route the
-    scheme to the app.
+    #139: this URL is handed to macOS LaunchServices via the ``open``
+    command (see ``_open_whatsapp_share``) — the server runs on the user's
+    Mac, so the deep link opens the installed WhatsApp Mac app directly
+    with the text prefilled. Unlike wa.me links, which always resolve in
+    the browser (WhatsApp Web flow) even when the app is installed, the
+    native scheme never touches the browser. No connection or connector
+    needed. The user explicitly declined any wa.me fallback — there is
+    none here.
+
+    Note (#95): this URL must never go through st.link_button, which
+    forces a new browser tab and defeats the deep link.
     """
     import urllib.parse as _up
     return "whatsapp://send?text=" + _up.quote(text, safe="")
+
+
+def _open_whatsapp_share(text: str) -> None:
+    """Hand the share text to the installed WhatsApp Mac app.
+
+    #139: the Streamlit server runs on the user's Mac, so we route the
+    ``whatsapp://send?text=`` deep link through macOS LaunchServices via
+    the ``open`` command. ``open`` launches WhatsApp with the text
+    prefilled and returns immediately; the user picks the chat in the
+    app. This replaces the old plain-anchor approach, which depended on
+    the *browser* routing the custom URL scheme — unreliable across
+    browsers — and proved broken.
+
+    Fails loudly: a non-macOS platform, a missing ``open`` command, a
+    timeout, or a non-zero exit (e.g. no app registered for the
+    whatsapp:// scheme) all raise RuntimeError carrying the underlying
+    detail. Never a silent no-op, never a wa.me browser fallback.
+    """
+    import platform as _platform
+    import shutil as _shutil
+    import subprocess as _sp
+
+    if _platform.system() != "Darwin":
+        raise RuntimeError(
+            "WhatsApp handoff needs macOS (`open`); this server runs on "
+            f"{_platform.system()}."
+        )
+    opener = _shutil.which("open")
+    if opener is None:
+        raise RuntimeError("macOS `open` command not found on PATH.")
+    url = _whatsapp_share_url(text)
+    try:
+        proc = _sp.run(
+            [opener, url],
+            capture_output=True, text=True, timeout=15,
+        )
+    except _sp.TimeoutExpired as e:
+        raise RuntimeError(
+            f"`open` timed out handing off to WhatsApp: {e}")
+    except OSError as e:
+        raise RuntimeError(f"couldn't launch `open`: {e}")
+    if proc.returncode != 0:
+        detail = (proc.stderr or proc.stdout or "").strip()
+        raise RuntimeError(
+            "`open` couldn't hand off to WhatsApp "
+            f"(exit {proc.returncode})"
+            + (f": {detail}" if detail else
+               ". Is WhatsApp installed and registered for whatsapp:// links?")
+        )
 
 
 @_lru_cache(maxsize=1)
@@ -1845,9 +1870,11 @@ def _whatsapp_app_installed() -> bool:
     it is installed, including the macOS localized folder
     (``/Applications/WhatsApp.localized/WhatsApp.app``), which the old
     hard-coded paths missed. If mdfind is unavailable or fails, we fall back
-    to the hard-coded candidate paths (including the .localized variants) —
-    a failed mdfind never reports "not installed"; only the exhaustive
-    checks do.
+    to the hard-coded candidate paths (including the .localized variants)
+    plus the app's sandbox/group containers (created on first launch) — a
+    failed mdfind never reports "not installed"; only the exhaustive
+    checks do. #139: the mdfind timeout is short (5s) so a sick Spotlight
+    degrades fast instead of hanging the Share popover render.
     """
     import os as _os
     import shutil as _shutil
@@ -1859,7 +1886,7 @@ def _whatsapp_app_installed() -> bool:
             out = _sp.run(
                 [mdfind,
                  "kMDItemCFBundleIdentifier == 'net.whatsapp.WhatsApp'"],
-                capture_output=True, text=True, timeout=10,
+                capture_output=True, text=True, timeout=5,
             )
         except (OSError, _sp.TimeoutExpired):
             out = None  # mdfind broken here — fall back to path checks.
@@ -1876,6 +1903,12 @@ def _whatsapp_app_installed() -> bool:
         "/Applications/WhatsApp.localized/WhatsApp.app",
         _os.path.expanduser("~/Applications/WhatsApp.app"),
         _os.path.expanduser("~/Applications/WhatsApp.localized/WhatsApp.app"),
+        # #139: the Mac App Store build creates these sandbox/group
+        # containers on first launch — strong positive signals even when
+        # Spotlight lags and the .app bundle itself moved elsewhere.
+        _os.path.expanduser(
+            "~/Library/Group Containers/group.net.whatsapp.WhatsApp.shared"),
+        _os.path.expanduser("~/Library/Containers/net.whatsapp.WhatsApp"),
     )
     return any(_os.path.isdir(p) for p in candidates)
 
@@ -1892,8 +1925,9 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
     The redundant st.code(share_text) preview is gone (#27) — the dedicated
     Hashtags / News Links sections already show that content, and the text
     stays one click away via "Copy News Link + Hashtags". "Send via WhatsApp"
-    deep-links straight into the installed WhatsApp Mac app (#28), with no
-    browser tab involved (#95).
+    hands the share text to the installed WhatsApp Mac app (#28) via a
+    server-side ``open`` of the whatsapp:// deep link (#139) — no browser
+    tab involved (#95), no wa.me fallback (user declined).
     """
     with st.popover("", icon=_TB_ICON_SHARE, key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
@@ -1902,17 +1936,25 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
             _copy_button("Copy News Link + Hashtags", share_text,
                          f"n-{story_id}")
             if _whatsapp_app_installed():
-                # #95: plain anchor, NO target="_blank". st.link_button forces
-                # a new browser tab, which defeats the whatsapp:// deep link —
-                # macOS must receive the scheme directly to open the app.
-                url = _whatsapp_share_url(share_text)
-                st.markdown(
-                    f'<a class="lib-wa-direct"'
-                    f' href="{_html.escape(url, quote=True)}"'
-                    f' title="Open the installed WhatsApp Mac app with this'
-                    f' text prefilled">Send via WhatsApp</a>',
-                    unsafe_allow_html=True,
-                )
+                # #139: a real button, not an anchor. The click runs
+                # _open_whatsapp_share on the server (which runs on the
+                # user's Mac): macOS `open` routes the whatsapp:// deep
+                # link through LaunchServices straight to the app. The old
+                # plain-anchor approach depended on the *browser* routing
+                # the custom URL scheme, which proved unreliable.
+                if st.button(
+                    "Send via WhatsApp",
+                    key=f"lib_wa_{story_id}",
+                    help="Open the installed WhatsApp Mac app with this "
+                         "text prefilled",
+                    use_container_width=True,
+                ):
+                    try:
+                        _open_whatsapp_share(share_text)
+                    except RuntimeError as e:
+                        st.error(f"Couldn't open WhatsApp: {e}")
+                    else:
+                        st.toast("WhatsApp opened — pick a chat to send.")
             else:
                 # Fail loudly: never a dead link, never a silent browser
                 # fallback (wa.me) — the user asked for direct app handoff.
