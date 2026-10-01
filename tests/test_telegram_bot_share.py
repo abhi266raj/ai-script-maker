@@ -124,11 +124,39 @@ def test_send_text_posts_message():
     assert call["data"] == {"chat_id": "42", "text": "hello"}
 
 
-def test_send_text_empty_and_overlong_raise():
+def test_send_text_empty_raises_loudly():
     with pytest.raises(tg.TelegramShareError, match="[Ee]mpty"):
         tg.send_text("TOK", 1, "   ", transport=_ok_transport())
-    with pytest.raises(tg.TelegramShareError, match="4096"):
-        tg.send_text("TOK", 1, "x" * 4097, transport=_ok_transport())
+
+
+def test_send_text_overlong_splits_into_sequential_messages():
+    # #186: >4096 chars no longer raises — sent as sequential chunks.
+    post = _ok_transport()
+    text = "x" * 4097
+    results = tg.send_text("TOK", 42, text, transport=post)
+    assert len(post.calls) == 2
+    assert len(results) == 2
+    for call in post.calls:
+        assert call["url"] == "https://api.telegram.org/botTOK/sendMessage"
+        assert call["data"]["chat_id"] == "42"
+        assert len(call["data"]["text"]) <= tg.MAX_TEXT_CHARS
+    assert "".join(call["data"]["text"] for call in post.calls) == text
+
+
+def test_send_text_split_keeps_paragraphs_whole():
+    post = _ok_transport()
+    text = "y" * 4000 + "\n\n" + "z" * 200
+    tg.send_text("TOK", 42, text, transport=post)
+    assert len(post.calls) == 2
+    assert post.calls[0]["data"]["text"] == "y" * 4000
+    assert post.calls[1]["data"]["text"] == "z" * 200
+
+
+def test_split_text_unit_boundaries():
+    assert tg.split_text("") == []
+    assert tg.split_text("hi") == ["hi"]
+    with pytest.raises(tg.TelegramShareError, match="invalid chunk limit"):
+        tg.split_text("hi", 0)
 
 
 def test_api_rejection_surfaces_description():
@@ -256,7 +284,9 @@ def test_share_bot_sends_video_then_links(libdir, monkeypatch, tmp_path):
     monkeypatch.setattr(tg, "_httpx_post", post)
     msg = lui._share_via_telegram_bot(sid, story["meta"])
     assert msg == ("Sent to Telegram: video + caption, then 1 news link, "
-                   "then no groups to broadcast to (add the bot to a group).")
+                   "then no group IDs configured — add chat IDs (one per line) "
+                   "to ~/Documents/telegrambot/group_ids.txt (forward a group "
+                   "message to @getmyid_bot to get them).")
     assert len(post.calls) == 3  # 2 DM sends + 1 group-discovery getUpdates
     assert post.calls[0]["url"].endswith("/sendVideo")
     assert post.calls[0]["data"]["caption"] == "Vid Story\n#Vid"
