@@ -273,26 +273,19 @@ def inject_library_css() -> None:
         position: relative !important;
     }
     /* Chips inside scroll rows: single line, never clipped by the ×.
-       #25/#26: the × clearance lives in the CHIP COLUMN's own padding
-       (rule below), not in the chip — the × overlay (22px at right:4px
-       of the column) floats in padding space, 4px clear of the chip
-       edge, so tag text can never slide underneath it regardless of
-       chip width. */
+       #51: the × now sits INSIDE the pill as a macOS token-field remove
+       glyph (22px target, 6px from the pill's trailing edge), so the
+       pill's own padding-right carries the clearance: 34px = 22px
+       target + 6px inset + 6px breathing room before the label. The
+       #25/#26 no-truncation guarantee now lives here, in the chip —
+       the column no longer reserves padding for the × (rule removed). */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         [data-testid="stHorizontalBlock"] .lib-chip {
-        padding-right: 12px !important;
+        padding-right: 34px !important;
         white-space: nowrap !important;
         max-width: 340px;
         overflow: hidden;
         text-overflow: ellipsis;
-    }
-    /* #25/#26: chip columns reserve the × clearance in the column's own
-       padding. Scoped to columns holding a chip (:has(.lib-chip)) —
-       image cards keep their inset × over the image corner. */
-    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
-        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
-        div[data-testid="stColumn"]:has(.lib-chip) {
-        padding-right: 30px !important;
     }
     /* Links inside news chips inherit the themed chip color (theme-safe). */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
@@ -384,6 +377,47 @@ def inject_library_css() -> None:
     /* v1.6 (#46): the Share/Copy dropdowns moved INTO the single detail
        toolbar row, so the old marker-scoped actions-row rule is gone (dead
        selector). The triggers now share the toolbar's own gap/alignment. */
+    /* #51: the chip × becomes a macOS token-field remove glyph, centered
+       inside the pill. Chip-scoped: columns holding a chip
+       (:has(.lib-chip)) with the lib-x-r marker. Image cards have no
+       .lib-chip, so their top-right corner × over the image is untouched;
+       the ✎ is lib-x-l, also untouched. The extra :has(.lib-chip) makes
+       these selectors strictly more specific than the generic × rules
+       above, so they win without touching them. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
+        + div[data-testid="stElementContainer"] {
+        top: 50% !important;
+        right: 6px !important;
+        transform: translateY(-50%) !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
+        background: transparent !important;
+        -webkit-backdrop-filter: none !important;
+        backdrop-filter: none !important;
+        box-shadow: none !important;
+        border: none !important;
+        color: var(--lib-chip-text) !important;
+        opacity: 0.65 !important;
+        font-size: 15px !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has(.lib-chip):has([data-marker="lib-x-r"])
+        div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
+        opacity: 1 !important;
+        background: rgba(128, 128, 128, 0.22) !important;
+        color: var(--lib-chip-text) !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
     /* v1.6 (#27/#28/#30): the WhatsApp link button moved inside the Share
        popover, which renders in a portal outside the marker's subtree, so the
        old marker-scoped 38px height rule no longer applies. The popover's
