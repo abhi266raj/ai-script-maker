@@ -1710,11 +1710,43 @@ def _whatsapp_app_installed() -> bool:
     user's Mac, so the filesystem is the source of truth. Cached for the
     session — app installs don't change between renders, so this never runs
     per-render. Tests clear the cache via ``cache_clear()``.
+
+    #108: primary detection is Spotlight by bundle ID
+    (``net.whatsapp.WhatsApp``) via ``mdfind`` — this finds the app wherever
+    it is installed, including the macOS localized folder
+    (``/Applications/WhatsApp.localized/WhatsApp.app``), which the old
+    hard-coded paths missed. If mdfind is unavailable or fails, we fall back
+    to the hard-coded candidate paths (including the .localized variants) —
+    a failed mdfind never reports "not installed"; only the exhaustive
+    checks do.
     """
     import os as _os
+    import shutil as _shutil
+    import subprocess as _sp
+
+    mdfind = _shutil.which("mdfind")
+    if mdfind is not None:
+        try:
+            out = _sp.run(
+                [mdfind,
+                 "kMDItemCFBundleIdentifier == 'net.whatsapp.WhatsApp'"],
+                capture_output=True, text=True, timeout=10,
+            )
+        except (OSError, _sp.TimeoutExpired):
+            out = None  # mdfind broken here — fall back to path checks.
+        if out is not None and out.returncode == 0 and any(
+            line.strip() for line in out.stdout.splitlines()
+        ):
+            return True
+        # mdfind ran but found nothing (or failed): fall through to the
+        # path-based checks below as a second opinion — Spotlight indexing
+        # can lag behind a fresh install.
+
     candidates = (
         "/Applications/WhatsApp.app",
+        "/Applications/WhatsApp.localized/WhatsApp.app",
         _os.path.expanduser("~/Applications/WhatsApp.app"),
+        _os.path.expanduser("~/Applications/WhatsApp.localized/WhatsApp.app"),
     )
     return any(_os.path.isdir(p) for p in candidates)
 
