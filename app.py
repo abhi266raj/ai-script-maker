@@ -1157,56 +1157,22 @@ st.markdown(
         display: contents !important;
     }
 
-    /* Left Stepper Button: Decrement (-) */
-    [data-testid="stNumberInput"] button[data-testid="stNumberInputStepDown"],
-    [data-testid="stNumberInput"] button[aria-label*="decrease" i],
-    [data-testid="stNumberInput"] button[aria-label*="decrement" i] {
-        order: 1 !important;
-        border-right: 1px solid var(--line) !important;
-        border-left: none !important;
-        border-top: none !important;
-        border-bottom: none !important;
-    }
-
-    /* Central Input Field: flexible, centered text between the buttons.
-       flex:1 absorbs all free space; no width:100% (that fights the flex). */
-    [data-testid="stNumberInput"] input[data-testid="stNumberInputField"],
-    [data-testid="stNumberInput"] input {
-        order: 2 !important;
-        flex: 1 1 0% !important;
-        min-width: 0 !important;
-        width: auto !important;
-        color: var(--ink) !important;
-        -webkit-text-fill-color: var(--ink) !important;
-        caret-color: var(--ink) !important;
-        background: transparent !important;
-        background-color: transparent !important;
-        border: none !important;
-        box-shadow: none !important;
-        outline: none !important;
-        text-align: center !important;
-        font-size: 0.92rem !important;
-        font-weight: 600 !important;
-        font-variant-numeric: tabular-nums !important;
-        height: 38px !important;
-        min-height: 38px !important;
-        padding: 0 4px !important;
+    /* Hide the browser-native number spinner (^v). The field is
+       <input type="number">, so WebKit paints its own up/down spinner next to
+       Streamlit's (-) / (+) step buttons. We keep Streamlit's buttons. */
+    [data-testid="stNumberInput"] input::-webkit-outer-spin-button,
+    [data-testid="stNumberInput"] input::-webkit-inner-spin-button {
+        -webkit-appearance: none !important;
+        appearance: none !important;
+        display: none !important;
         margin: 0 !important;
     }
-
-    /* Right Stepper Button: Increment (+) pinned flush to the container's
-       right edge. The flexible input pushes it there; nothing may extend
-       past it. */
-    [data-testid="stNumberInput"] button[data-testid="stNumberInputStepUp"],
-    [data-testid="stNumberInput"] button[aria-label*="increase" i],
-    [data-testid="stNumberInput"] button[aria-label*="increment" i] {
-        order: 3 !important;
-        border-left: 1px solid var(--line) !important;
-        border-right: none !important;
-        border-top: none !important;
-        border-bottom: none !important;
+    [data-testid="stNumberInput"] input[type="number"] {
+        -moz-appearance: textfield !important;
+        appearance: textfield !important;
     }
 
+    /* All number-input buttons share one base: size, centering, colors. */
     [data-testid="stNumberInput"] button {
         background-color: var(--hover) !important;
         background: var(--hover) !important;
@@ -1236,6 +1202,44 @@ st.markdown(
         color: var(--orange) !important;
         -webkit-text-fill-color: var(--orange) !important;
     }
+    /* (-) docks left, (+) docks right; only the divider side differs.
+       Stable testids first, aria-label substring as fallback. */
+    [data-testid="stNumberInput"] button:is([data-testid="stNumberInputStepDown"], [aria-label*="decrement" i]) {
+        order: 1 !important;
+        border-right: 1px solid var(--line) !important;
+    }
+    [data-testid="stNumberInput"] button:is([data-testid="stNumberInputStepUp"], [aria-label*="increment" i]) {
+        order: 3 !important;
+        border-left: 1px solid var(--line) !important;
+    }
+
+    /* Central Input Field: flexible, centered text between the buttons.
+       flex:1 absorbs all free space; no width:100% (that fights the flex). */
+    [data-testid="stNumberInput"] input[data-testid="stNumberInputField"],
+    [data-testid="stNumberInput"] input {
+        order: 2 !important;
+        flex: 1 1 0% !important;
+        min-width: 0 !important;
+        width: auto !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        caret-color: var(--ink) !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+        outline: none !important;
+        text-align: center !important;
+        font-size: 0.92rem !important;
+        font-weight: 600 !important;
+        font-variant-numeric: tabular-nums !important;
+        height: 38px !important;
+        min-height: 38px !important;
+        padding: 0 4px !important;
+        margin: 0 !important;
+    }
+
+    /* Step-button icons (+/-): color only, never touch fill/stroke. */
     [data-testid="stNumberInput"] button svg {
         color: inherit !important;
     }
