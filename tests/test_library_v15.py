@@ -997,3 +997,157 @@ def test_live_indianexpress_direct_url_og_image(monkeypatch):
         pytest.skip(f"network unavailable: {e}")
     assert img == ("https://images.indianexpress.com/2026/09/"
                    "Mumbai-Metro-spit-bin.jpg"), img
+# delete confirmation popover: Apple-style, red Yes / normal No
+# ---------------------------------------------------------------------------
+
+class _FakeCtx:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class _FakeSt:
+    """Minimal streamlit stand-in to exercise _delete_popover logic."""
+
+    def __init__(self, clicks=()):
+        self._clicks = set(clicks)
+        self.session_state = {}
+        self.errors = []
+        self.successes = []
+        self.reran = False
+        self.popover_kwargs = None
+        self.buttons = []  # (label, key) in render order
+
+    def markdown(self, *a, **k):
+        pass
+
+    def caption(self, *a, **k):
+        pass
+
+    def success(self, msg):
+        self.successes.append(msg)
+
+    def error(self, msg):
+        self.errors.append(msg)
+
+    def rerun(self):
+        self.reran = True
+
+    def button(self, label, key=None, on_click=None, **k):
+        self.buttons.append((label, key))
+        if key in self._clicks:
+            if on_click is not None:
+                on_click()
+            return True
+        return False
+
+    def columns(self, spec):
+        n = spec if isinstance(spec, int) else len(spec)
+        return [_FakeCtx() for _ in range(n)]
+
+    def popover(self, label, **k):
+        self.popover_kwargs = {"label": label, **k}
+        return _FakeCtx()
+
+
+def _ui_with_fake_st(clicks=()):
+    """Import library_ui bound to a fake streamlit; restores sys.modules."""
+    import types
+    saved = dict(sys.modules)
+    fake = _FakeSt(clicks)
+    try:
+        fake_mod = types.ModuleType("streamlit")
+        for name in ("markdown", "caption", "success", "error", "rerun",
+                     "button", "columns", "popover"):
+            setattr(fake_mod, name, getattr(fake, name))
+        fake_mod.session_state = fake.session_state
+        sys.modules["streamlit"] = fake_mod
+        sys.modules.pop("library_ui", None)
+        import library_ui
+        return library_ui, fake
+    finally:
+        sys.modules.clear()
+        sys.modules.update(saved)
+
+
+def _pop_kwargs(**kw):
+    d = dict(trigger_label="Delete", popover_key="dp",
+             title="Delete this story?", message="M")
+    d.update(kw)
+    return d
+
+
+def test_delete_popover_renders_yes_and_no():
+    lui, fake = _ui_with_fake_st()
+    lui._delete_popover(**_pop_kwargs(on_yes=lambda: None))
+    assert fake.popover_kwargs["label"] == "Delete"
+    assert fake.popover_kwargs["key"] == "dp"
+    assert fake.popover_kwargs["on_change"] == "rerun"
+    assert ("Yes", "dp-yes") in fake.buttons
+    assert ("No", "dp-no") in fake.buttons
+
+
+def test_delete_popover_yes_runs_callback_and_closes():
+    lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
+    fired = []
+    kw = _pop_kwargs(on_yes=lambda: fired.append(1))
+    lui._delete_popover(**kw)  # run 1: Yes clicked -> close + go flags armed
+    assert fired == []
+    assert fake.session_state["dp"] is False
+    assert fake.session_state["dp-go"] is True
+    fake._clicks.clear()
+    lui._delete_popover(**kw)  # run 2: armed flag consumed -> on_yes runs
+    assert fired == [1]
+    assert fake.session_state.get("dp") is False
+    assert fake.errors == []
+
+
+def test_delete_popover_no_dismisses_without_deleting():
+    lui, fake = _ui_with_fake_st(clicks=("dp-no",))
+    fired = []
+    lui._delete_popover(**_pop_kwargs(on_yes=lambda: fired.append(1)))
+    assert fired == []
+    assert fake.session_state["dp"] is False
+    assert "dp-go" not in fake.session_state
+
+
+def test_delete_popover_yes_failure_is_loud():
+    lui, fake = _ui_with_fake_st(clicks=("dp-yes",))
+
+    def _boom():
+        raise RuntimeError("disk gone")
+
+    kw = _pop_kwargs(on_yes=_boom)
+    lui._delete_popover(**kw)  # run 1: arm the confirmation
+    fake._clicks.clear()
+    lui._delete_popover(**kw)  # run 2: on_yes raises -> loud error, popover reopened
+    assert fake.errors == ["Delete failed: disk gone"]
+    assert fake.session_state.get("dp") is True
+
+
+def test_confirm_delete_story_deletes_and_cleans_session(libdir):
+    lui, fake = _ui_with_fake_st()
+    sid = _make_story()
+    fake.session_state["lib_selected_story"] = sid
+    lui._confirm_delete_story(sid)
+    assert not (libdir / "stories" / f"{sid}.md").exists()
+    assert "lib_selected_story" not in fake.session_state
+    assert fake.successes == ["Story deleted."]
+
+
+def test_confirm_delete_story_missing_file_fails_loudly(libdir):
+    lui, fake = _ui_with_fake_st()
+    with pytest.raises(RuntimeError, match="could not be removed"):
+        lui._confirm_delete_story("nope-not-here")
+    assert fake.successes == []
+
+
+def test_confirm_delete_all_removes_everything(libdir):
+    lui, fake = _ui_with_fake_st()
+    _make_story(title="Story A")
+    _make_story(title="Story B")
+    lui._confirm_delete_all()
+    assert list((libdir / "stories").glob("*.md")) == []
+    assert fake.successes == ["Deleted 2 stories."]

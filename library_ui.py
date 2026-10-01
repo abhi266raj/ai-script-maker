@@ -10,6 +10,8 @@ from __future__ import annotations
 import html as _html
 import re as _re
 import time as _time
+from collections.abc import Callable
+
 import streamlit as st
 
 import story_library as lib
@@ -314,6 +316,19 @@ def _inject_story_list_css() -> None:
         color: #FF3B30 !important;
         border-color: rgba(255, 59, 48, 0.6) !important;
     }
+    /* Destructive popover trigger: same macOS system red on the native
+       popover button (graceful — plain button if the selector ever misses).
+       #FF3B30 reads on both light and dark themes; no theme overrides. */
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
+        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"] {
+        color: #FF3B30 !important;
+        border-color: rgba(255, 59, 48, 0.35) !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-pop-"])
+        + div[data-testid="stElementContainer"] [data-testid="stPopover"] [data-testid="stPopoverButton"]:hover {
+        color: #FF3B30 !important;
+        border-color: rgba(255, 59, 48, 0.6) !important;
+    }
 </style>
         """,
         unsafe_allow_html=True,
@@ -330,6 +345,80 @@ def _danger_button(label: str, key: str, **kwargs) -> bool:
     st.markdown(f'<div data-marker="lib-danger-{key}" style="display:none"></div>',
                 unsafe_allow_html=True)
     return st.button(label, key=key, **kwargs)
+
+
+def _confirm_delete_story(story_id: str) -> None:
+    """Delete one story; raises loudly if the file could not be removed."""
+    if not lib.delete_story(story_id):
+        raise RuntimeError("the story file could not be removed")
+    st.session_state.pop("lib_selected_story", None)
+    st.session_state.pop("lib_story_radio", None)
+    st.success("Story deleted.")
+
+
+def _confirm_delete_all() -> None:
+    """Delete every story; the reported count is always honest."""
+    n = lib.delete_all_stories()
+    st.session_state.pop("lib_selected_story", None)
+    st.session_state.pop("lib_story_radio", None)
+    st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
+
+
+def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
+                    message: str, on_yes: Callable[[], None],
+                    trigger_help: str = "",
+                    use_container_width: bool = False) -> None:
+    """Apple-style delete confirmation: native popover, red Yes, normal No.
+
+    The trigger is a red destructive button (marker-scoped CSS, graceful if
+    the selector misses). Inside the popover: a bold title, a secondary
+    message line, then "Yes" (red, destructive) and "No" (standard) side by
+    side.
+
+    "Yes" arms a ``<key>-go`` flag via an ``on_click`` callback and closes
+    the popover; the flag is consumed at the top of the next script run —
+    *before* the popover widget instantiates, which is the only moment its
+    key may be driven programmatically (doing it after raises
+    ``StreamlitWidgetAlreadyInstantiatedError``). ``on_yes`` must raise on
+    failure: the error is shown loudly inside the reopened popover and the
+    popover stays open. "No" only closes the popover. The native popover
+    follows the light/dark theme; the only custom color is macOS system red,
+    which reads on both themes.
+    """
+    _go_key = f"{popover_key}-go"
+    _err_key = f"{popover_key}-err"
+    # Marker first: it must sit directly before the popover's element
+    # container for the red-trigger CSS sibling selector to hit.
+    st.markdown(f'<div data-marker="lib-danger-pop-{popover_key}" style="display:none"></div>',
+                unsafe_allow_html=True)
+    # Consume a previously armed confirmation *before* the popover
+    # instantiates, so driving its key here is legal.
+    if st.session_state.pop(_go_key, False):
+        try:
+            on_yes()
+        except Exception as e:
+            st.session_state[_err_key] = str(e)
+            st.session_state[popover_key] = True  # reopen so the error is seen
+    with st.popover(trigger_label, key=popover_key, on_change="rerun",
+                    help=trigger_help or None,
+                    use_container_width=use_container_width):
+        _failure = st.session_state.pop(_err_key, None)
+        if _failure:
+            st.error(f"Delete failed: {_failure}")
+        st.markdown(f"**{title}**")
+        st.caption(message)
+        _by, _bn = st.columns(2)
+        with _by:
+            _danger_button(
+                "Yes", key=f"{popover_key}-yes", use_container_width=True,
+                on_click=lambda: st.session_state.update(
+                    {popover_key: False, _go_key: True}),
+            )
+        with _bn:
+            st.button(
+                "No", key=f"{popover_key}-no", use_container_width=True,
+                on_click=lambda: st.session_state.update({popover_key: False}),
+            )
 
 
 def render_tab_bar() -> str:
@@ -610,25 +699,17 @@ def render_library_page() -> None:
             label_visibility="collapsed",
         )
         st.session_state["lib_selected_story"] = sel
-        # Delete-all lives in the master section (two-step confirm).
+        # Delete-all lives in the master section (popover confirm).
         st.markdown("")
-        if not st.session_state.get("lib_confirm_delete_all"):
-            if _danger_button("Delete All", key="lib_delete_all_btn", use_container_width=True,
-                              help="Delete every saved story"):
-                st.session_state["lib_confirm_delete_all"] = True
-                st.rerun()
-        else:
-            if _danger_button("Confirm Delete", key="lib_delete_all_confirm",
-                              use_container_width=True, help="Confirm: delete every saved story"):
-                n = lib.delete_all_stories()
-                st.session_state.pop("lib_confirm_delete_all", None)
-                st.session_state.pop("lib_selected_story", None)
-                st.session_state.pop("lib_story_radio", None)
-                st.success(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.")
-                st.rerun()
-            if st.button("Cancel", key="lib_delete_all_cancel", use_container_width=True):
-                st.session_state.pop("lib_confirm_delete_all", None)
-                st.rerun()
+        _delete_popover(
+            trigger_label="Delete All",
+            popover_key="lib_delpop_all",
+            title="Delete all stories?",
+            message="Every saved story will be permanently deleted. This can't be undone.",
+            on_yes=_confirm_delete_all,
+            trigger_help="Delete every saved story",
+            use_container_width=True,
+        )
     with detail:
         _render_story_detail(sel)
 
@@ -806,7 +887,6 @@ def _render_story_detail(story_id: str) -> None:
     _refresh_kind = meta.get("refresh_kind", "") if _status in lib.BUSY_STATES else ""
     _busy = bool(_refresh_kind)
     _editing = bool(st.session_state.get(f"lib_edit_title_{story_id}"))
-    _confirm_del = bool(st.session_state.get(f"lib_confirm_del_{story_id}"))
     _ai_engine = _library_ai_engine()
 
     def _kick_refresh(kind: str, label: str) -> None:
@@ -817,29 +897,17 @@ def _render_story_detail(story_id: str) -> None:
             st.error(f"Could not start the {label} refresh: {reason}" if reason
                      else f"Could not start the {label} refresh.")
 
-    def _delete_first_step() -> None:
-        if _danger_button("Delete", key=f"lib_del_{story_id}",
-                          help="Delete this story"):
-            st.session_state[f"lib_confirm_del_{story_id}"] = True
-            st.rerun()
+    def _story_delete_popover() -> None:
+        _delete_popover(
+            trigger_label="Delete",
+            popover_key=f"lib_delpop_{story_id}",
+            title="Delete this story?",
+            message="This can't be undone.",
+            on_yes=lambda: _confirm_delete_story(story_id),
+            trigger_help="Delete this story",
+        )
 
-    if _confirm_del:
-        # Focused delete confirmation: confirm + cancel, nothing else.
-        dc1, dc2, _dsp = st.columns([1.8, 1.0, 7.2])
-        with dc1:
-            if _danger_button("Confirm Delete", key=f"lib_del_confirm_{story_id}",
-                              help="Confirm: delete this story"):
-                lib.delete_story(story_id)
-                st.session_state.pop(f"lib_confirm_del_{story_id}", None)
-                st.session_state.pop("lib_selected_story", None)
-                st.session_state.pop("lib_story_radio", None)
-                st.success("Story deleted.")
-                st.rerun()
-        with dc2:
-            if st.button("Cancel", key=f"lib_del_cancel_{story_id}"):
-                st.session_state.pop(f"lib_confirm_del_{story_id}", None)
-                st.rerun()
-    elif _editing:
+    if _editing:
         # Title edit mode: Save/Cancel lead, Delete stays trailing.
         ec1, ec2, _esp, ec3 = st.columns([1.0, 1.0, 7.0, 1.0])
         with ec1:
@@ -854,7 +922,7 @@ def _render_story_detail(story_id: str) -> None:
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
         with ec3:
-            _delete_first_step()
+            _story_delete_popover()
     else:
         tc2, tc3, tc4, _tsp, tc5 = st.columns([1.7, 1.6, 1.3, 4.4, 1.0])
         with tc2:
@@ -884,7 +952,7 @@ def _render_story_detail(story_id: str) -> None:
                     st.error(f"Could not start the retry: {reason}" if reason
                              else "Could not start the retry.")
         with tc5:
-            _delete_first_step()
+            _story_delete_popover()
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
 
     # Title at top: big, multiline, centered, with a small inline edit icon.
