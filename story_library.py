@@ -66,10 +66,10 @@ BUSY_STATES = ("pending", "refreshing", "running")
 # ---------------------------------------------------------------------------
 # Refresh work is tracked PER KIND, not with a single busy flag:
 #
-# - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"`` and
-#   ``"images"`` are independent and may run concurrently (#54); ``"reset"``
-#   is destructive and exclusive; ``"enrich"`` is the save-time enrichment
-#   and also exclusive with manual refreshes.
+# - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"``,
+#   ``"images"`` and ``"news"`` are independent and may run concurrently
+#   (#54, #80); ``"reset"`` is destructive and exclusive; ``"enrich"`` is
+#   the save-time enrichment and also exclusive with manual refreshes.
 # - ``refresh_busy`` (frontmatter, list of kind names): the kinds currently
 #   running. A list round-trips through _dump_frontmatter/_parse_frontmatter
 #   (nested dicts do not — never store one in frontmatter).
@@ -87,7 +87,7 @@ BUSY_STATES = ("pending", "refreshing", "running")
 # _meta_write_lock(story_id): concurrent per-kind workers must not clobber
 # each other's updates. Lock order is always kind-lock (_ENRICH_LOCKS) THEN
 # meta-lock — never the reverse (deadlock avoidance).
-_REFRESH_KINDS = ("hashtags", "images", "reset", "enrich")
+_REFRESH_KINDS = ("hashtags", "images", "news", "reset", "enrich")
 _EXCLUSIVE_KINDS = ("reset", "enrich")
 
 # Hard wall-clock bound for one AI hashtag-discovery call inside a refresh.
@@ -2081,13 +2081,78 @@ def refresh_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     return True, f"Added {added} new image(s); kept {len(existing)} existing.{extra}"
 
 
+def _normalize_news_url(url: str) -> str:
+    """Canonical dedupe key for a news-link URL (#80).
+
+    Conservative: strip whitespace, lowercase the whole URL and drop a
+    trailing slash. Deliberately lighter than ``normalize_image_url`` —
+    news links are article pages, not byte-compared assets, so scheme /
+    query collapsing is left alone (Google News redirect links differ
+    from the canonical article URL and must still match when re-found).
+    """
+    u = (url or "").strip().lower()
+    return u[:-1] if u.endswith("/") and len(u) > 1 else u
+
+
+def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+    """Re-fetch news links (sources) and ADD the new ones to the story.
+
+    Runs the same Google News search as save-time enrichment
+    (``news_fetcher.search_news``), then merges genuinely new links after
+    the existing ones — the stored list is never wiped, and verified
+    Stage-1 links keep their place (#62). Duplicates are detected by
+    normalized URL, so a source found again is not stored twice.
+    Never touches hashtags, images, or story content.
+
+    Fail-loud: a story with no topic, a missing story, or a search
+    failure raises RuntimeError with the honest cause — a network
+    failure is never reported as "nothing new". Returns (changed, note).
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — news links unchanged.")
+    try:
+        from tools.news_fetcher import news_fetcher
+        articles = news_fetcher.search_news(topic, limit=6) or []
+    except Exception as e:
+        raise RuntimeError(
+            f"News search failed ({type(e).__name__}: {e}) — "
+            "news links unchanged.")
+    existing = [lk for lk in (story["meta"].get("news_links") or [])
+                if isinstance(lk, dict) and lk.get("url")]
+    seen = {_normalize_news_url(lk["url"]) for lk in existing}
+    added: List[Dict[str, str]] = []
+    for a in articles:
+        url = (getattr(a, "link", "") or "").strip()
+        if not url:
+            continue
+        key = _normalize_news_url(url)
+        if key in seen:
+            continue
+        seen.add(key)
+        added.append({
+            "title": getattr(a, "title", "") or "",
+            "url": url,
+            "source": getattr(a, "source", "") or "",
+        })
+    if added:
+        update_story_fields(story_id, news_links=existing + added)
+        return True, (f"Added {len(added)} new news link(s); "
+                      f"kept {len(existing)} existing.")
+    return False, (f"No new news links found; kept {len(existing)} "
+                    "existing.")
+
+
 def _refresh_worker(story_id: str, kind: str, topic: str,
                     ai_engine: Optional[str] = None) -> None:
     """Background worker for one manual refresh kind. Never raises.
 
     Runs in a daemon thread so tab switches (st.rerun) can't stop it.
-    Per-kind locking: "hashtags" and "images" are independent and run
-    concurrently (#54) — each kind owns only its own busy flag and
+    Per-kind locking: "hashtags", "images" and "news" are independent and
+    run concurrently (#54, #80) — each kind owns only its own busy flag and
     outcome, so finishing never clears a sibling kind's state (#53).
     The outcome is recorded honestly (``succeeded`` / ``no_change`` /
     ``failed``) with the real detail in the note — a failure is never
@@ -2107,6 +2172,8 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
                 changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
             elif kind == "images":
                 changed, note = refresh_images(story_id, topic)
+            elif kind == "news":
+                changed, note = refresh_news_links(story_id, topic)
             elif kind == "reset":
                 changed, note = _do_reset(story_id, topic, ai_engine=ai_engine)
             else:
@@ -2115,7 +2182,7 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
         except Exception as e:
             status = "failed"
             label = {"hashtags": "Hashtag", "images": "Image",
-                     "reset": "Reset"}.get(kind, kind)
+                     "news": "News", "reset": "Reset"}.get(kind, kind)
             note = f"{label} refresh failed: {e}"
         try:
             _finish_refresh(story_id, kind, status, note or "")
@@ -2127,28 +2194,31 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
 
 def start_refresh(story_id: str, kind: str,
                   ai_engine: Optional[str] = None) -> Tuple[bool, str]:
-    """Kick off a background hashtag/image/reset refresh. Never raises.
+    """Kick off a background hashtag/image/news/reset refresh. Never raises.
 
-    ``kind`` is "hashtags", "images" or "reset". ``ai_engine`` (an engine
-    mode string or None) enables AI-assisted hashtag suggestions for the
-    hashtags and reset kinds — None means the "Enable AI processing"
-    toggle is off, in which case the worker fails loudly with a clear
-    message instead of silently falling back. The "reset" kind
-    destructively clears all hashtags, fetched images and news links and
-    re-fetches them fresh (manual uploads are never touched). The fetch
-    runs in a daemon thread, so changing tabs mid-refresh won't stop it.
-    Falls back to the story title when ``source_topic`` is missing so
-    older stories can still refresh.
+    ``kind`` is "hashtags", "images", "news" or "reset". ``ai_engine`` (an
+    engine mode string or None) enables AI-assisted hashtag suggestions
+    for the hashtags and reset kinds — None means the "Enable AI
+    processing" toggle is off, in which case the worker fails loudly with
+    a clear message instead of silently falling back. The "news" kind
+    re-fetches news links (sources) for the story's topic and merges new
+    ones in (never wipes). The "reset" kind destructively clears all
+    hashtags, fetched images and news links and re-fetches them fresh
+    (manual uploads are never touched). The fetch runs in a daemon
+    thread, so changing tabs mid-refresh won't stop it. Falls back to
+    the story title when ``source_topic`` is missing so older stories can
+    still refresh.
 
-    Concurrency (#54): "hashtags" and "images" are independent and may run
-    at the same time — a second kick is refused only for the SAME kind, or
-    when an exclusive kind ("reset", or save-time "enrich") is running.
-    "reset" stays exclusive: it refuses while ANY kind runs.
+    Concurrency (#54, #80): "hashtags", "images" and "news" are
+    independent and may run at the same time — a second kick is refused
+    only for the SAME kind, or when an exclusive kind ("reset", or
+    save-time "enrich") is running. "reset" stays exclusive: it refuses
+    while ANY kind runs.
 
     Returns (started, reason): ``reason`` is "" when the refresh started,
     otherwise a human-readable explanation of why it could not start.
     """
-    if kind not in ("hashtags", "images", "reset"):
+    if kind not in ("hashtags", "images", "news", "reset"):
         return False, f"Unknown refresh kind: {kind!r}."
     try:
         story = load_story(story_id)
