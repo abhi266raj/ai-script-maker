@@ -1130,6 +1130,15 @@ class _FakeSt:
     def code(self, body, **k):
         self.codes.append(body)
 
+    def text_input(self, label, type=None, key=None, **k):
+        # #159: Telegram bot-token setup field; tests leave it blank so the
+        # "Save Telegram bot" button is never clicked in existing tests.
+        return ""
+
+    def spinner(self, text=None, **k):
+        # #159: share-progress spinner; a no-op context manager in tests.
+        return _FakeCtx()
+
 
 def _ui_with_fake_st(clicks=()):
     """Import library_ui bound to a fake streamlit; restores sys.modules."""
@@ -1140,7 +1149,8 @@ def _ui_with_fake_st(clicks=()):
         fake_mod = types.ModuleType("streamlit")
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
-                     "link_button", "code", "toast"):
+                     "link_button", "code", "toast",
+                     "text_input", "spinner"):  # #159 Telegram setup/share
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod

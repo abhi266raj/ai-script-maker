@@ -2275,6 +2275,25 @@ def _whatsapp_app_installed() -> bool:
     return any(_os.path.isdir(p) for p in candidates)
 
 
+def _story_video_path(story_id: str, meta: dict) -> Optional[str]:
+    """Absolute path of the story's attached video file, or None.
+
+    Shared by WhatsApp (#150) and Telegram (#159) sharing: the metadata
+    may reference a video file that is missing from disk, which raises
+    RuntimeError loudly instead of sharing without the video.
+    """
+    video_file = (meta.get("video_file") or "").strip()
+    if not video_file:
+        return None
+    vpath = lib.media_path(story_id, video_file)
+    if vpath is None:
+        raise RuntimeError(
+            f"Story references video '{video_file}' but the file is missing "
+            f"from the stories directory."
+        )
+    return str(vpath.resolve())
+
+
 def _whatsapp_video_path(story_id: str, meta: dict) -> Optional[str]:
     """Return the absolute path of the story's attached video for WhatsApp sharing.
 
@@ -2288,16 +2307,77 @@ def _whatsapp_video_path(story_id: str, meta: dict) -> Optional[str]:
     attached. Raises RuntimeError (fail loudly) if the metadata references
     a video file that is missing from disk.
     """
-    video_file = (meta.get("video_file") or "").strip()
-    if not video_file:
-        return None
-    vpath = lib.media_path(story_id, video_file)
-    if vpath is None:
-        raise RuntimeError(
-            f"Story references video '{video_file}' but the file is missing "
-            f"from the stories directory."
-        )
-    return str(vpath.resolve())
+    return _story_video_path(story_id, meta)
+
+
+def _telegram_share_parts(meta: dict):
+    """(caption, links_text) for the Telegram bot share — pure, testable.
+
+    #159: the share is two messages. The caption (title, then hashtags
+    space-separated) rides with the video — or becomes the first text
+    message when the story has no video. links_text is one "site: url"
+    line per news link (the second message); "" when there are no links.
+    The formats mirror _compose_news_tags_text (#151): title → tags →
+    links, site name never blank, URLs deduped.
+    """
+    import urllib.parse as _up
+    title = (meta.get("title") or "").strip() or "Untitled Story"
+    tags = [t for t in (meta.get("hashtags") or []) if t]
+    caption = title + ("\n" + " ".join(tags) if tags else "")
+    seen_urls = set()
+    link_lines = []
+    for lk in (meta.get("news_links") or []):
+        if not isinstance(lk, dict):
+            continue
+        url = (lk.get("url") or "").strip()
+        if not url or url in seen_urls:
+            continue
+        seen_urls.add(url)
+        source = (lk.get("source") or "").strip()
+        if not source:
+            try:
+                source = _up.urlparse(url).netloc or url
+            except Exception:
+                source = url
+        link_lines.append(f"{source}: {url}")
+    return caption, "\n".join(link_lines)
+
+
+def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
+    """Share the story to Telegram via the user's bot. Returns a summary.
+
+    #159: two messages — (1) the video with the caption (title + hashtags),
+    or the caption as a plain text message when the story has no video
+    attached; (2) the news links. The bot token comes from prefs
+    (``telegram_bot_token``); the chat id is discovered once from the
+    bot's updates and remembered (``telegram_chat_id``).
+
+    Raises TelegramShareError (or RuntimeError for a metadata-referenced
+    video file missing from disk) with an actionable message on any
+    failure — never a silent no-op.
+    """
+    from tools import telegram_share as _tg
+    prefs = lib.load_prefs()
+    token = (prefs.get("telegram_bot_token") or "").strip()
+    chat_id = prefs.get("telegram_chat_id")
+    if not chat_id:
+        # Raises loudly (including when no token is configured yet).
+        chat_id = _tg.discover_chat_id(token)
+        lib.save_prefs({"telegram_chat_id": chat_id})
+    caption, links_text = _telegram_share_parts(meta)
+    video_path = _story_video_path(story_id, meta)  # None, or raises loudly
+    sent = []
+    if video_path:
+        _tg.send_video(token, chat_id, video_path, caption)
+        sent.append("video + caption")
+    else:
+        _tg.send_text(token, chat_id, caption)
+        sent.append("caption as text (this story has no video attached)")
+    if links_text:
+        _tg.send_text(token, chat_id, links_text)
+        n_links = len(links_text.splitlines())
+        sent.append(f"{n_links} news link{'s' if n_links != 1 else ''}")
+    return "Sent to Telegram: " + ", then ".join(sent) + "."
 
 
 def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
@@ -2321,6 +2401,14 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
     appended to the WhatsApp share text (the URL scheme cannot carry media,
     so the user attaches it manually in WhatsApp). A missing video file
     fails loudly instead of sending without it.
+
+    #159: "Share via Telegram" sends the story through the user's own
+    Telegram bot (Bot API) in two messages — the video with a caption
+    (title + hashtags), then the news links. The tg:// deep link cannot
+    carry a video file, so the bot route is the one that delivers video.
+    The bot token is configured once, right here in the popover; a missing
+    token shows setup steps instead of a dead button — never a silent
+    no-op.
     """
     with st.popover("", icon=_TB_ICON_SHARE, key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
@@ -2371,6 +2459,56 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                 # via the browser fallback when clicked.
                 st.caption("WhatsApp Mac app not installed — "
                            "sharing will open WhatsApp in your browser.")
+            # #159: Telegram via the user's bot — video + caption, then
+            # news links (two messages). Server-side, like WhatsApp above:
+            # the Streamlit server runs on the user's Mac and POSTs the
+            # local video file to the Bot API directly.
+            _tg_token = (lib.load_prefs().get("telegram_bot_token") or "").strip()
+            if _tg_token:
+                if st.button(
+                    "Share via Telegram",
+                    key=f"lib_tg_{story_id}",
+                    help="Send the video + caption, then the news links, "
+                         "to Telegram via your bot",
+                    use_container_width=True,
+                ):
+                    try:
+                        with st.spinner("Sharing to Telegram…"):
+                            _tg_msg = _share_via_telegram_bot(story_id, meta)
+                    except Exception as e:
+                        st.error(f"Couldn't share via Telegram: {e}")
+                    else:
+                        st.success(_tg_msg)
+            else:
+                # Fail loudly with guided setup — never a dead button.
+                with st.expander("Set up Telegram sharing"):
+                    st.markdown(
+                        "Share the **video + caption + news links** straight "
+                        "to Telegram through your own bot (two messages):\n"
+                        "1. In Telegram, open **@BotFather** → `/newbot` → "
+                        "copy the token.\n"
+                        "2. Open your new bot and tap **Start** (send it a "
+                        "first message).\n"
+                        "3. Paste the token below and save.")
+                    _tok_in = st.text_input(
+                        "Bot token", type="password",
+                        key=f"lib_tg_tok_{story_id}")
+                    if st.button("Save Telegram bot",
+                                 key=f"lib_tg_tok_save_{story_id}",
+                                 use_container_width=True):
+                        _tok_in = (_tok_in or "").strip()
+                        if not _tok_in:
+                            st.error("Paste the bot token from @BotFather first.")
+                        else:
+                            lib.save_prefs({"telegram_bot_token": _tok_in})
+                            _saved = ((lib.load_prefs().get("telegram_bot_token")
+                                       or "").strip())
+                            if _saved != _tok_in:
+                                st.error("Couldn't save the token — the prefs "
+                                         "file isn't writable.")
+                            else:
+                                st.success("Telegram bot saved — you can share now.")
+                                st.rerun()
         else:
             st.caption("No news links or hashtags to share yet.")
 

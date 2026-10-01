@@ -260,7 +260,11 @@ def test_no_upload_expander(libdir, lui_st):
     lui._render_story_detail(sid)
 
     expanders = [e for e in fake.events if e[0] == "expander"]
-    assert not expanders, f"upload expander must be gone (#94); saw {expanders}"
+    # #94's intent is the *upload* expander; the Telegram share popover
+    # legitimately adds its own unrelated setup expander (#159).
+    upload_expand = [e for e in expanders if "upload" in e[1].lower()]
+    assert not upload_expand, \
+        f"upload expander must be gone (#94); saw {upload_expand}"
 
 
 def test_upload_row_title_left_button_right(libdir, lui_st):
