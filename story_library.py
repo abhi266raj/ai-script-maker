@@ -68,8 +68,12 @@ BUSY_STATES = ("pending", "refreshing", "running")
 #
 # - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"``,
 #   ``"images"`` and ``"news"`` are independent and may run concurrently
-#   (#54, #80); ``"reset"`` is destructive and exclusive; ``"enrich"`` is
-#   the save-time enrichment and also exclusive with manual refreshes.
+#   (#54, #80); ``"more_images"`` / ``"more_news"`` (#91) are the explicit
+#   "load more" batches — independent of everything except their sibling
+#   kind (``"images"``/``"more_images"`` and ``"news"``/``"more_news"``
+#   both write the same field, so each pair is mutually exclusive);
+#   ``"reset"`` is destructive and exclusive; ``"enrich"`` is the
+#   save-time enrichment and also exclusive with manual refreshes.
 # - ``refresh_busy`` (frontmatter, list of kind names): the kinds currently
 #   running. A list round-trips through _dump_frontmatter/_parse_frontmatter
 #   (nested dicts do not — never store one in frontmatter).
@@ -87,8 +91,19 @@ BUSY_STATES = ("pending", "refreshing", "running")
 # _meta_write_lock(story_id): concurrent per-kind workers must not clobber
 # each other's updates. Lock order is always kind-lock (_ENRICH_LOCKS) THEN
 # meta-lock — never the reverse (deadlock avoidance).
-_REFRESH_KINDS = ("hashtags", "images", "news", "reset", "enrich")
+_REFRESH_KINDS = ("hashtags", "images", "news", "more_images", "more_news",
+                 "reset", "enrich")
 _EXCLUSIVE_KINDS = ("reset", "enrich")
+
+# #91: kinds that write the SAME story field must not run together — the
+# second writer would silently clobber the first's appended batch
+# (last-writer-wins on the whole list). "Load more images" is refused
+# while "Update Images" runs and vice versa; same for the news pair.
+_SIBLING_KINDS = {"images": "more_images", "more_images": "images",
+                  "news": "more_news", "more_news": "news"}
+
+# #91: one "load more" click fetches at most this many genuinely new items.
+_LOAD_MORE_BATCH = 5
 
 # Hard wall-clock bound for one AI hashtag-discovery call inside a refresh.
 _AI_HASHTAG_TIMEOUT_S = 45
@@ -2296,15 +2311,138 @@ def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
                    "existing.")
 
 
+def _fetch_more_images(topic: str, existing_norm_urls: Set[str],
+                       batch: int = _LOAD_MORE_BATCH
+                       ) -> List[Tuple[str, Optional[str]]]:
+    """Deeper image-candidate pool for \"load more\" (#91).
+
+    Goes wider than ``_fetch_images_for_story``: 12 topic articles (vs 6)
+    and up to 4 images per article page (vs 3), then the web image search
+    as a final fallback — every candidate filtered to exclude the
+    already-stored normalized URLs, so the batch is genuinely new by URL
+    before the merge's content/perceptual dedupe runs. Extraction reuses
+    the same article-scoped path as refresh (#86), so site chrome stays
+    out here too. Pure fetch — no persistence. Bounded like the refresh
+    path; a stuck host raises TimeoutError naming the step.
+    """
+    found: List[Tuple[str, Optional[str]]] = []
+    seen = set(existing_norm_urls)
+    articles = _fetch_news_articles(topic, limit=12)
+    urls = [getattr(a, "link", "") or "" for a in articles]
+    for url, alt in _run_bounded(
+            lambda: _grab_article_images(urls, per_page=4),
+            90.0, "load-more image fetch"):
+        key = normalize_image_url(url)
+        if key and key not in seen:
+            seen.add(key)
+            found.append((url, alt))
+            if len(found) >= batch:
+                return found
+    if len(found) < batch and topic.strip():
+        for url in _search_web_images(topic.strip(), limit=10):
+            key = normalize_image_url(url)
+            if key and key not in seen:
+                seen.add(key)
+                found.append((url, None))
+                if len(found) >= batch:
+                    break
+    return found
+
+
+def load_more_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
+    """Fetch ONE more batch (up to 5) of genuinely new images (#91).
+
+    The sanctioned way past the #83 fetched-images cap: the cap is
+    bypassed by this explicit user request, but dedupe is never bypassed
+    — every candidate goes through the full ``_merge_story_images``
+    pipeline (alt-text filter, normalized-URL, SHA-256 content and dHash
+    perceptual dedupe, #21/#44). New images are appended after the
+    existing list; the stored list is never wiped and manual uploads are
+    never touched.
+
+    Fail-loud: a missing story, missing topic, or fetch failure raises
+    RuntimeError with the honest cause. When the deeper pool yields
+    nothing new, this returns ``(False, \"No more images found …\")`` —
+    a ``no_change`` outcome, never a faked success. Never touches
+    hashtags, news links, or story content.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — images unchanged.")
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — images unchanged.")
+    existing = list(story["meta"].get("image_urls") or [])
+    existing_hashes = list(story["meta"].get("image_hashes") or [])
+    existing_phashes = list(story["meta"].get("image_phashes") or [])
+    existing_norm = {normalize_image_url(u) for u in existing}
+    try:
+        fresh = _fetch_more_images(topic, existing_norm,
+                                   batch=_LOAD_MORE_BATCH)
+    except TimeoutError as e:
+        return False, (f"Load-more timed out ({e}); "
+                       f"kept {len(existing)} existing.")
+    # The merge ALWAYS runs so stored duplicates are collapsed and
+    # missing hashes backfilled (#57) — and so the batch survives the
+    # same dedupe as a refresh. #91: no total-count trim is applied here;
+    # the #83 cap is bypassed by this explicit user request.
+    merged_urls, merged_hashes, merged_phashes, stats = _merge_story_images(
+        existing, existing_hashes, existing_phashes, fresh)
+    added = stats["added"]
+    if added:
+        update_story_fields(story_id, image_urls=merged_urls,
+                            image_hashes=merged_hashes,
+                            image_phashes=merged_phashes)
+        return True, (f"Added {added} more image(s); "
+                      f"{len(merged_urls)} total.")
+    note = f"No more images found; kept {len(merged_urls)} existing."
+    dupes = stats["dup_url"] + stats["dup_content"] + stats["dup_visual"]
+    if dupes:
+        note += f" ({dupes} already stored.)"
+    return False, note
+
+
+def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+    """Fetch ONE more batch (up to 5) of genuinely new news links (#91).
+
+    The sanctioned way past the #82 5-link target: this explicit user
+    request composes with ``_fetch_news_link_candidates`` (#82's reusable
+    primitive — query variants, normalized-URL dedupe, fail-loud) and
+    asks for one more batch of links that are not already stored,
+    appended after the existing ones, which are never wiped and never
+    reordered. Fail-loud: a missing story, missing topic, or search
+    failure raises RuntimeError with the honest cause; a shortfall
+    returns ``(False, "No more news links found")`` — never a faked
+    success. Never touches hashtags, images, or story content.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — news links unchanged.")
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to search — news links unchanged.")
+    existing = [lk for lk in (story["meta"].get("news_links") or [])
+                if isinstance(lk, dict) and lk.get("url")]
+    added = _fetch_news_link_candidates(
+        topic, count=_LOAD_MORE_BATCH,
+        exclude_urls=[lk["url"] for lk in existing])
+    if added:
+        update_story_fields(story_id, news_links=existing + added)
+        return True, (f"Added {len(added)} more news link(s); "
+                      f"{len(existing) + len(added)} total.")
+    return False, (f"No more news links found; kept {len(existing)} "
+                    "existing.")
+
+
 def _refresh_worker(story_id: str, kind: str, topic: str,
                     ai_engine: Optional[str] = None) -> None:
     """Background worker for one manual refresh kind. Never raises.
 
     Runs in a daemon thread so tab switches (st.rerun) can't stop it.
-    Per-kind locking: "hashtags", "images" and "news" are independent and
-    run concurrently (#54, #80) — each kind owns only its own busy flag and
-    outcome, so finishing never clears a sibling kind's state (#53).
-    The outcome is recorded honestly (``succeeded`` / ``no_change`` /
+    Per-kind locking: "hashtags", "images", "news", "more_images" and
+    "more_news" are independent and run concurrently (#54, #80, #91) —
+    each kind owns only its own busy flag and outcome, so finishing never
+    clears a sibling kind's state (#53). The outcome is recorded honestly (``succeeded`` / ``no_change`` /
     ``failed``) with the real detail in the note — a failure is never
     written as a success, and the toggle-off AI error surfaces verbatim.
     """
@@ -2324,6 +2462,10 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
                 changed, note = refresh_images(story_id, topic)
             elif kind == "news":
                 changed, note = refresh_news_links(story_id, topic)
+            elif kind == "more_images":
+                changed, note = load_more_images(story_id, topic)
+            elif kind == "more_news":
+                changed, note = load_more_news_links(story_id, topic)
             elif kind == "reset":
                 changed, note = _do_reset(story_id, topic, ai_engine=ai_engine)
             else:
@@ -2332,7 +2474,9 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
         except Exception as e:
             status = "failed"
             label = {"hashtags": "Hashtag", "images": "Image",
-                     "news": "News", "reset": "Reset"}.get(kind, kind)
+                     "news": "News", "more_images": "Load more images",
+                     "more_news": "Load more news",
+                     "reset": "Reset"}.get(kind, kind)
             note = f"{label} refresh failed: {e}"
         try:
             _finish_refresh(story_id, kind, status, note or "")
@@ -2346,29 +2490,36 @@ def start_refresh(story_id: str, kind: str,
                   ai_engine: Optional[str] = None) -> Tuple[bool, str]:
     """Kick off a background hashtag/image/news/reset refresh. Never raises.
 
-    ``kind`` is "hashtags", "images", "news" or "reset". ``ai_engine`` (an
-    engine mode string or None) enables AI-assisted hashtag suggestions
-    for the hashtags and reset kinds — None means the "Enable AI
-    processing" toggle is off, in which case the worker fails loudly with
-    a clear message instead of silently falling back. The "news" kind
-    re-fetches news links (sources) for the story's topic and merges new
-    ones in (never wipes). The "reset" kind destructively clears all
-    hashtags, fetched images and news links and re-fetches them fresh
-    (manual uploads are never touched). The fetch runs in a daemon
-    thread, so changing tabs mid-refresh won't stop it. Falls back to
-    the story title when ``source_topic`` is missing so older stories can
-    still refresh.
+    ``kind`` is "hashtags", "images", "news", "more_images", "more_news" or
+    "reset". ``ai_engine`` (an engine mode string or None) enables
+    AI-assisted hashtag suggestions for the hashtags and reset kinds —
+    None means the "Enable AI processing" toggle is off, in which case
+    the worker fails loudly with a clear message instead of silently
+    falling back. The "news" kind re-fetches news links (sources) for the
+    story's topic and merges new ones in (never wipes). The "more_images"
+    / "more_news" kinds (#91) fetch ONE more batch (up to 5) of genuinely
+    new images / news links past the #83/#82 caps — the cap is bypassed
+    by this explicit user request, dedupe never is. The "reset" kind
+    destructively clears all hashtags, fetched images and news links and
+    re-fetches them fresh (manual uploads are never touched). The fetch
+    runs in a daemon thread, so changing tabs mid-refresh won't stop it.
+    Falls back to the story title when ``source_topic`` is missing so
+    older stories can still refresh.
 
-    Concurrency (#54, #80): "hashtags", "images" and "news" are
-    independent and may run at the same time — a second kick is refused
-    only for the SAME kind, or when an exclusive kind ("reset", or
+    Concurrency (#54, #80, #91): "hashtags", "images", "news",
+    "more_images" and "more_news" are independent and may run at the same
+    time — a second kick is refused only for the SAME kind, for the
+    SIBLING kind that writes the same field ("images"↔"more_images",
+    "news"↔"more_news" — concurrent writers would silently clobber each
+    other's appended batch), or when an exclusive kind ("reset", or
     save-time "enrich") is running. "reset" stays exclusive: it refuses
     while ANY kind runs.
 
     Returns (started, reason): ``reason`` is "" when the refresh started,
     otherwise a human-readable explanation of why it could not start.
     """
-    if kind not in ("hashtags", "images", "news", "reset"):
+    if kind not in ("hashtags", "images", "news", "more_images",
+                    "more_news", "reset"):
         return False, f"Unknown refresh kind: {kind!r}."
     try:
         story = load_story(story_id)
@@ -2386,6 +2537,12 @@ def start_refresh(story_id: str, kind: str,
         elif kind in busy:
             return False, (f"A {kind} refresh is already running — "
                            "try again shortly.")
+        elif _SIBLING_KINDS.get(kind) in busy:
+            # #91: the sibling writes the same story field — a concurrent
+            # run would silently clobber the other's appended batch.
+            sibling = _SIBLING_KINDS[kind]
+            return False, (f"A {sibling} refresh is already running — "
+                           "try again when it's done.")
         elif busy & set(_EXCLUSIVE_KINDS):
             blocker = "reset" if "reset" in busy else "enrichment"
             return False, (f"A {blocker} is already running — "

@@ -362,4 +362,5 @@ def test_news_hint_suppressed_while_running():
     import inspect
     lui, _fake = _ui_with_fake_st()
     src = inspect.getsource(lui._render_story_detail)
-    assert '{"news", "reset", "enrich"}' in src
+    # #91: more_news also re-fetches links, so it joins the set.
+    assert '{"news", "more_news", "reset", "enrich"}' in src

@@ -488,6 +488,10 @@ def inject_library_css() -> None:
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
     div[data-testid="stElementContainer"]:has([data-marker="lib-spin-news"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-more-images"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
+    div[data-testid="stElementContainer"]:has([data-marker="lib-spin-more-news"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button::before,
     /* #81: the reset spinner selector is the SAME adjacent-sibling shape as
        hashtags/images/news — the lib-spin-reset marker's container
        immediately followed by the popover trigger's container. The old
@@ -847,6 +851,46 @@ def _render_kind_button(*, story_id: str, kind: str, label: str,
                      else f"Could not start the {kick_label} refresh.")
 
 
+def _render_load_more_button(*, story_id: str, kind: str, label: str,
+                             button_key: str, help_text: str,
+                             busy_kinds) -> None:
+    """Section-level "Load more" button (#91).
+
+    #53 HIG progress: the label NEVER changes; while ``kind`` runs the
+    button shows the CSS spinner (``lib-spin-<kind>`` marker, painted via
+    ::before in front of the label) and stays disabled — no second click.
+    The outcome toasts via the existing outcome path. ``kind`` is
+    "more_images" or "more_news".
+
+    Disable scope: the button disables while ITS kind runs, and while its
+    SIBLING kind runs ("images"↔"more_images", "news"↔"more_news" — the
+    sibling writes the same story field, so running together would
+    silently clobber the other's appended batch; start_refresh refuses
+    the kick too). While the sibling runs the button is merely blocked,
+    not working — no spinner then. Other kinds (hashtags, the other
+    pair) stay independent.
+    """
+    running = kind in busy_kinds
+    # #91: the sibling kind writes the same story field — blocked (not
+    # working) while it runs, so no spinner.
+    _sibling = lib._SIBLING_KINDS.get(kind)
+    blocked = bool(_sibling and _sibling in busy_kinds)
+    # Marker uses hyphens (CSS convention: lib-spin-more-images); the
+    # kind name itself keeps underscores for frontmatter/Python.
+    _spin_marker = f"lib-spin-{kind.replace('_', '-')}"
+    if running:
+        st.markdown(f'<div data-marker="{_spin_marker}" style="display:none"></div>',
+                    unsafe_allow_html=True)
+    if st.button(label, key=button_key, help=help_text,
+                 disabled=running or blocked):
+        ok, reason = lib.start_refresh(story_id, kind)
+        if ok:
+            st.rerun()
+        else:
+            st.error(f"Could not start: {reason}" if reason
+                     else "Could not start.")
+
+
 def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
     """Toolbar Reset: destructive confirm popover (red "Reset media" /
     standard "Cancel", #58).
@@ -906,6 +950,7 @@ def _refresh_toast_text(kind: str, status: str, note: str) -> str:
     head, and the worker's honest note.
     """
     label = {"hashtags": "Hashtags", "images": "Images", "news": "News",
+             "more_images": "More images", "more_news": "More news",
              "reset": "Reset", "enrich": "Enrichment"}.get(kind, kind)
     head = {"succeeded": f"{label} updated",
             "no_change": f"{label}: nothing new",
@@ -1811,7 +1856,16 @@ def _render_story_detail(story_id: str) -> None:
                         else:
                             st.error("Could not remove the image — "
                                      "the story may have been deleted.")
-    elif not (_busy_kinds & {"images", "reset", "enrich"}):
+        # #91: explicit "load more" — one more batch (up to 5) of genuinely
+        # new images past the #83 cap. The button owns its loading state
+        # (spinner + disabled while more_images runs).
+        _render_load_more_button(
+            story_id=story_id, kind="more_images",
+            label="Load more images",
+            button_key=f"lib_moreimg_{story_id}",
+            help_text="Fetch up to 5 more images",
+            busy_kinds=_busy_kinds)
+    elif not (_busy_kinds & {"images", "more_images", "reset", "enrich"}):
         # #54: only kinds that (re-)fetch images suppress the hint — a
         # concurrent hashtag run leaves it visible.
         st.caption("No images yet — try Reset or upload manually below.")
@@ -1846,7 +1900,16 @@ def _render_story_detail(story_id: str) -> None:
                         st.error(str(e))
                     else:
                         st.rerun()
-    elif not (_busy_kinds & {"news", "reset", "enrich"}):
+        # #91: explicit "load more" — one more batch (up to 5) of genuinely
+        # new news links past the #82 cap. The button owns its loading
+        # state (spinner + disabled while more_news runs).
+        _render_load_more_button(
+            story_id=story_id, kind="more_news",
+            label="Load more news",
+            button_key=f"lib_morenews_{story_id}",
+            help_text="Fetch up to 5 more news links",
+            busy_kinds=_busy_kinds)
+    elif not (_busy_kinds & {"news", "more_news", "reset", "enrich"}):
         # #54/#80: only kinds that re-fetch links suppress the hint.
         st.caption("No news links yet.")
 
