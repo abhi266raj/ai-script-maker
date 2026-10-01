@@ -1,7 +1,8 @@
 """v1.6.1 (#68) — hashtag/news-link chip × overlaps the label.
 
 Root cause: #51 moved the × clearance into the pill's own
-``padding-right: 34px`` (22px target + 6px inset + 6px breathing room),
+``padding-right: 44px`` (22px target + 6px inset + 16px breathing room —
+#68 follow-up: user asked for more space for the ×),
 but the selector used a DESCENDANT combinator after the marker's
 ``stElementContainer`` — while the real DOM (verified, and used by every
 other marker-scoped rule in this block) has the marker container as an
@@ -65,7 +66,7 @@ def _css_no_comments(css: str) -> str:
 # ---------------------------------------------------------------------------
 
 def test_chip_clearance_uses_sibling_combinator():
-    """The 34px padding-right rule must use the adjacent-sibling form
+    """The 44px padding-right rule must use the adjacent-sibling form
     (marker container + stLayoutWrapper > stHorizontalBlock), exactly
     like every other marker-scoped rule in the block. A descendant
     combinator never matches the real DOM — that was #68."""
@@ -73,7 +74,7 @@ def test_chip_clearance_uses_sibling_combinator():
     sel = _marker_scoped_selector(css, ".lib-chip")
     assert "+ div" in sel and "stLayoutWrapper" in sel, \
         f"chip clearance rule does not use the sibling combinator: {sel!r}"
-    assert "padding-right: 34px !important;" in css
+    assert "padding-right: 44px !important;" in css
 
 
 def test_chip_clearance_descendant_form_is_gone():
@@ -106,6 +107,7 @@ def test_chip_x_target_still_inside_pill():
     css, _ = _capture_library_css()
     assert "padding-right: 30px" not in css, \
         "stale column-padding × reservation reintroduced"
-    # 34px = 22px target + 6px inset + 6px breathing room.
-    assert "padding-right: 34px !important;" in css
+    # #68 follow-up: 44px = 22px target + 6px inset + 16px breathing
+    # room — the user asked for MORE space for the ×.
+    assert "padding-right: 44px !important;" in css
     assert "right: 6px !important;" in css

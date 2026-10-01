@@ -280,8 +280,10 @@ def inject_library_css() -> None:
     /* Chips inside scroll rows: single line, never clipped by the ×.
        #51: the × now sits INSIDE the pill as a macOS token-field remove
        glyph (22px target, 6px from the pill's trailing edge), so the
-       pill's own padding-right carries the clearance: 34px = 22px
-       target + 6px inset + 6px breathing room before the label. The
+       pill's own padding-right carries the clearance: 44px = 22px
+       target + 6px inset + 16px breathing room before the label
+       (#68 follow-up: user asked for MORE space for the × — 34px's 6px
+       breathing room was too tight).
        #25/#26 no-truncation guarantee now lives here, in the chip —
        the column no longer reserves padding for the × (rule removed).
        #68 ROOT CAUSE: this selector previously used a DESCENDANT
@@ -295,7 +297,7 @@ def inject_library_css() -> None:
        sibling form below; this one must too. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] .lib-chip {
-        padding-right: 34px !important;
+        padding-right: 44px !important;
         white-space: nowrap !important;
         width: fit-content !important;  /* #56: the pill hugs its label —
            never wider than content + padding, even if an ancestor rule
@@ -331,6 +333,24 @@ def inject_library_css() -> None:
         object-fit: cover !important;
         border-radius: 10px !important;
         display: block !important;
+    }
+    /* #68 FOLLOW-UP (bottom-aligned ×): the lib-x-r/lib-x-l marker divs
+       are display:none themselves, but their stElementContainer wrapper
+       still occupies one inter-element gap in the column's vertical
+       block — the exact #24 / #53 pattern (lib-x- markers were left
+       untouched by those fixes). The column becomes taller than the pill,
+       so the chip × — top: 50% + translateY(-50%) of the COLUMN — lands
+       BELOW the pill's vertical center: bottom-aligned instead of
+       vertically centered (user screenshot, dark mode). Collapse the
+       wrapper; the `+` sibling selectors above keep matching on DOM
+       order regardless of display. Image cards are unaffected: their ×
+       is pinned top: 4px of the column, which is still the image's top
+       edge once the wrapper collapses. Scoped to the hscroll rows so
+       no other marker usage is touched. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"]) {
+        display: none !important;
     }
     /* × / ✎ overlay buttons float OVER their card. Real DOM per item column:
        div[data-testid="stColumn"] > div[data-testid="stVerticalBlock"] >
@@ -532,6 +552,16 @@ def inject_library_css() -> None:
         [data-testid="stPopover"] [data-testid="stPopoverButton"]:focus-visible {
         outline: 2px solid currentColor !important;
         outline-offset: 2px !important;
+    }
+    /* #68 follow-up: the story title never shows Streamlit's heading-anchor
+       🔗 link icon. Streamlit appends that anchor to h1–h6 rendered through
+       st.markdown — including the legacy raw-HTML <h2 class="lib-doc-title">
+       title, which is what the user's screenshot showed. #60 replaced the h2
+       with the glyph + popover (title now bold text, no heading possible),
+       so on current code this rule is belt-and-braces: if any build ever
+       renders the title as a heading again, the chrome stays hidden. */
+    .lib-doc-title a {
+        display: none !important;
     }
     .lib-empty {
         text-align: center;
@@ -952,12 +982,12 @@ def _chip_col_weights(labels) -> list:
     sizer; these weights are the fallback so a missed selector can only
     ever produce a *proportionally* sized column, never a full-width one.
 
-    Weight tracks the rendered pill width: label length plus ~6 chars for
-    the pill's fixed horizontal padding (12px left + 34px × clearance ≈
-    46px at ~7.5px/char). The floor keeps degenerate labels tappable.
+    Weight tracks the rendered pill width: label length plus ~7 chars for
+    the pill's fixed horizontal padding (12px left + 44px × clearance ≈
+    56px at ~7.5px/char). The floor keeps degenerate labels tappable.
     Pure (no Streamlit) so it is unit-testable.
     """
-    return [max(len(str(_l)), 4) + 6 for _l in labels]
+    return [max(len(str(_l)), 4) + 7 for _l in labels]
 
 
 def _fm_warmup_button_props(state: dict) -> tuple:
