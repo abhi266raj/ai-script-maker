@@ -381,17 +381,9 @@ def inject_library_css() -> None:
         color: inherit !important;
         border-color: rgba(128, 128, 128, 0.7) !important;
     }
-    /* Detail action dropdowns (Share ⌄ / Copy ⌄) share the same system: one
-       gap, top-aligned in their columns.
-       Marker-scoped: a hidden [data-marker="lib-actions"] div sits
-       directly before the actions st.columns() call. The copy buttons
-       render inside an iframe (components.html) and get their height from
-       _LIB_ACTION_BTN_H_PX in Python — same value, same system. */
-    div[data-testid="stElementContainer"]:has([data-marker="lib-actions"])
-        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] {
-        gap: var(--lib-chip-gap) !important;
-        align-items: start !important;
-    }
+    /* v1.6 (#46): the Share/Copy dropdowns moved INTO the single detail
+       toolbar row, so the old marker-scoped actions-row rule is gone (dead
+       selector). The triggers now share the toolbar's own gap/alignment. */
     /* v1.6 (#27/#28/#30): the WhatsApp link button moved inside the Share
        popover, which renders in a portal outside the marker's subtree, so the
        old marker-scoped 38px height rule no longer applies. The popover's
@@ -487,8 +479,8 @@ def _inject_story_list_css() -> None:
        inside the popover) one gap lower than their plain-button siblings.
        Collapse the wrapper: CSS `+` sibling combinators and :has() match
        on DOM order regardless of display, so the red-trigger/red-button
-       rules below keep matching. Prefix-scoped: lib-x-/lib-actions/
-       lib-hscroll/lib-story-list markers are untouched. */
+       rules below keep matching. Prefix-scoped: lib-x-/lib-hscroll/
+       lib-story-list markers are untouched. */
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {
         display: none !important;
     }
@@ -1224,15 +1216,18 @@ def _whatsapp_share_url(text: str) -> str:
 
 
 def _render_share_popover(story_id: str, share_text: str) -> None:
-    """Share ⌄ dropdown (native popover, macOS HIG): sub-actions for the
+    """Share dropdown (native popover, macOS HIG): sub-actions for the
     story's news-links + hashtags share text.
+
+    The trigger label is plain "Share" — Streamlit's popover natively
+    renders its own chevron, so baking "⌄" into the label doubled it (#46).
 
     The redundant st.code(share_text) preview is gone (#27) — the dedicated
     Hashtags / News Links sections already show that content, and the text
     stays one click away via "Copy News Link + Hashtags". "Send via WhatsApp"
     deep-links straight into the installed WhatsApp Mac app (#28).
     """
-    with st.popover("Share ⌄", key=f"lib_sharepop_{story_id}",
+    with st.popover("Share", key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags"):
         if share_text:
             _copy_button("Copy News Link + Hashtags", share_text,
@@ -1248,12 +1243,13 @@ def _render_share_popover(story_id: str, share_text: str) -> None:
 
 
 def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
-    """Copy ⌄ dropdown (native popover, macOS HIG): Script / Script + Tags /
+    """Copy dropdown (native popover, macOS HIG): Script / Script + Tags /
     Script + Media / All — the same one-click copy texts as before, now
-    revealed as sub-actions. Each copy button owns its loading state
-    ("Copied ✓") via _copy_button — no second click.
+    revealed as sub-actions. The trigger label is plain "Copy" (native
+    chevron only — no baked-in "⌄", #46). Each copy button owns its loading
+    state ("Copied ✓") via _copy_button — no second click.
     """
-    with st.popover("Copy ⌄", key=f"lib_copypop_{story_id}",
+    with st.popover("Copy", key=f"lib_copypop_{story_id}",
                      help="Copy the screenplay in different formats"):
         if script_md:
             _copy_button("Script", _script_plain_text(script_md),
@@ -1271,21 +1267,6 @@ def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
             st.caption("No script to copy yet.")
 
 
-def _render_action_dropdowns(story_id: str, meta: dict, script_md: str) -> None:
-    """Share ⌄ / Copy ⌄ dropdown row (native popovers, macOS HIG).
-
-    The triggers are self-describing, so no vague "Actions" section header
-    is needed (#29). Copied texts are identical to the old flat buttons;
-    only the presentation changed (#30).
-    """
-    _share_text = _compose_news_tags_text(meta)
-    st.markdown('<div data-marker="lib-actions" style="display:none"></div>',
-                unsafe_allow_html=True)
-    _aa1, _aa2 = st.columns(2)
-    with _aa1:
-        _render_share_popover(story_id, _share_text)
-    with _aa2:
-        _render_copy_popover(story_id, meta, script_md)
 
 
 # Shared with --lib-act-h in inject_library_css: the copy button renders
@@ -1324,14 +1305,15 @@ def _copy_button(label: str, text: str, key: str) -> None:
     )
 
 
-# v1.6 (#38): story-detail toolbar column weights. Streamlit ellipsizes
-# ("…") any button/popover label wider than its column, so every action
-# column is weighted to fit its longest label state — "Updating Hashtags…",
-# "Updating Images…", "Resetting…", "Delete" + chevron. Delete stays
-# trailing; each total is unchanged (10.0) so the overall layout is
+# v1.6 (#38, #46): story-detail toolbar column weights. Streamlit
+# ellipsizes ("…") any button/popover label wider than its column, so every
+# action column is weighted to fit its longest label state — "Updating
+# Hashtags…", "Updating Images…", "Resetting…", "Delete" + chevron. Share /
+# Copy are short native-popover labels; a slim spacer keeps Delete visually
+# trailing. Each total is unchanged (10.0) so the overall layout is
 # preserved and the #24 baseline alignment is untouched.
-_DETAIL_TOOLBAR_WEIGHTS = [2.2, 2.0, 1.4, 2.7, 1.7]
-_TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.0, 6.6, 1.4]
+_DETAIL_TOOLBAR_WEIGHTS = [2.2, 2.0, 1.4, 1.1, 1.1, 0.5, 1.7]
+_TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
 
 
 def _render_story_detail(story_id: str) -> None:
@@ -1341,12 +1323,14 @@ def _render_story_detail(story_id: str) -> None:
         st.session_state.pop("lib_selected_story", None)
         return
     meta = story["meta"]
+    script_md = story["script"].strip()
+    _share_text = _compose_news_tags_text(meta)
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
-    # toolbar — Update Hashtags, Update Images, Reset — with Delete
-    # trailing. The title carries its own inline ✏️ edit icon next to the
-    # centered title text. Progress lives inside the initiating button
-    # (in-button loader); there are no detached progress messages.
+    # toolbar — Update Hashtags, Update Images, Reset, Share, Copy — with
+    # Delete trailing (#46). The title carries its own inline ✏️ edit icon
+    # next to the centered title text. Progress lives inside the initiating
+    # button (in-button loader); there are no detached progress messages.
     # Refreshes run in daemon threads, so tab switches never interrupt them.
     _status = meta.get("enrichment_status")
     _refresh_kind = meta.get("refresh_kind", "") if _status in lib.BUSY_STATES else ""
@@ -1373,8 +1357,9 @@ def _render_story_detail(story_id: str) -> None:
         )
 
     if _editing:
-        # Title edit mode: Save/Cancel lead, Delete stays trailing.
-        ec1, ec2, _esp, ec3 = st.columns(_TITLE_EDIT_TOOLBAR_WEIGHTS)
+        # Title edit mode: Save/Cancel lead, Share/Copy stay available,
+        # Delete stays trailing.
+        ec1, ec2, ec3, ec4, _esp, ec5 = st.columns(_TITLE_EDIT_TOOLBAR_WEIGHTS)
         with ec1:
             if st.button("Save", key=f"lib_title_save_{story_id}", type="primary"):
                 _new = (st.session_state.get(f"lib_title_{story_id}") or "").strip()
@@ -1387,37 +1372,39 @@ def _render_story_detail(story_id: str) -> None:
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
         with ec3:
+            _render_share_popover(story_id, _share_text)
+        with ec4:
+            _render_copy_popover(story_id, meta, script_md)
+        with ec5:
             _story_delete_popover()
     else:
-        tc2, tc3, tc4, _tsp, tc5 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
-        with tc2:
+        tc1, tc2, tc3, tc4, tc5, _tsp, tc6 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
+        with tc1:
             _loading = _refresh_kind == "hashtags"
             if st.button("Updating Hashtags…" if _loading else "Update Hashtags",
                          key=f"lib_tags_{story_id}",
                          help="Find hashtags for this story's topic and add them",
                          disabled=_busy):
                 _kick_refresh("hashtags", "hashtag")
-        with tc3:
+        with tc2:
             _loading = _refresh_kind == "images"
             if st.button("Updating Images…" if _loading else "Update Images",
                          key=f"lib_imgs_{story_id}",
                          help="Re-fetch news images for this story's topic",
                          disabled=_busy):
                 _kick_refresh("images", "image")
-        with tc4:
+        with tc3:
             # Reset is destructive: it confirms via the same native popover
             # pattern as Delete (red Yes / normal No). The trigger owns its
             # loading state ("Resetting…") and stays disabled while busy.
             _render_reset_popover(story_id, _busy, _refresh_kind, _ai_engine)
+        with tc4:
+            _render_share_popover(story_id, _share_text)
         with tc5:
+            _render_copy_popover(story_id, meta, script_md)
+        with tc6:
             _story_delete_popover()
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
-    script_md = story["script"].strip()
-
-    # Share / Copy dropdowns (compact, at top) so the user can grab anything
-    # without scrolling past the script. See _render_action_dropdowns for
-    # the #27/#28/#29/#30 rework notes.
-    _render_action_dropdowns(story_id, meta, script_md)
 
     # Title at top: big, multiline, centered, with a small inline edit icon.
     # While editing, a borderless editor takes its place (Save/Cancel live

@@ -1367,7 +1367,7 @@ def test_share_popover_renders_copy_and_whatsapp(monkeypatch):
     share_text = "https://example.com/a\n\n#DogShowdown #Funny"
     lui._render_share_popover("sid1", share_text)
     # Popover trigger is the self-describing dropdown (#30).
-    assert fake.popover_kwargs["label"] == "Share ⌄"
+    assert fake.popover_kwargs["label"] == "Share"
     assert fake.popover_kwargs["key"] == "lib_sharepop_sid1"
     # Copy button gets the exact share text…
     assert copies == [("Copy News Link + Hashtags", share_text, "n-sid1")]
@@ -1389,7 +1389,7 @@ def test_share_popover_empty_state(monkeypatch):
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
     lui._render_share_popover("sid1", "")
-    assert fake.popover_kwargs["label"] == "Share ⌄"
+    assert fake.popover_kwargs["label"] == "Share"
     assert fake.link_buttons == []
     assert fake.codes == []
 
@@ -1404,7 +1404,7 @@ def test_copy_popover_renders_four_actions(monkeypatch):
             "uploaded_images": []}
     script_md = "**Hook:** hello"
     lui._render_copy_popover("sid1", meta, script_md)
-    assert fake.popover_kwargs["label"] == "Copy ⌄"
+    assert fake.popover_kwargs["label"] == "Copy"
     assert fake.popover_kwargs["key"] == "lib_copypop_sid1"
     labels = [c[0] for c in copies]
     assert labels == ["Script", "Script + Tags", "Script + Media", "All"]
@@ -1426,23 +1426,21 @@ def test_copy_popover_empty_state(monkeypatch):
                         lambda label, text, key: (_ for _ in ()).throw(
                             AssertionError("copy must not render")))
     lui._render_copy_popover("sid1", {}, "")
-    assert fake.popover_kwargs["label"] == "Copy ⌄"
+    assert fake.popover_kwargs["label"] == "Copy"
     assert fake.codes == []
 
 
 def test_action_dropdowns_have_no_actions_header(monkeypatch):
-    # #29: the vague "Actions" lib-section header is gone — the Share ⌄ /
-    # Copy ⌄ triggers are self-describing.
-    lui, fake = _ui_with_fake_st()
-    monkeypatch.setattr(lui, "_copy_button",
-                        lambda label, text, key: None)
-    meta = {"news_links": [{"url": "https://example.com/a"}],
-            "hashtags": ["#X"]}
-    lui._render_action_dropdowns("sid1", meta, "some script")
-    section_headers = [m for m in fake.markup if "lib-section" in m]
-    assert section_headers == []
-    popover_labels = [p["label"] for p in fake.popovers]
-    assert popover_labels == ["Share ⌄", "Copy ⌄"]
+    # #29: the vague "Actions" lib-section header is gone — the Share /
+    # Copy triggers are self-describing. #46: the dropdowns now live in
+    # the single detail toolbar row, so the old separate-row helper is
+    # gone; assert at the source level that no "Actions" header markup
+    # remains and the helper was removed.
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    assert '<div class="lib-section">Actions</div>' not in src
+    assert "_render_action_dropdowns" not in src
 
 
 def test_reset_popover_idle_wiring():
@@ -1563,17 +1561,16 @@ def test_image_cards_share_one_baseline(monkeypatch):
 
 
 def test_actions_row_buttons_share_38px_height(monkeypatch):
-    """v1.6 (#27/#28/#30): the WhatsApp link button moved inside the Share
-    popover (portal — unreachable by the marker selector), so the old
-    marker-scoped 38px link-button rule is gone. The actions row still gets
-    its gap via the marker, and the copy-button iframe height still equals
-    the 38px action system."""
+    """v1.6 (#27/#28/#30, #46): the Share/Copy dropdowns moved INTO the
+    single detail toolbar row, so the old marker-scoped actions-row gap
+    rule is gone (dead selector — its DOM target no longer exists). The
+    triggers now share the toolbar's own gap/alignment. The copy-button
+    iframe height still equals the 38px action system."""
     lui, _fake = _ui_with_fake_st()
     css = _capture_library_css(lui, monkeypatch)
-    # Gap rule for the Share ⌄ / Copy ⌄ trigger row survives…
-    assert ('[data-marker="lib-actions"])\n'
-            '        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]') in css
-    # …but the flat-layout link-button height rule is gone (dead selector).
+    # The lib-actions marker rule is gone…
+    assert '[data-marker="lib-actions"]' not in css
+    # …and the flat-layout link-button height rule stays gone.
     assert '[data-testid="stLinkButton"] a' not in css
     assert lui._LIB_ACTION_BTN_H_PX == 38
 
@@ -1681,9 +1678,9 @@ def test_detail_toolbar_weights_fit_full_labels():
     column, and "Update Hashtags"/"Update Images" also showed "…". Every
     action column must be weighted to fit its longest label state
     ("Updating Hashtags…", "Updating Images…", "Resetting…", "Delete" +
-    chevron). Delete stays the trailing (last) column and each toolbar
-    total is unchanged (10.0) so the overall layout — and the #24 baseline
-    alignment — is preserved."""
+    chevron). #46: Share/Copy joined the same row — Delete stays the
+    trailing (last) column and each toolbar total is unchanged (10.0) so
+    the overall layout — and the #24 baseline alignment — is preserved."""
     lui, _fake = _ui_with_fake_st()
     assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.0
     assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0
@@ -1692,7 +1689,9 @@ def test_detail_toolbar_weights_fit_full_labels():
     assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 2.0  # Update Hashtags
     assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 1.8  # Update Images
     assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 1.3  # Reset popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.5  # Delete popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.0  # Share popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Copy popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] >= 1.5  # Delete popover trigger
     assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
 
 
