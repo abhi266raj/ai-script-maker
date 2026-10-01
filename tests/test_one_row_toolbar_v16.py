@@ -49,6 +49,11 @@ class _RecordingSt(_FakeSt):
     def file_uploader(self, *a, **k):
         return None
 
+    def radio(self, label, options, key=None, **k):
+        # #94: the upload popover offers a Video/Image radio; default to
+        # the first option like Streamlit does with no prior selection.
+        return list(options)[0] if options else None
+
 
 def _ui_with_recording_st(clicks=()):
     """Import library_ui bound to a recording fake streamlit."""
@@ -59,7 +64,7 @@ def _ui_with_recording_st(clicks=()):
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "expander", "link_button",
                      "code", "image", "video", "text_area", "text_input",
-                     "file_uploader"):
+                     "file_uploader", "radio"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -126,10 +131,11 @@ def test_toolbar_renders_share_copy_in_same_row(monkeypatch):
     assert len(toolbars) == 1  # exactly one 8-column toolbar row
     # Render order inside that row: Reset, Share, Copy, Delete popovers.
     # (#84 reverted #60's title popover — every popover here is a toolbar
-    # action; #90: icon-only triggers.)
+    # action; #90: icon-only triggers. #94 adds the "⬆" upload popover
+    # at the end of the detail view.)
     assert [p["label"] for p in fake.popovers] == [
         lui._TB_ICON_RESET, lui._TB_ICON_SHARE,
-        lui._TB_ICON_COPY, lui._TB_ICON_DELETE]
+        lui._TB_ICON_COPY, lui._TB_ICON_DELETE, "⬆"]
 
 
 def test_title_edit_toolbar_renders_share_copy(monkeypatch):
@@ -141,8 +147,9 @@ def test_title_edit_toolbar_renders_share_copy(monkeypatch):
                 if isinstance(s, list) and len(s) == 6
                 and abs(sum(s) - 10.0) < 1e-9]
     assert len(toolbars) == 1
+    # #94: the "⬆" upload popover renders at the end of the detail view.
     assert [p["label"] for p in fake.popovers] == [
-        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_DELETE]
+        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_DELETE, "⬆"]
 
 
 # ---------------------------------------------------------------------------
