@@ -26,7 +26,7 @@ from core.dual_engine import dual_engine
 from core.metrics import get_duration_budget
 from core.prompt_matrix import build_tailored_instruction
 from core.config import load_config, save_config, reset_to_defaults
-from tools.news_fetcher import news_fetcher
+from tools.news_fetcher import news_fetcher, NewsFetchError
 # v1.5: Saved Stories Library (tab bar + storage + auto-save)
 import story_library  # noqa: F401
 from library_ui import render_tab_bar, render_library_page, maybe_autosave_story
@@ -1797,7 +1797,11 @@ with col_settings:
                         else:
                             # Custom typed hashtag: search news about the topic.
                             _query = _ht.lstrip("#").replace("#", " ")
-                            articles = news_fetcher.search_news(_query, limit=16)
+                            try:
+                                articles = news_fetcher.search_news(_query, limit=16)
+                            except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
+                                st.error(str(_nfe))
+                                articles = []
                     elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
                             articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
                     elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
