@@ -48,8 +48,14 @@ class _FakeSt:
 
 
 class _Script:
-    def __init__(self, sid):
+    def __init__(self, sid, content=""):
         self.id = sid
+        # #338: autosave identity is canonical content now — distinct stub
+        # scripts need distinct content, not just distinct ids.
+        self.angle = f"angle-{sid}-{content}"
+        self.hook_hindi = f"hook-{sid}-{content}"
+        self.narration_hindi = f"narration-{sid}-{content}"
+        self.scenes = []
 
 
 @pytest.fixture
@@ -125,22 +131,23 @@ def test_second_run_same_screenplay_skips_save(ui):
 
 def test_different_screenplay_still_saves(ui):
     fake, saved, _tmp = ui
-    _view(fake, object(), _Script("s1"), 0, "screenplay one")
+    _view(fake, object(), _Script("s1", "dialogue one"), 0, "screenplay one")
     fake.session_state.clear()  # new run
-    _view(fake, object(), _Script("s1"), 0, "screenplay two — different")
+    _view(fake, object(), _Script("s1", "dialogue two"), 0, "screenplay two — different")
     assert saved == ["s1", "s1"]
 
 
 def test_hash_persisted_in_prefs(ui):
     fake, saved, tmp_path = ui
-    _view(fake, object(), _Script("s1"), 0, "persist me")
+    script = _Script("s1", "some dialogue")
+    _view(fake, object(), script, 0, "persist me")
     prefs_path = tmp_path / "prefsdir" / "prefs.json"
     assert prefs_path.exists()
     import json
     data = json.loads(prefs_path.read_text(encoding="utf-8"))
     hashes = data.get("autosaved_screenplay_hashes")
     assert isinstance(hashes, list) and len(hashes) == 1
-    assert hashes[0] == lui._screenplay_content_hash("persist me")
+    assert hashes[0] == lui._canonical_script_hash(script)
 
 
 # ---------------------------------------------------------------------------
