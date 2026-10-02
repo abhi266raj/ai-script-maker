@@ -549,6 +549,14 @@ def inject_library_css() -> None:
         border-bottom: 1px solid rgba(128, 128, 128, 0.25);
         margin: 4px 0 12px 0;
     }
+    /* #208: explicit named spacer between the story radio list and the
+       Delete-All trigger. Replaces a stray st.markdown("") — an empty
+       paragraph whose margins drift across Streamlit versions. HIG §1:
+       group related items with intentional, named negative space instead
+       of invisible hacks, so the spacing intent is version-proof. */
+    .lib-spacer-delete {
+        height: 12px;
+    }
     /* v1.6 (#53) HIG progress: the button that starts work owns its loading
        state — its label NEVER changes, it shows a spinner and stays
        disabled while the work runs. (#111: the spinner is Streamlit's
@@ -2007,10 +2015,16 @@ def render_library_page() -> None:
             label_visibility="collapsed",
         )
         st.session_state["lib_selected_story"] = sel
-        # Delete-all lives in the master section (popover confirm).
-        st.markdown("")
+        # Delete-all lives in the master section (dialog confirm).
+        # #203: icon-only trigger (trash metaphor) — empty text label;
+        # the verb-first help tag carries the label for tooltip + a11y.
+        # #208: explicit named spacer between the story radio list and the
+        # Delete-All trigger. Replaces a stray st.markdown("") whose
+        # empty-paragraph margins drift across Streamlit versions.
+        st.markdown('<div class="lib-spacer-delete"></div>', unsafe_allow_html=True)
         _delete_popover(
-            trigger_label="Delete All",
+            trigger_label="",
+            trigger_icon=_TB_ICON_DELETE,
             popover_key="lib_delpop_all",
             title="Delete all stories?",
             message="Every saved story will be permanently deleted. This can't be undone.",
