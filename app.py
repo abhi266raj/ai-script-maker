@@ -2402,6 +2402,38 @@ def _render_verification_report(verif, *, key_prefix="", as_expander=True):
     _render_raw_json(verif, label="Raw JSON — verification", key_prefix=key_prefix, as_expander=as_expander)
 
 
+def _inflight_claim(session, key, url):
+    """Phase 1 of button-owned loading (HIG §3, #197): mark the network work
+    for *url* as in-flight so the initiating button repaints disabled with
+    its spinner; the work itself runs on the ``st.rerun()`` below (phase 2).
+
+    *session* is ``st.session_state`` in the app, a plain dict in tests.
+    """
+    session[key] = url
+
+
+def _inflight_take(session, key, url):
+    """Phase-2 gate: True when this run should perform the in-flight work
+    claimed for *url*. Clears the claim and returns False when nothing is
+    pending, or when the pending claim targets a different URL (the selected
+    link changed before the rerun landed) — a stale marker must never run
+    work for the wrong link.
+    """
+    pending = session.get(key)
+    if not pending:
+        return False
+    if pending != url:
+        session.pop(key, None)
+        return False
+    return True
+
+
+def _inflight_clear(session, key):
+    """Drop an in-flight claim. Always called in a ``finally`` — a stuck
+    marker would leave the button disabled forever (#197)."""
+    session.pop(key, None)
+
+
 def _render_story_link_verifier(verif, *, key_prefix=""):
     """Stage 1.4 — fetch the exact story link, verify it is the same story
     (deterministic check, or LLM with the app's engine selection), and show
@@ -2436,8 +2468,41 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
     _store = st.session_state.setdefault("s1_story_links", {})
     _entry = _store.get(_sel_url) or {}
 
-    if st.button("Fetch story link", key=f"{key_prefix}sl_fetch",
+    # In-flight markers + outcome notices for the two buttons below (#197).
+    _fetch_run_key = f"{key_prefix}sl_fetch_running"
+    _fetch_err_key = f"{key_prefix}sl_fetch_error"
+    _fetch_warn_key = f"{key_prefix}sl_fetch_warning"
+    _verify_run_key = f"{key_prefix}sl_verify_running"
+    _verify_err_key = f"{key_prefix}sl_verify_error"
+
+    # Outcomes from the previous run's phase 2 are persisted in session
+    # state (the clearing rerun would otherwise drop them) — surface loudly.
+    _fetch_err = st.session_state.pop(_fetch_err_key, None)
+    if _fetch_err:
+        st.error(_fetch_err)
+    _fetch_warn = st.session_state.pop(_fetch_warn_key, None)
+    if _fetch_warn:
+        st.warning(_fetch_warn)
+    _verify_err = st.session_state.pop(_verify_err_key, None)
+    if _verify_err:
+        st.error(_verify_err)
+
+    # HIG §3: the Fetch button owns its loading state — while its fetch is
+    # in-flight it paints the native spinner, reads "Fetching…", and stays
+    # disabled (no second click, ever). Phase 1 claims the marker and reruns
+    # so the button repaints; phase 2 (below) does the network work.
+    _fetch_running = _inflight_take(st.session_state, _fetch_run_key, _sel_url)
+    if st.button("Fetching…" if _fetch_running else "Fetch story link",
+                 icon="spinner" if _fetch_running else None,
+                 key=f"{key_prefix}sl_fetch",
+                 disabled=_fetch_running,
                  help="Fetch the article page and pull its images"):
+        _inflight_claim(st.session_state, _fetch_run_key, _sel_url)
+        st.rerun()
+    if _fetch_running:
+        # Phase 2: perform the fetch. The marker is always cleared (finally)
+        # and outcomes persist across the rerun below — failures stay loud
+        # and the button never sticks disabled.
         try:
             with st.spinner("Fetching the article page…"):
                 _art = fetch_story_page(_sel_url)
@@ -2448,10 +2513,13 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
                       "images": _images, "verified": None, "reason": ""}
             _store[_sel_url] = _entry
             if not _images:
-                st.warning("Article fetched, but no usable images were found on the page.")
-            st.rerun()
+                st.session_state[_fetch_warn_key] = (
+                    "Article fetched, but no usable images were found on the page.")
         except Exception as e:
-            st.error(f"Fetch failed: {e}")
+            st.session_state[_fetch_err_key] = f"Fetch failed: {e}"
+        finally:
+            _inflight_clear(st.session_state, _fetch_run_key)
+        st.rerun()
 
     if not _entry.get("article"):
         st.caption("Fetch the link to verify the story and see its images.")
@@ -2475,7 +2543,17 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
     _use_llm = _ai_pick != "None"
     _engine_mode = ENGINE_OPTIONS[_ai_pick] if _use_llm else None
 
-    if st.button("Verify same story", key=f"{key_prefix}sl_verify"):
+    # HIG §3: the Verify button owns its loading state — same two phases
+    # as Fetch: disabled with the native spinner until its result lands.
+    _verify_running = _inflight_take(st.session_state, _verify_run_key, _sel_url)
+    if st.button("Verifying…" if _verify_running else "Verify same story",
+                 icon="spinner" if _verify_running else None,
+                 key=f"{key_prefix}sl_verify",
+                 disabled=_verify_running,
+                 help="Check the fetched article is the same story"):
+        _inflight_claim(st.session_state, _verify_run_key, _sel_url)
+        st.rerun()
+    if _verify_running:
         _headline = _model_field(verif, "headline", "") or ""
         _facts = _model_field(verif, "verified_facts", None) or []
         try:
@@ -2494,9 +2572,11 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
                 st.session_state["s1_verified_story_link"] = {
                     "title": _sel_title, "url": _sel_url, "source": _sel_source}
                 st.session_state["s1_kept_images"] = list(_entry.get("images", []))
-            st.rerun()
         except Exception as e:
-            st.error(f"Verification failed: {e}")
+            st.session_state[_verify_err_key] = f"Verification failed: {e}"
+        finally:
+            _inflight_clear(st.session_state, _verify_run_key)
+        st.rerun()
 
     if _entry.get("verified") is True:
         st.success(f"✅ Same story confirmed — {_entry.get('reason', '')}")
