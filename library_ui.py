@@ -348,7 +348,15 @@ def inject_library_css() -> None:
        12px right padding, and the × (positioned 6px from the column's
        trailing edge, which hugs the pill after #56) landed on top of
        the label. Every other marker-scoped rule uses the adjacent-
-       sibling form below; this one must too. */
+       sibling form below; this one must too.
+       MARKDOWN <p> RESET: st.markdown wraps INLINE html (<span>) in a
+       <p> (block <div> html is left alone) — so the chip cell renders
+       stMarkdownContainer > p > span.lib-chip while the title cell is
+       stMarkdownContainer > div.lib-section-inline with no <p>. That
+       <p> brings its own margins and pushes the pill down inside its
+       column on Streamlit versions that don't reset it (requirements
+       leaves Streamlit unpinned). Zero it inside scroll rows so the
+       pill is the column's only vertical geometry. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"] .lib-chip {
         padding-right: 44px !important;
@@ -359,6 +367,16 @@ def inject_library_css() -> None:
         max-width: 340px;
         overflow: hidden;
         text-overflow: ellipsis;
+    }
+    /* st.markdown wraps inline <span> html in a <p> (block <div> html is
+       not wrapped) — the <p>'s own margins push the pill down inside
+       its column. Zeroed inside scroll rows so the pill is the column's
+       only vertical geometry. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stMarkdownContainer"] p {
+        margin: 0 !important;
+        padding: 0 !important;
     }
     /* Links inside news chips inherit the themed chip color (theme-safe).
        #68: same sibling-combinator fix as the pill rule above — the
@@ -690,14 +708,31 @@ def inject_library_css() -> None:
        the row taller than one line.
        #112: the old `align-self: center` on the column never took effect
        reliably (Streamlit's column internals + the hscroll
-       `align-items: start` interplay). Robust approach: the title column
-       stretches to the row height and centers its content via flex —
-       belt (column) and suspenders (inner vertical block). */
+       `align-items: start` interplay). Belt-and-suspenders: the title
+       column stretches to the row height and centers its content via
+       flex. The PRIMARY contract is now in .lib-section-inline itself
+       (same 13px/600/30px box as the chips), so this column centering is
+       backup, not the mechanism. */
     .lib-section-inline {
         margin: 0 !important;
         padding: 0 !important;
         white-space: nowrap;
-        line-height: 1.2 !important;
+        /* ONE row typography: the inline title ("Hashtags" / "News Links"
+           / "Upload") shares the chip's exact font system — 13px/600, the
+           same 30px box (inline-flex + align-items: center +
+           min-height: var(--lib-chip-h)) — so title and chips sit on one
+           shared baseline. Previously the title inherited 15px from
+           .lib-section while chips were 13px, and centering relied on a
+           fragile column-stretch chain; the mismatch kept regressing
+           (user screenshots). The title is now self-centering: the row's
+           align-items: center does the rest. */
+        font-size: 13px !important;
+        font-weight: 600 !important;
+        line-height: 1.5 !important;
+        display: inline-flex !important;
+        align-items: center !important;
+        box-sizing: border-box !important;
+        min-height: var(--lib-chip-h) !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
