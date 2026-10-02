@@ -4314,6 +4314,10 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             with st.expander("5.1 Generate Storyboards — 🤖 AI generation", expanded=True):
                 st.markdown("**📥 Input:**")
                 st.caption(f"{_s5_nsc} derived scene(s) → scene director + video prompt engineer")
+                # #335: LOUD bypass marker — the user explicitly overrode the
+                # no-facts gate, so these visuals are ungrounded. Never silent.
+                if step_state.get("verification_bypassed") or step_state.get("bypass_stage5_no_facts"):
+                    st.warning("⚠️ Bypassed: video prompts were generated WITHOUT Stage 1 verified facts (your override). These visuals are ungrounded — treat every depicted detail as unverified.")
                 st.markdown("**📤 Output (Storyboarded Scenes & AI Video Prompts):**")
                 if _s5_scripts:
                     s0 = _s5_scripts[0]
@@ -4768,6 +4772,8 @@ with col_output:
                         sample_story=st.session_state.get("run_sample_story", ""),
                         # #316: one-shot bypass — consumed below so it never sticks.
                         bypass_verification=st.session_state.pop("bypass_stage1_verification", False),
+                        # #335: one-shot Stage 5 no-facts bypass — same pattern.
+                        bypass_stage5_no_facts=st.session_state.pop("bypass_stage5_no_facts", False),
                     )
                     for step in pipeline:
                         # Live substep events: update tracker + heading, keep pumping.
@@ -4945,6 +4951,42 @@ with col_output:
                 st.session_state.generation_error = None
                 begin_run(st.session_state)
                 st.rerun()
+        # #335: Stage 5 no-facts refusal — offer a bypass instead of a dead end.
+        # Retrying re-runs the same gate with the same (empty) facts, so it can
+        # never succeed. Every fail-loud failure must give a bypass option.
+        _is_stage5_nofacts_fail = (
+            _f_step == 5
+            and "no verified facts available to ground video prompts" in _f_msg
+        )
+        if _is_stage5_nofacts_fail:
+            st.info(
+                "Stage 5 needs verified facts to ground the video prompts, but none "
+                "are available. You can continue anyway — the visuals will be "
+                "generated without fact grounding and marked UNGROUNDED."
+            )
+            if st.button(
+                "Continue without verified facts",
+                key="bypass_stage5_btn",
+                help="Bypass the no-facts gate and generate the video prompts ungrounded.",
+            ):
+                st.session_state.generation_error = None
+                if st.session_state.get("stepwise_active"):
+                    # Stepwise: re-run just this step with the bypass flag on
+                    # the live state — the gate is never re-checked (#334).
+                    _sw_state = st.session_state.get("stepwise_state")
+                    if isinstance(_sw_state, dict):
+                        _sw_state["bypass_stage5_no_facts"] = True
+                    if not request_step_run(st.session_state, ACTION_RETRY):
+                        st.error("A step-wise run is already in flight — please wait for it to finish.")
+                    else:
+                        st.rerun()
+                else:
+                    # Continuous: one-shot bypass, consumed by the run block
+                    # below so it never sticks.
+                    st.session_state.bypass_stage5_no_facts = True
+                    st.session_state.batch_result = None
+                    begin_run(st.session_state)
+                    st.rerun()
         # Generic failure view (all 6 stages, one pattern): if this stage has
         # no live substep events (e.g. stepwise mode), seed the tracker from
         # the recorded step history so the generic renderer displays it.
