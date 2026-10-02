@@ -2737,6 +2737,22 @@ def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
     return "Sent to Telegram: " + ", then ".join(sent) + "."
 
 
+def _telegram_bot_token() -> str:
+    """Resolve the Telegram bot token, "" when none is configured.
+
+    #159: precedence is ~/Documents/telegrambot/bot_token.txt (default),
+    then the custom token in prefs. Never raises — an unresolvable token
+    just means setup hasn't happened yet, and callers render guided
+    setup instead of failing.
+    """
+    from tools import telegram_share as _tg
+    try:
+        return _tg.resolve_token(
+            lib.load_prefs().get("telegram_bot_token"))
+    except _tg.TelegramShareError:
+        return ""
+
+
 def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
     """Share menu (native popover, macOS HIG): sub-actions for the
     story's news-links + hashtags share text.
@@ -2768,9 +2784,11 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
     Telegram bot (Bot API) in two messages — the video with a caption
     (title + hashtags), then the news links. The tg:// deep link cannot
     carry a video file, so the bot route is the one that delivers video.
-    The bot token is configured once, right here in the popover; a missing
-    token shows setup steps instead of a dead button — never a silent
-    no-op.
+    #215 (HIG §6): the bot token is configured once in the "Set up
+    Telegram sharing" section below the toolbar — never inside this
+    popover. Popovers are transient: an accidental outside-click dismisses
+    them, and a typed token would be lost. A missing token shows a pointer
+    to the setup section instead of a dead button — never a silent no-op.
     """
     with st.popover("", icon=_TB_ICON_SHARE, key=f"lib_sharepop_{story_id}",
                      help="Share this story's news links and hashtags",
@@ -2838,15 +2856,8 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
             # #159: Telegram via the user's bot — video + caption, then
             # news links (two messages). Server-side, like WhatsApp above:
             # the Streamlit server runs on the user's Mac and POSTs the
-            # local video file to the Bot API directly. The token resolves
-            # by precedence: ~/Documents/telegrambot/bot_token.txt
-            # (default), then the custom token in prefs.
-            from tools import telegram_share as _tg
-            try:
-                _tg_token = _tg.resolve_token(
-                    lib.load_prefs().get("telegram_bot_token"))
-            except _tg.TelegramShareError:
-                _tg_token = ""
+            # local video file to the Bot API directly.
+            _tg_token = _telegram_bot_token()
             if _tg_token:
                 # #194 (HIG §3): the button owns its loading state — it
                 # shows the native spinner and stays disabled for the
@@ -2894,41 +2905,69 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                         st.error(_tg_msg)
             else:
                 # Fail loudly with guided setup — never a dead button.
-                with st.expander("Set up Telegram sharing"):
-                    st.markdown(
-                        "Share the **video + caption + news links** straight "
-                        "to Telegram through your own bot (two messages):\n"
-                        "1. In Telegram, open **@BotFather** → `/newbot` → "
-                        "copy the token.\n"
-                        "2. Open your new bot and tap **Start** (send it a "
-                        "first message).\n"
-                        "3. Save the token as "
-                        "`~/Documents/telegrambot/bot_token.txt` (picked up "
-                        "automatically), or paste a custom token below.\\n"
-                        "4. To broadcast to groups as well, add the bot to "
-                        "each group.")
-                    _tok_in = st.text_input(
-                        "Bot token", type="password",
-                        key=f"lib_tg_tok_{story_id}")
-                    if st.button("Save Telegram bot",
-                                 key=f"lib_tg_tok_save_{story_id}",
-                                 use_container_width=True):
-                        _tok_in = (_tok_in or "").strip()
-                        if not _tok_in:
-                            st.error("Paste the bot token from @BotFather first.")
-                        else:
-                            lib.save_prefs({"telegram_bot_token": _tok_in})
-                            _saved = ((lib.load_prefs().get("telegram_bot_token")
-                                       or "").strip())
-                            if _saved != _tok_in:
-                                st.error("Couldn't save the token — the prefs "
-                                         "file isn't writable.")
-                            else:
-                                _notify("Telegram bot saved — you can share now.",
-                                        icon=":material/check_circle:")
-                                st.rerun()
+                # #215 (HIG §6): the setup FORM lives outside this popover
+                # (below the toolbar) — a popover auto-closes on an outside
+                # click and would eat a typed token. This row just points
+                # at it.
+                st.caption("Telegram sharing isn't set up yet — open "
+                           "\u201cSet up Telegram sharing\u201d below the "
+                           "toolbar.")
         else:
             st.caption("No news links or hashtags to share yet.")
+
+
+def _render_telegram_setup_section(story_id: str) -> None:
+    """Telegram setup section — rendered OUTSIDE the share popover.
+
+    #215 (HIG §6): popovers are transient and single — don't layer a form
+    over one. The old ``st.expander("Set up Telegram sharing")`` lived
+    INSIDE the share popover, so an accidental outside-click dismissed it
+    and the typed token was lost. It now lives here, below the story
+    toolbar, as its own section — outside any popover. Renders only while
+    no bot token is configured (file or prefs); once a token exists the
+    section disappears and "Share via Telegram" appears in the popover.
+
+    The save logic is unchanged from the in-popover version: empty token
+    errors loudly, prefs save, and the write is verified by reading back
+    (an unwritable prefs file errors instead of pretending success).
+    Widget keys are unchanged (``lib_tg_tok_<id>`` /
+    ``lib_tg_tok_save_<id>``) so existing session state carries over.
+    """
+    if _telegram_bot_token():
+        return
+    with st.expander("Set up Telegram sharing"):
+        st.markdown(
+            "Share the **video + caption + news links** straight "
+            "to Telegram through your own bot (two messages):\n"
+            "1. In Telegram, open **@BotFather** → `/newbot` → "
+            "copy the token.\n"
+            "2. Open your new bot and tap **Start** (send it a "
+            "first message).\n"
+            "3. Save the token as "
+            "`~/Documents/telegrambot/bot_token.txt` (picked up "
+            "automatically), or paste a custom token below.\\n"
+            "4. To broadcast to groups as well, add the bot to "
+            "each group.")
+        _tok_in = st.text_input(
+            "Bot token", type="password",
+            key=f"lib_tg_tok_{story_id}")
+        if st.button("Save Telegram bot",
+                     key=f"lib_tg_tok_save_{story_id}",
+                     use_container_width=True):
+            _tok_in = (_tok_in or "").strip()
+            if not _tok_in:
+                st.error("Paste the bot token from @BotFather first.")
+            else:
+                lib.save_prefs({"telegram_bot_token": _tok_in})
+                _saved = ((lib.load_prefs().get("telegram_bot_token")
+                           or "").strip())
+                if _saved != _tok_in:
+                    st.error("Couldn't save the token — the prefs "
+                             "file isn't writable.")
+                else:
+                    _notify("Telegram bot saved — you can share now.",
+                            icon="✅")
+                    st.rerun()
 
 
 def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
@@ -3549,6 +3588,11 @@ def _render_story_detail(story_id: str) -> None:
             _render_reset_popover(story_id, _busy_kinds, _ai_engine)
         with tc7:
             _story_delete_popover()
+    # #215 (HIG §6): Telegram setup lives OUTSIDE the share popover — a
+    # transient popover auto-closes on an outside click and would eat a
+    # typed token. This own section renders right below the toolbar, only
+    # while no bot token is configured.
+    _render_telegram_setup_section(story_id)
     # #53: toast each freshly-finished refresh outcome exactly once, then
     # drain it. The file (not session state) is the drain record, so a
     # toast never fires twice and outcomes that finished while this page
