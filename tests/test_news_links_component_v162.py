@@ -51,7 +51,7 @@ def test_component_renders_single_row_with_all_cells(libdir):
     spec = fake.column_specs[0]
     expected = ([lui._section_title_weight("News Links")]
                 + lui._chip_col_weights(["Alpha", "Beta"])
-                + [lui._load_more_weight("Load more news")])
+                + [lui._load_more_weight()])
     assert spec == expected, (
         f"row spec must be [title, *chips, load-more]; "
         f"saw {spec}, expected {expected}")
@@ -71,8 +71,8 @@ def test_component_has_load_more_last(libdir):
     lui, fake = _ui_with_recording_st()
     lui._render_news_links_row("sid1", _LINKS, set())
 
-    assert ("Load more news", "lib_morenews_sid1") in fake.buttons, (
-        f"'Load more news' button must render; saw {fake.buttons}")
+    assert ("", "lib_morenews_sid1") in fake.buttons, (
+        f"icon-only load-more button must render; saw {fake.buttons}")
 
 
 def test_component_has_remove_overlay_per_link(libdir):
@@ -110,7 +110,7 @@ def test_story_detail_news_row_unchanged(libdir, monkeypatch):
         ("Alpha", "https://a.example/story-1"),
         ("Beta", "https://b.example/story-2"),
     ], f"story detail must render the same chips; saw {fake.link_buttons}"
-    assert ("Load more news", "lib_morenews_sid1") in fake.buttons
+    assert ("", "lib_morenews_sid1") in fake.buttons
 
 
 def test_story_detail_no_links_caption_unchanged(libdir, monkeypatch):

@@ -1224,14 +1224,20 @@ def _render_kind_button(*, story_id: str, kind: str, label: str,
                      else f"Could not start the {kick_label} refresh.")
 
 
-def _render_load_more_button(*, story_id: str, kind: str, label: str,
+def _render_load_more_button(*, story_id: str, kind: str,
                              button_key: str, help_text: str,
                              busy_kinds) -> None:
     """Section-level "Load more" button (#91).
 
-    #53 HIG progress: the label NEVER changes; while ``kind`` runs the
-    button shows Streamlit's native animated spinner (``icon="spinner"``,
-    #111) and stays disabled — no second click.
+    #202: the button is ICON-ONLY — a native Streamlit material ``add``
+    icon (``_TB_ICON_ADD``) with an empty text label, like the toolbar
+    refresh buttons (#111). The ``help_text`` tooltip carries the
+    accessible label ("Fetch up to 5 more news links" / "Fetch up to 5
+    more images" — verb-first, sentence case, <=75 chars, HIG §2).
+
+    #53 HIG progress: the label NEVER changes (always empty); while
+    ``kind`` runs the button shows Streamlit's native animated spinner
+    (``icon="spinner"``, #111) and stays disabled — no second click.
     The outcome toasts via the existing outcome path. ``kind`` is
     "more_images" or "more_news".
 
@@ -1248,7 +1254,7 @@ def _render_load_more_button(*, story_id: str, kind: str, label: str,
     # working) while it runs, so no spinner.
     _sibling = lib._SIBLING_KINDS.get(kind)
     blocked = bool(_sibling and _sibling in busy_kinds)
-    if st.button(label, icon=_TB_ICON_SPINNER if running else None,
+    if st.button("", icon=_TB_ICON_SPINNER if running else _TB_ICON_ADD,
                  key=button_key, help=help_text,
                  disabled=running or blocked):
         ok, reason = lib.start_refresh(story_id, kind)
@@ -1457,12 +1463,17 @@ def _section_title_weight(title: str) -> int:
     return max(len(str(title)), 4) + 2
 
 
-def _load_more_weight(label: str) -> int:
+def _load_more_weight() -> int:
     """#113: ``st.columns`` weight for the inline Load more button that
-    rides as the last column of a section's scroll row. Same
-    shrink-wrap-fallback contract as :func:`_section_title_weight`.
+    rides as the last column of a section's scroll row. #202: the button
+    is icon-only (no text label), so the fallback no longer tracks a
+    label length — a small fixed weight keeps the column narrow and the
+    one-line row geometry intact. The CSS shrink-wrap
+    (``flex: 0 0 auto`` + ``width: fit-content`` on hscroll columns) is
+    the primary sizer; this is the proportional fallback so a missed
+    selector can only ever produce a proportionally sized column.
     Pure (no Streamlit) so it is unit-testable."""
-    return max(len(str(label)), 4) + 2
+    return 6
 
 
 def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
@@ -1490,7 +1501,7 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
                for _lk in links]
     _lcols = st.columns([_section_title_weight("News Links")]
                         + _chip_col_weights(_labels)
-                        + [_load_more_weight("Load more news")],
+                        + [_load_more_weight()],
                         # #162: vertically center title, chips and the
                         # Load more button (columns top-align by default).
                         vertical_alignment="center")
@@ -1536,7 +1547,6 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
                     unsafe_allow_html=True)
         _render_load_more_button(
             story_id=story_id, kind="more_news",
-            label="Load more news",
             button_key=f"lib_morenews_{story_id}",
             help_text="Fetch up to 5 more news links",
             busy_kinds=busy_kinds)
@@ -1635,7 +1645,7 @@ def _render_images_row(story_id: str, img_urls: list, uploaded: list,
     # scroll row — same line as the thumbnails, inside the scroll
     # view — instead of an orphan row below.
     _icols = st.columns([1] * len(_cards)
-                        + [_load_more_weight("Load more images")],
+                        + [_load_more_weight()],
                         # #162: vertically center the Load more button
                         # against the thumbnail cards (columns top-align
                         # by default).
@@ -1672,7 +1682,6 @@ def _render_images_row(story_id: str, img_urls: list, uploaded: list,
                     unsafe_allow_html=True)
         _render_load_more_button(
             story_id=story_id, kind="more_images",
-            label="Load more images",
             button_key=f"lib_moreimg_{story_id}",
             help_text="Fetch up to 5 more images",
             busy_kinds=busy_kinds)

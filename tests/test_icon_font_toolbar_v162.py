@@ -190,13 +190,21 @@ def test_load_more_button_shows_native_spinner_while_running(monkeypatch):
     monkeypatch.setattr(lui.lib, "_SIBLING_KINDS",
                         {"more_images": "images"}, raising=False)
     lui._render_load_more_button(story_id="sid1", kind="more_images",
-                                 label="Load more images",
                                  button_key="lib_more_imgs_sid1",
                                  help_text="Load more images",
                                  busy_kinds={"more_images"})
     assert fake.button_kwargs[0]["icon"] == "spinner"
-    assert fake.button_kwargs[0]["label"] == "Load more images"
+    assert fake.button_kwargs[0]["label"] == ""  # #202: icon-only
     assert fake.button_kwargs[0]["disabled"] is True
+    # Idle: add icon, enabled, still icon-only.
+    lui2, fake2 = _ui_with_fake_st()
+    lui2._render_load_more_button(story_id="sid1", kind="more_images",
+                                  button_key="lib_more_imgs_sid1",
+                                  help_text="Load more images",
+                                  busy_kinds=set())
+    assert fake2.button_kwargs[0]["icon"] == ":material/add:"
+    assert fake2.button_kwargs[0]["label"] == ""
+    assert fake2.button_kwargs[0]["disabled"] is False
 
 
 # ---------------------------------------------------------------------------
