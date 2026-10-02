@@ -110,8 +110,11 @@ _LOAD_MORE_BATCH = 5
 _AI_HASHTAG_TIMEOUT_S = 45
 
 # Fail-loud message when hashtag discovery is asked for with AI off.
-_AI_DISABLED_MSG = ("AI processing is disabled — enable AI processing in "
-                    "Library settings to find trending hashtags.")
+# The old "Enable AI processing" toggle is gone: the user picks an engine
+# (or None) in the AI engine dropdown in the story toolbar.
+_AI_DISABLED_MSG = ("AI processing is disabled — pick an AI engine "
+                    "(not None) in the story toolbar's AI engine dropdown "
+                    "to find trending hashtags.")
 
 
 def library_root() -> Path:
@@ -168,6 +171,10 @@ LIBRARY_ENGINE_OPTIONS = {
 }
 LIBRARY_ENGINE_MODES = frozenset(LIBRARY_ENGINE_OPTIONS.values())
 DEFAULT_LIBRARY_AI_ENGINE = "Local First Then Antigravity"
+# The "Enable AI processing" toggle is gone: the AI engine dropdown in the
+# story-detail toolbar offers this label, and selecting it disables AI
+# processing (the engine resolves to None).
+LIBRARY_AI_ENGINE_NONE_LABEL = "None"
 
 
 def new_story_id() -> str:
@@ -2368,10 +2375,11 @@ def refresh_hashtags(story_id: str, topic: str = "",
     added. Never touches the story content, screenplay, verified links,
     or images.
 
-    Raises RuntimeError when no AI engine is configured (the "Enable AI
-    processing" toggle is off): discovering *trending* hashtags without
-    the AI is impossible, so this fails loudly instead of silently
-    serving deterministic fallback tags. Nothing is changed in that case.
+    Raises RuntimeError when no AI engine is configured (the "None" option
+    is selected in the toolbar's AI engine dropdown): discovering
+    *trending* hashtags without the AI is impossible, so this fails
+    loudly instead of silently serving deterministic fallback tags.
+    Nothing is changed in that case.
     """
     story = load_story(story_id)
     if not story:
@@ -2970,9 +2978,9 @@ def start_refresh(story_id: str, kind: str,
     ``kind`` is "hashtags", "images", "news", "more_images", "more_news" or
     "reset". ``ai_engine`` (an engine mode string or None) enables
     AI-assisted hashtag suggestions for the hashtags and reset kinds —
-    None means the "Enable AI processing" toggle is off, in which case
-    the worker fails loudly with a clear message instead of silently
-    falling back. The "news" kind re-fetches news links (sources) for the
+    None means the "None" option is selected in the toolbar's AI engine
+    dropdown, in which case the worker fails loudly with a clear message
+    instead of silently falling back. The "news" kind re-fetches news links (sources) for the
     story's topic and merges new ones in (never wipes). The "more_images"
     / "more_news" kinds (#91) fetch ONE more batch (up to 5) of genuinely
     new images / news links past the #83/#82 caps — the cap is bypassed
@@ -3243,11 +3251,11 @@ def _do_reset(story_id: str, topic: str,
     Returns (changed, note). ``changed`` compares the new rows against
     the old ones — identical re-fetch results report ``no_change``.
 
-    Raises RuntimeError when no AI engine is configured (the "Enable AI
-    processing" toggle is off): discovering trending hashtags without
-    the AI is impossible, so this fails loudly with the same message as
-    Update Hashtags instead of silently serving deterministic tags.
-    Nothing is changed in that case.
+    Raises RuntimeError when no AI engine is configured (the "None" option
+    is selected in the toolbar's AI engine dropdown): discovering
+    trending hashtags without the AI is impossible, so this fails loudly
+    with the same message as Update Hashtags instead of silently serving
+    deterministic tags. Nothing is changed in that case.
     """
     story = load_story(story_id)
     if not story:

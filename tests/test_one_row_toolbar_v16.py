@@ -56,7 +56,8 @@ class _RecordingSt(_FakeSt):
     def radio(self, label, options, key=None, **k):
         # #94: the upload popover offers a Video/Image radio; default to
         # the first option like Streamlit does with no prior selection.
-        return list(options)[0] if options else None
+        # Records options so header/peek tests can assert the visible set.
+        return super().radio(label, options, key=key, **k)
 
 
 def _ui_with_recording_st(clicks=()):
@@ -68,7 +69,8 @@ def _ui_with_recording_st(clicks=()):
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
                      "link_button", "code", "image", "video", "text_area",
-                     "text_input", "file_uploader", "radio", "divider"):
+                     "text_input", "file_uploader", "radio", "divider",
+                     "selectbox"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -101,41 +103,43 @@ def _story(monkeypatch, lui, **meta_over):
 
 # ---------------------------------------------------------------------------
 # #46 — one toolbar row: hashtag/image refresh icons (#71), Reset, Share,
-# Copy, Delete (trailing) — all icon-only since #90. Weights still total
-# 10.0 (#24 layout preserved);
-# the icon columns shrank to icon width and the freed weight moved to the
-# spacer, so the row stays full-width with no dead space (#71). #80 adds
-# the icon-only "📰" Update News button in its own 0.9 slot; the spacer
-# gives up 0.9 to keep the total at 10.0.
+# Copy, Delete (trailing) — all icon-only since #90. #80 adds the
+# icon-only Update News button in its own 0.9 slot. The upload trigger
+# and the AI engine dropdown joined the middle group (Share/Copy beside
+# them) — the standalone Upload row and the "Enable AI processing"
+# toggle are gone.
 # ---------------------------------------------------------------------------
 
 def test_detail_toolbar_weights_single_row():
     lui, _fake = _ui_with_fake_st()
     w = lui._DETAIL_TOOLBAR_WEIGHTS
-    # #220: 10 columns — the 7 actions + 2 hairline separators + spacer:
-    # refresh ×3 | sep | share+copy | sep | spacer | destructive (reset,
-    # delete). The separators are the only addition to the #80 spec.
-    assert len(w) == 10
-    assert abs(sum(w) - 10.24) < 1e-9
+    # #220: 12 columns — the 9 actions + 2 hairline separators + spacer:
+    # refresh ×3 | sep | share+copy+upload+engine | sep | spacer |
+    # destructive (reset, delete). The separators are thin slots; the
+    # upload trigger (1.1) and engine dropdown (2.0) are the additions.
+    assert len(w) == 12
+    assert abs(sum(w) - 13.34) < 1e-9
     assert w[0] >= 0.8  # tag icon button (#90)
     assert w[1] >= 0.8  # image icon button (#90)
     assert w[2] >= 0.8  # newspaper icon button (#80, #90)
     assert w[3] <= 0.2  # #220: hairline separator after the refresh group
     assert w[4] >= 1.0  # share icon + native chevron (#90)
     assert w[5] >= 1.0  # copy icon + native chevron (#90)
-    assert w[6] <= 0.2  # #220: hairline separator after share+copy
-    assert w[7] > 1.0   # #71/#80: spacer absorbs the freed icon-column weight
-    assert w[8] >= 1.3  # reset icon + native chevron (#90), #220: moved
+    assert w[6] >= 1.0  # upload icon + native chevron (toolbar trigger)
+    assert w[7] >= 1.5  # AI engine dropdown
+    assert w[8] <= 0.2  # #220: hairline separator after the action group
+    assert w[9] > 1.0   # #71/#80: spacer absorbs the freed icon-column weight
+    assert w[10] >= 1.3  # reset icon + native chevron (#90), #220: moved
     # into the trailing destructive group with delete
-    assert w[9] >= 1.5  # delete icon stays trailing (#90)
+    assert w[11] >= 1.5  # delete icon stays trailing (#90)
     # #119: delete is a direct button now — no native chevron.
 
 
 def test_title_edit_toolbar_weights_single_row():
     lui, _fake = _ui_with_fake_st()
     w = lui._TITLE_EDIT_TOOLBAR_WEIGHTS
-    assert len(w) == 6  # save, cancel, share, copy, spacer, delete
-    assert abs(sum(w) - 10.0) < 1e-9
+    assert len(w) == 7  # save, cancel, share, copy, upload, spacer, delete
+    assert abs(sum(w) - 10.1) < 1e-9
     assert w[-1] >= 1.4  # Delete + chevron, trailing
 
 
@@ -144,22 +148,23 @@ def test_toolbar_renders_share_copy_in_same_row(monkeypatch):
     _story(monkeypatch, lui)
     lui._render_story_detail("sid1")
     toolbars = [s for s in fake.column_specs
-                if isinstance(s, list) and len(s) == 10
-                and abs(sum(s) - 10.24) < 1e-9]
-    assert len(toolbars) == 1  # exactly one 10-column toolbar row
+                if isinstance(s, list) and len(s) == 12
+                and abs(sum(s) - 13.34) < 1e-9]
+    assert len(toolbars) == 1  # exactly one 12-column toolbar row
     # Render order inside that row: the three refresh buttons, separator,
-    # Share, Copy, separator, Reset, Delete.
+    # Share, Copy, Upload, the AI engine dropdown, separator, Reset,
+    # Delete.
     # (#84 reverted #60's title popover — every popover here is a toolbar
     # action; #90: icon-only triggers. #114: the upload popover is
-    # icon-only now and renders at the end of the detail view.
-    # #119: Delete is a direct button, not a popover — no dropdown
-    # chevron. #220: Reset moved after Copy so it shares the trailing
-    # destructive group with Delete; the separators render as .lib-tb-sep
-    # markdown divs.)
+    # icon-only and now lives in the toolbar beside Share/Copy — the
+    # standalone Upload row is gone. #119: Delete is a direct button, not
+    # a popover — no dropdown chevron. #220: Reset moved after the
+    # action group so it shares the trailing destructive group with
+    # Delete; the separators render as .lib-tb-sep markdown divs.)
     assert [p["label"] for p in fake.popovers] == ["", "", "", ""]
     assert [p.get("icon") for p in fake.popovers] == [
-        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_RESET,
-        lui._TB_ICON_UPLOAD]
+        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_UPLOAD,
+        lui._TB_ICON_RESET]
     _del_trig = [k for k in fake.button_kwargs
                  if k.get("key") == "lib_delpop_sid1-trigger"]
     assert len(_del_trig) == 1
@@ -173,11 +178,11 @@ def test_title_edit_toolbar_renders_share_copy(monkeypatch):
     fake.session_state["lib_edit_title_sid1"] = True
     lui._render_story_detail("sid1")
     toolbars = [s for s in fake.column_specs
-                if isinstance(s, list) and len(s) == 6
-                and abs(sum(s) - 10.0) < 1e-9]
+                if isinstance(s, list) and len(s) == 7
+                and abs(sum(s) - 10.1) < 1e-9]
     assert len(toolbars) == 1
-    # #114: the icon-only upload popover renders at the end of the detail
-    # view. #119: Delete is a direct button, not a popover.
+    # #114: the icon-only upload popover renders in the toolbar beside
+    # Share/Copy. #119: Delete is a direct button, not a popover.
     assert [p["label"] for p in fake.popovers] == ["", "", ""]
     assert [p.get("icon") for p in fake.popovers] == [
         lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_UPLOAD]
