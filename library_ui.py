@@ -886,12 +886,22 @@ def _inject_story_list_css() -> None:
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
         background: transparent !important;
         background-color: transparent !important;
-        /* Button text/icons paint with currentColor — the button's own
-           color is enough; never force glyph paint. */
         color: var(--danger) !important;
         -webkit-text-fill-color: var(--danger) !important;
         border: 1px solid transparent !important;
         box-shadow: none !important;
+    }
+    /* The button's own color is NOT enough: app.py forces --ink on every
+       button *child* (icon glyphs) with !important, which defeats
+       currentColor inheritance and left the trash icon dark instead of
+       danger red. This descendant override (higher specificity) repaints
+       the glyphs danger red at rest and on hover. */
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button *,
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover * {
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {

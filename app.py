@@ -975,7 +975,11 @@ st.markdown(
     /* Form controls: input, textarea, select.
        Single border only: the border lives on the trigger/field itself —
        the outer [data-baseweb="select"] wrapper must NOT carry a border
-       (it rendered a double border: outer ring + inner field). */
+       (it rendered a double border: outer ring + inner field).
+       Textarea: Streamlit 1.64 wraps the field in
+       [data-testid="stTextAreaRootElement"] (the BaseWeb root container)
+       — that node paints the visible border, so it must carry the
+       --line token too, or the unthemed default (black) shows through. */
     textarea, input, select,
     [data-baseweb="input"],
     [data-baseweb="input"] input,
@@ -988,6 +992,7 @@ st.markdown(
     [data-testid="stNumberInput"] input,
     [data-testid="stTextInput"] input,
     [data-testid="stTextArea"] textarea,
+    [data-testid="stTextAreaRootElement"],
     [data-testid="stSelectbox"] div[class*="e1fp86qc0"] {
         -moz-appearance: none !important;
         appearance: none !important;
@@ -996,6 +1001,7 @@ st.markdown(
         color: var(--ink) !important;
         caret-color: var(--ink) !important;
         border: 1px solid var(--line) !important;
+        border-color: var(--line) !important;
         border-radius: var(--radius) !important;
     }
     /* The select wrapper itself: no border, no background — the inner
@@ -1020,10 +1026,19 @@ st.markdown(
     [data-baseweb="textarea"]:focus-within,
     [data-testid="stTextInput"] input:focus,
     [data-testid="stTextArea"] textarea:focus,
+    [data-testid="stTextAreaRootElement"]:focus-within,
     [data-testid="stNumberInput"] input:focus {
         outline: none !important;
         border-color: var(--accent) !important;
         box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+    /* Hover: border lifts to --line-strong (Khabarwaani spec). */
+    [data-testid="stTextArea"] textarea:hover,
+    [data-testid="stTextAreaRootElement"]:hover,
+    [data-baseweb="textarea"]:hover,
+    [data-testid="stTextInput"] input:hover,
+    [data-testid="stNumberInput"] input:hover {
+        border-color: var(--line-strong) !important;
     }
 
     /* Selectbox closed trigger container — the single bordered field. */
@@ -1285,7 +1300,11 @@ st.markdown(
     }
 
     /* Alerts, toasts, dialogs, popovers, menus, tooltips: popover
-       surface, 1px line border, large radius, pop shadow. */
+       surface, 1px line border, large radius, pop shadow.
+       Tooltip selectors are deliberately broad: Streamlit renders help
+       tooltips via BaseWeb in a portal, and the exact node carrying
+       role="tooltip" vs data-baseweb="tooltip" varies — cover both so
+       the tooltip can never fall back to an unreadable dark default. */
     [data-testid="stAlert"],
     [data-testid="stNotification"],
     [data-testid="stDialog"] > div,
@@ -1294,7 +1313,9 @@ st.markdown(
     div[class*="stToast"],
     div[data-testid="stAlert"] > div,
     [data-testid="stPopoverBody"],
-    div[role="tooltip"] {
+    [role="tooltip"],
+    div[role="tooltip"],
+    [data-baseweb="tooltip"] {
         background-color: var(--popover) !important;
         background: var(--popover) !important;
         color: var(--ink) !important;
@@ -1302,6 +1323,18 @@ st.markdown(
         border: 1px solid var(--line) !important;
         border-radius: var(--radius-lg) !important;
         box-shadow: var(--shadow-pop) !important;
+    }
+    /* Tooltip inner content: BaseWeb nests the text node, which can keep
+       a dark default surface under the themed shell — flatten it so the
+       text always reads --ink on --popover in both modes. */
+    [role="tooltip"] *,
+    [data-baseweb="tooltip"] * {
+        background: transparent !important;
+        background-color: transparent !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        border-color: transparent !important;
+        box-shadow: none !important;
     }
     /* Modal overlay: scrim. */
     [data-testid="stDialog"] {

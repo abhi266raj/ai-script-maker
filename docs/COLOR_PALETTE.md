@@ -43,7 +43,7 @@ orange, under 2% danger red.
 | `--paper` | `#F5F3EE` | `#1C1B19` | Page background only (~60% of screen) | Never text/buttons directly on it without a surface |
 | `--card` | `#FFFFFF` | `#262522` | Cards, toolbars, default buttons | Never page background |
 | `--sunken` | `#EFECE4` | `#2E2D29` | Inputs, code blocks, inactive chips | Never raised surfaces |
-| `--popover` | `#FFFFFF` | `#2E2D29` | Dropdowns, menus, dialogs (+ border + shadow) | Never page background |
+| `--popover` | `#FFFFFF` | `#2E2D29` | Dropdowns, menus, dialogs, tooltips (+ 1px `--line` border + `--shadow-pop`) | Never page background |
 | `--hover` | `#F0EDE5` | `#34332E` | Row/menu/button hover | Never selected state (use accent-tint) |
 | `--scrim` | `rgba(31, 30, 27, .40)` | `rgba(0, 0, 0, .60)` | Modal backdrop only | Never a visible UI surface |
 | `--line` | `#E3DFD5` | `#3A3833` | 1px borders/dividers | Never text or large fills |
