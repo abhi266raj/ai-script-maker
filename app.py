@@ -63,6 +63,10 @@ from core.version import __version__ as APP_VERSION
 import streamlit.components.v1 as components
 from core.server_manager import get_server_info, stop_server_async, restart_server_async
 
+# Single-flight guard for the continuous generation pipeline (issue #195):
+# the Generate button owns its loading state via `generation_in_flight`.
+from core.generation_guard import begin_run, button_params, end_run, is_in_flight
+
 # Merged story source: manual topic entry plus every news feed (replaces the
 # Stage names for display in collapsible history (continuous + step-wise).
 _STAGE_NAMES = {
@@ -1524,6 +1528,11 @@ if "batch_result" not in st.session_state:
     st.session_state.batch_result = None
 if "generation_error" not in st.session_state:
     st.session_state.generation_error = None
+if "generation_in_flight" not in st.session_state:
+    # Issue #195: True while the continuous pipeline owns the Generate
+    # button (button shows "Generating…" and stays disabled). Cleared in a
+    # finally when the run finishes, fails, or is interrupted.
+    st.session_state.generation_in_flight = False
 if "chosen_engine_mode" not in st.session_state:
     st.session_state.chosen_engine_mode = app_cfg.get("default_engine", "first_local_then_agy")
 if "chosen_duration" not in st.session_state:
@@ -2366,21 +2375,40 @@ with col_settings:
                         st.session_state.generation_error = None
                         st.rerun()
         else:
+            # Issue #195 / HIG §3: the Generate button owns its loading state.
+            # While a run is in flight it stays disabled, so a second click
+            # can never queue a duplicate pipeline. The flag is set here
+            # (before the rerun) so the button renders disabled for the whole
+            # multi-minute run, and released in a finally when the run ends.
             # #199: icon-only primary launch — play metaphor + verb-first help tag.
-            launch_btn = st.button("", icon=":material/play_arrow:", type="primary", use_container_width=True, key="launch_continuous_btn",
-                                   help="Generate the script in continuous mode")
+            _gen_btn = button_params(st.session_state)
+            launch_btn = st.button(
+                "",
+                icon=":material/play_arrow:",
+                type="primary",
+                use_container_width=True,
+                key="launch_continuous_btn",
+                disabled=_gen_btn["disabled"],
+                help="Generate the script in continuous mode",
+            )
             if launch_btn and st.session_state.get("active_story_input", "").strip():
-                _issues = validate_config()
-                if _issues:
-                    st.error(":material/block: Cannot generate — fix these first:")
-                    for _iss in _issues:
-                        st.error(f"• {_iss}")
+                if is_in_flight(st.session_state):
+                    # Unreachable while the button is disabled; landing here
+                    # means session state is out of sync — fail loudly and
+                    # never queue a duplicate generation.
+                    st.error("A generation is already running — please wait for it to finish.")
                 else:
-                    st.session_state.stepwise_active = False
-                    st.session_state.run_requested = True
-                    st.session_state.batch_result = None
-                    st.session_state.generation_error = None
-                    st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
+                    _issues = validate_config()
+                    if _issues:
+                        st.error("⛔ Cannot generate — fix these first:")
+                        for _iss in _issues:
+                            st.error(f"• {_iss}")
+                    else:
+                        st.session_state.stepwise_active = False
+                        begin_run(st.session_state)
+                        st.session_state.batch_result = None
+                        st.session_state.generation_error = None
+                        st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
                 st.session_state.run_scenario = instruction_text.strip()
                 st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
                 save_config("selected_headline", st.session_state.run_topic)
@@ -3783,138 +3811,148 @@ with col_output:
         # Stage outputs live OUTSIDE the status box so they stay visible
         # even when the status collapses.
         stage_output_box = st.empty()
-        with st.status("Generating…", expanded=True) as status_box:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            try:
-                pipeline = reel_workflow.run_stream(
-                    news_input=st.session_state.run_topic,
-                    scenario=st.session_state.run_scenario,
-                    batch_size=st.session_state.chosen_batch_count,
-                    target_seconds=st.session_state.chosen_duration,
-                    engine_mode=st.session_state.chosen_engine_mode,
-                    max_retries=st.session_state.chosen_max_retries,
-                    preferred_angle=get_effective_angle(),
-                    character_count=st.session_state.chosen_character_count,
-                    scene_style=st.session_state.chosen_scene_style,
-                    preferred_tone=st.session_state.chosen_tone,
-                    sample_story=st.session_state.get("run_sample_story", ""),
-                )
-                for step in pipeline:
-                    # Live substep events: update tracker + heading, keep pumping.
-                    if step.get("type") == "substep":
-                        _ev_stage = _apply_live_substep(step)
-                        _ev_label = _live_stage_heading(
-                            _ev_stage, substep=step.get("substep"),
-                            name=step.get("name", ""))
-                        status_text.markdown(f"**{_ev_label}**")
-                        status_box.update(label=_ev_label)
-                        live_tracker_box.empty()
-                        with live_tracker_box.container():
-                            st.markdown(f"### {_ev_label}")
-                            for _sn in range(1, _ev_stage + 1):
-                                _render_live_tracker(_sn)
-                        continue
-                    step_num = step.get("step", 1)
-                    st.session_state._last_pipeline_step = step_num
-                    total_steps = step.get("total_steps", 6)
-                    progress_bar.progress(min(1.0, step_num / total_steps))
-                    if step.get("data") is None:
-                        # Stage started: live heading + fresh tracker.
-                        _label = _live_stage_heading(step_num)
-                        _init_live_stage(step_num)
-                        live_tracker_box.empty()
-                        with live_tracker_box.container():
-                            st.markdown(f"### {_label}")
-                            for _sn in range(1, step_num + 1):
-                                _render_live_tracker(_sn)
-                    else:
-                        # Stage completed.
-                        _label = _live_stage_heading(step_num, phase="complete")
-                        _live_done = (st.session_state.get("_live_substeps") or {}).get(step_num)
-                        if _live_done is not None:
-                            _live_done["done"] = True
-                            _live_done["failed_at"] = None
-                            # Mark any still-running substep as passed (stage
-                            # returned without a fail event).
-                            for _sid, _ent in _live_done["steps"].items():
-                                if _ent.get("status") == "running":
-                                    _ent["status"] = "pass"
-                                    _ent["detail"] = _ent.get("detail") or "Completed"
-                        live_tracker_box.empty()
-                        with live_tracker_box.container():
-                            st.markdown(f"### {_label}")
-                            for _sn in range(1, step_num + 1):
-                                _render_live_tracker(_sn)
-                    status_text.markdown(f"**{_label}**")
-                    status_box.update(label=_label)
-                    # Keep every completed stage's input + output visible while later stages run.
-                    # Accumulate new data, then ALWAYS re-render (even on in-progress
-                    # yields with no data) so previous stages stay visible.
-                    _sdata = step.get("data")
-                    if _sdata:
-                        # Defensive copy: never alias the pipeline's mutable
-                        # state dict into session state.
-                        _sdata = dict(_sdata)
-                        _sdata["retry_count"] = step.get("retry_count", 0)
-                        st.session_state._stage_outputs[step_num] = _sdata
-                    if st.session_state._stage_outputs:
-                        stage_output_box.empty()
-                        # CRITICAL: .empty() does NOT unregister widget keys
-                        # within the same script run (verified on Streamlit
-                        # 1.64 — re-rendering the same keyed widgets in a
-                        # loop raises StreamlitDuplicateElementKey). Every
-                        # re-render of the live preview therefore gets a
-                        # unique key prefix. This loses nothing: the script
-                        # is blocked inside the pipeline generator while the
-                        # loop runs, so no widget interaction can occur
-                        # mid-run; after completion the final rerun renders
-                        # the separate "done_" preview.
-                        _live_seq = st.session_state.get("_live_preview_seq", 0) + 1
-                        st.session_state._live_preview_seq = _live_seq
-                        with stage_output_box.container():
-                            _render_cumulative_preview(
-                                st.session_state._stage_outputs,
-                                key_prefix=f"live_r{_live_seq}_")
-                    if step.get("completed"):
-                        st.session_state.batch_result = step["data"]["batch_result"]
-                        st.session_state.generation_error = None
-                        st.session_state.selected_script_idx = 0
-                        save_config("selected_script_index", 0)
-                        progress_bar.progress(1.0)
-                        status_box.update(label="Ready — all 6 stages complete", state="complete", expanded=False)
-                        # Collapse stage history on completion: final output goes to the top,
-                        # stage details move into a collapsed expander below.
-                        st.session_state._pipeline_just_completed = True
-                        st.rerun()
-            except Exception as e:
-                st.session_state.batch_result = None
-                st.session_state.selected_script_idx = 0
-                _f_step = st.session_state.get("_last_pipeline_step", 1)
-                # Failure heading with the exact failing substep, and mark it
-                # failed in the live tracker so the partial summary is complete.
-                _f_live = (st.session_state.get("_live_substeps") or {}).get(_f_step, {})
-                _f_sub = _f_live.get("failed_at") or _f_live.get("current")
-                _f_steps = _f_live.get("steps", {})
-                if _f_sub and _f_sub in _f_steps and _f_steps[_f_sub].get("status") == "running":
-                    _f_steps[_f_sub]["status"] = "fail"
-                    _f_steps[_f_sub]["detail"] = str(e)[:200]
-                    _f_live["failed_at"] = _f_sub
-                _fail_label = _live_stage_heading(_f_step, substep=_f_sub, phase="failed")
-                st.session_state.generation_error = {
-                    "message": str(e),
-                    "error_type": type(e).__name__,
-                    "engine_mode": st.session_state.get("chosen_engine_mode", ""),
-                    "partial_output": getattr(e, "partial_output", "") or "",
-                    "step": _f_step,
-                    "failed_substep": _f_sub,
-                }
-                status_box.update(label=_fail_label, state="error")
-                live_tracker_box.empty()
-                with live_tracker_box.container():
-                    st.markdown(f"### {_fail_label}")
-                    _render_live_tracker(_f_step)
-                    _render_partial_substep_summary()
+        # Issue #195: the Generate button owns this run. The try/finally
+        # releases the button whether the pipeline finishes, fails, or is
+        # interrupted — otherwise it could stay disabled forever.
+        try:
+            with st.status("Generating…", expanded=True) as status_box:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                try:
+                    pipeline = reel_workflow.run_stream(
+                        news_input=st.session_state.run_topic,
+                        scenario=st.session_state.run_scenario,
+                        batch_size=st.session_state.chosen_batch_count,
+                        target_seconds=st.session_state.chosen_duration,
+                        engine_mode=st.session_state.chosen_engine_mode,
+                        max_retries=st.session_state.chosen_max_retries,
+                        preferred_angle=get_effective_angle(),
+                        character_count=st.session_state.chosen_character_count,
+                        scene_style=st.session_state.chosen_scene_style,
+                        preferred_tone=st.session_state.chosen_tone,
+                        sample_story=st.session_state.get("run_sample_story", ""),
+                    )
+                    for step in pipeline:
+                        # Live substep events: update tracker + heading, keep pumping.
+                        if step.get("type") == "substep":
+                            _ev_stage = _apply_live_substep(step)
+                            _ev_label = _live_stage_heading(
+                                _ev_stage, substep=step.get("substep"),
+                                name=step.get("name", ""))
+                            status_text.markdown(f"**{_ev_label}**")
+                            status_box.update(label=_ev_label)
+                            live_tracker_box.empty()
+                            with live_tracker_box.container():
+                                st.markdown(f"### {_ev_label}")
+                                for _sn in range(1, _ev_stage + 1):
+                                    _render_live_tracker(_sn)
+                            continue
+                        step_num = step.get("step", 1)
+                        st.session_state._last_pipeline_step = step_num
+                        total_steps = step.get("total_steps", 6)
+                        progress_bar.progress(min(1.0, step_num / total_steps))
+                        if step.get("data") is None:
+                            # Stage started: live heading + fresh tracker.
+                            _label = _live_stage_heading(step_num)
+                            _init_live_stage(step_num)
+                            live_tracker_box.empty()
+                            with live_tracker_box.container():
+                                st.markdown(f"### {_label}")
+                                for _sn in range(1, step_num + 1):
+                                    _render_live_tracker(_sn)
+                        else:
+                            # Stage completed.
+                            _label = _live_stage_heading(step_num, phase="complete")
+                            _live_done = (st.session_state.get("_live_substeps") or {}).get(step_num)
+                            if _live_done is not None:
+                                _live_done["done"] = True
+                                _live_done["failed_at"] = None
+                                # Mark any still-running substep as passed (stage
+                                # returned without a fail event).
+                                for _sid, _ent in _live_done["steps"].items():
+                                    if _ent.get("status") == "running":
+                                        _ent["status"] = "pass"
+                                        _ent["detail"] = _ent.get("detail") or "Completed"
+                            live_tracker_box.empty()
+                            with live_tracker_box.container():
+                                st.markdown(f"### {_label}")
+                                for _sn in range(1, step_num + 1):
+                                    _render_live_tracker(_sn)
+                        status_text.markdown(f"**{_label}**")
+                        status_box.update(label=_label)
+                        # Keep every completed stage's input + output visible while later stages run.
+                        # Accumulate new data, then ALWAYS re-render (even on in-progress
+                        # yields with no data) so previous stages stay visible.
+                        _sdata = step.get("data")
+                        if _sdata:
+                            # Defensive copy: never alias the pipeline's mutable
+                            # state dict into session state.
+                            _sdata = dict(_sdata)
+                            _sdata["retry_count"] = step.get("retry_count", 0)
+                            st.session_state._stage_outputs[step_num] = _sdata
+                        if st.session_state._stage_outputs:
+                            stage_output_box.empty()
+                            # CRITICAL: .empty() does NOT unregister widget keys
+                            # within the same script run (verified on Streamlit
+                            # 1.64 — re-rendering the same keyed widgets in a
+                            # loop raises StreamlitDuplicateElementKey). Every
+                            # re-render of the live preview therefore gets a
+                            # unique key prefix. This loses nothing: the script
+                            # is blocked inside the pipeline generator while the
+                            # loop runs, so no widget interaction can occur
+                            # mid-run; after completion the final rerun renders
+                            # the separate "done_" preview.
+                            _live_seq = st.session_state.get("_live_preview_seq", 0) + 1
+                            st.session_state._live_preview_seq = _live_seq
+                            with stage_output_box.container():
+                                _render_cumulative_preview(
+                                    st.session_state._stage_outputs,
+                                    key_prefix=f"live_r{_live_seq}_")
+                        if step.get("completed"):
+                            st.session_state.batch_result = step["data"]["batch_result"]
+                            st.session_state.generation_error = None
+                            st.session_state.selected_script_idx = 0
+                            save_config("selected_script_index", 0)
+                            progress_bar.progress(1.0)
+                            status_box.update(label="Ready — all 6 stages complete", state="complete", expanded=False)
+                            # Collapse stage history on completion: final output goes to the top,
+                            # stage details move into a collapsed expander below.
+                            st.session_state._pipeline_just_completed = True
+                            st.rerun()
+                except Exception as e:
+                    st.session_state.batch_result = None
+                    st.session_state.selected_script_idx = 0
+                    _f_step = st.session_state.get("_last_pipeline_step", 1)
+                    # Failure heading with the exact failing substep, and mark it
+                    # failed in the live tracker so the partial summary is complete.
+                    _f_live = (st.session_state.get("_live_substeps") or {}).get(_f_step, {})
+                    _f_sub = _f_live.get("failed_at") or _f_live.get("current")
+                    _f_steps = _f_live.get("steps", {})
+                    if _f_sub and _f_sub in _f_steps and _f_steps[_f_sub].get("status") == "running":
+                        _f_steps[_f_sub]["status"] = "fail"
+                        _f_steps[_f_sub]["detail"] = str(e)[:200]
+                        _f_live["failed_at"] = _f_sub
+                    _fail_label = _live_stage_heading(_f_step, substep=_f_sub, phase="failed")
+                    st.session_state.generation_error = {
+                        "message": str(e),
+                        "error_type": type(e).__name__,
+                        "engine_mode": st.session_state.get("chosen_engine_mode", ""),
+                        "partial_output": getattr(e, "partial_output", "") or "",
+                        "step": _f_step,
+                        "failed_substep": _f_sub,
+                    }
+                    status_box.update(label=_fail_label, state="error")
+                    live_tracker_box.empty()
+                    with live_tracker_box.container():
+                        st.markdown(f"### {_fail_label}")
+                        _render_live_tracker(_f_step)
+                        _render_partial_substep_summary()
+                # Issue #195: the run is over — rerun so the Generate
+                # button re-enables at once and the failure renders via
+                # the generation_error block below.
+                st.rerun()
+        finally:
+            end_run(st.session_state)
 
     if st.session_state.get("stepwise_active") and st.session_state.get("stepwise_run_requested"):
         st.session_state.stepwise_run_requested = False
@@ -4121,7 +4159,10 @@ with col_output:
             if st.button("Try again", key="retry_failed_generation", use_container_width=True):
                 st.session_state.generation_error = None
                 st.session_state.batch_result = None
-                st.session_state.run_requested = True
+                # Issue #195: claim the single-flight slot so the Generate
+                # button renders disabled for the whole retry run. Raises
+                # loudly if a run is somehow already in flight.
+                begin_run(st.session_state)
                 st.rerun()
 
     def _stepwise_go_back(target_step: int):
@@ -4294,7 +4335,9 @@ with col_output:
             # #199: icon-only control — refresh metaphor + verb-first help tag.
             if st.button("", icon=":material/refresh:", key="retry_compliance_btn", type="primary", use_container_width=True,
                          help="Retry generation with the recommended settings"):
-                st.session_state.run_requested = True
+                # Issue #195: claim the single-flight slot so the Generate
+                # button renders disabled for the whole retry run.
+                begin_run(st.session_state)
         # Validation & Retry Details on final output stage
         _tot_retries = getattr(res, "total_retries", 0)
         _aud_rep = getattr(res, "audit_report", None)
