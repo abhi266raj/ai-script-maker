@@ -10,7 +10,7 @@ from __future__ import annotations
 import html as _html
 import re as _re
 import time as _time
-from collections.abc import Callable
+from collections.abc import Callable, Set
 from functools import lru_cache as _lru_cache
 
 import streamlit as st
@@ -3060,14 +3060,20 @@ def _render_script_version_body(story_id: str, version: dict, is_default: bool,
         _render_full_script(version["text"])
 
 
-def _render_script_versions(story_id: str, busy: bool) -> None:
+def _render_script_versions(story_id: str, busy_kinds: Set[str]) -> None:
     """Full Script as a collapsible per-version list, latest on top (#104).
 
     Only the latest version starts expanded. The story's ``## Script``
     section always mirrors the default version, so Copy / Share / export
     keep working unchanged. A corrupt sidecar fails loudly with an error
     instead of a fabricated version list.
+
+    ``busy_kinds`` is the set from ``lib.refresh_busy_kinds``: while any
+    refresh runs, version actions stay disabled (a version save rewrites
+    the story file a refresh worker may be rewriting). #193: the disabled
+    state is named out loud — silent dead buttons are the bug being fixed.
     """
+    _busy = bool(busy_kinds)
     try:
         _versions, _default_n = lib.get_script_versions(story_id)
     except Exception as e:
@@ -3083,22 +3089,34 @@ def _render_script_versions(story_id: str, busy: bool) -> None:
         st.markdown('<div class="lib-section">Full Script</div>', unsafe_allow_html=True)
     with _vh2:
         if st.button("", icon=_TB_ICON_ADD, key=f"lib_script_newver_{story_id}",
-                     help="Create new version", disabled=busy):
+                     help="Create new version", disabled=_busy):
             try:
-                _new_n = lib.create_script_version(story_id)
+                lib.create_script_version(story_id)
             except Exception as e:
                 st.error(f"Could not create a new version: {e}")
             else:
-                # Open the fresh version in edit mode — it starts as a
-                # copy of the default text, ready to modify.
-                st.session_state[f"lib_edit_script_v{_new_n}_{story_id}"] = True
+                # #193: the new version lands as a plain row with every
+                # action live. It used to auto-open in edit mode, which
+                # silently disabled its own action buttons (edit / make
+                # default / delete) while v1's stayed enabled — reading as
+                # "version 2's buttons don't respond". Editing stays one
+                # explicit tap away on the row's edit button.
                 st.rerun()
+    if _busy:
+        # #193: name the reason out loud — a disabled button with no
+        # visible cause reads as "buttons don't respond".
+        _kind_names = {"enrich": "enrichment", "hashtags": "hashtag refresh",
+                       "images": "image refresh", "news": "news refresh",
+                       "more_images": "image refresh", "more_news": "news refresh",
+                       "reset": "reset"}
+        _names = ", ".join(sorted({_kind_names.get(_k, _k) for _k in busy_kinds}))
+        st.caption(f"Version actions are paused while {_names} runs…")
 
     for _ver in _versions:
         _n = _ver["n"]
         _label = f"Version {_n}" + (" · Default" if _n == _default_n else "")
         with st.expander(_label, expanded=(_n == _latest_n)):
-            _render_script_version_body(story_id, _ver, _n == _default_n, busy)
+            _render_script_version_body(story_id, _ver, _n == _default_n, _busy)
 
 
 def _any_script_version_editing(story_id: str) -> bool:
@@ -3320,7 +3338,7 @@ def _render_story_detail(story_id: str) -> None:
     # Whole script — versioned (#104): collapsible per-version list, latest
     # on top, latest expanded. The story's ## Script section always mirrors
     # the default version, so Copy / Share / export keep using it unchanged.
-    _render_script_versions(story_id, _busy)
+    _render_script_versions(story_id, _busy_kinds)
     if not story["script"].strip() and story["dialogue"].strip():
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',

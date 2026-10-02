@@ -355,6 +355,43 @@ def test_start_enrichment_no_topic_is_no_change(libdir):
     assert "No topic" in meta["refresh_note"]
 
 
+class _ExplodingThread:
+    """threading.Thread stand-in whose start() always raises (#193)."""
+    def __init__(self, *a, **k):
+        pass
+
+    def start(self):
+        raise RuntimeError("thread spawn exploded")
+
+
+def test_start_enrichment_thread_start_failure_leaves_no_stuck_busy(libdir, monkeypatch):
+    # #193: if the worker thread fails to start AFTER the story was flagged
+    # busy, the failure must settle to a terminal state — otherwise every
+    # version-row button (and the rest of the detail page) stays silently
+    # disabled until the next app restart.
+    sid = _make_story()
+    monkeypatch.setattr(threading, "Thread", _ExplodingThread)
+    ok, reason = lib.start_enrichment(sid, "chubby dogs voting contest")
+    assert not ok
+    assert "Could not start enrichment" in reason
+    meta = lib.load_story(sid)["meta"]
+    assert meta["enrichment_status"] == "failed"
+    assert "thread spawn exploded" in meta["refresh_note"]
+    assert lib.refresh_busy_kinds(meta) == set()
+
+
+def test_start_refresh_thread_start_failure_leaves_no_stuck_busy(libdir, monkeypatch):
+    # Same stuck-busy guard for the manual-refresh path (#193).
+    sid = _make_story()
+    _settle_enrichment(sid)
+    monkeypatch.setattr(threading, "Thread", _ExplodingThread)
+    ok, reason = lib.start_refresh(sid, "hashtags")
+    assert not ok
+    assert "Could not start refresh" in reason
+    meta = lib.load_story(sid)["meta"]
+    assert lib.refresh_busy_kinds(meta) == set()
+
+
 # ---------------------------------------------------------------------------
 # media fetch: verified story links first
 # ---------------------------------------------------------------------------

@@ -2985,7 +2985,16 @@ def start_refresh(story_id: str, kind: str,
         t.start()
         return True, ""
     except Exception as e:
-        return False, f"Could not start refresh: {type(e).__name__}: {e}"
+        reason = f"Could not start refresh: {type(e).__name__}: {e}"
+        # Fail loudly AND leave no stuck marker: the story was flagged
+        # busy above before the thread failed to start — without a
+        # terminal state its buttons (incl. every script-version action,
+        # #193) would stay disabled until the next app restart.
+        try:
+            _finish_refresh(story_id, kind, "failed", reason)
+        except Exception:
+            traceback.print_exc()
+        return False, reason
 
 
 # ---------------------------------------------------------------------------
@@ -3411,4 +3420,14 @@ def start_enrichment(story_id: str, topic: str) -> Tuple[bool, str]:
         t.start()
         return True, ""
     except Exception as e:
-        return False, f"Could not start enrichment: {type(e).__name__}: {e}"
+        reason = f"Could not start enrichment: {type(e).__name__}: {e}"
+        # Fail loudly AND leave no stuck marker: the story was flagged
+        # busy ("pending") by save_story / _set_refresh_busy above before
+        # the thread failed to start — without a terminal state its
+        # buttons (incl. every script-version action, #193) would stay
+        # disabled until the next app restart.
+        try:
+            _finish_refresh(story_id, "enrich", "failed", reason)
+        except Exception:
+            traceback.print_exc()
+        return False, reason
