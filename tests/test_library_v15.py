@@ -2625,3 +2625,38 @@ def test_reset_popover_uses_explicit_verb_source():
     seg = seg[:seg.index("\ndef ", 10)]
     assert 'destructive_label="Reset media"' in seg
     assert 'title="Reset media rows?"' in seg
+
+
+# ---------------------------------------------------------------------------
+# Empty-story guard: save_story must never persist a story with no content
+# ---------------------------------------------------------------------------
+
+def test_save_story_rejects_empty_content(libdir):
+    """An empty story (blank dialogue AND blank script) is refused loudly
+    and nothing is written to the stories directory."""
+    with pytest.raises(ValueError, match="content is empty"):
+        lib.save_story(title="Empty", tone="funny", hashtags=["#x"],
+                       dialogue_md="", script_md="")
+    assert list((libdir / "stories").glob("*.md")) == []
+
+
+def test_save_story_rejects_whitespace_only_content(libdir):
+    """Whitespace-only content counts as empty."""
+    with pytest.raises(ValueError, match="content is empty"):
+        lib.save_story(title="Empty", tone="funny", hashtags=["#x"],
+                       dialogue_md="  \n ", script_md="   ")
+    assert list((libdir / "stories").glob("*.md")) == []
+
+
+def test_save_story_allows_dialogue_only_content(libdir):
+    """The guard is on combined content: dialogue alone is a real story."""
+    sid = lib.save_story(title="Dialogue only", tone="funny",
+                         hashtags=["#x"], dialogue_md="AARAV: hello",
+                         script_md="")
+    assert lib.load_story(sid)["dialogue"] == "AARAV: hello"
+
+
+def test_save_story_allows_script_only_content(libdir):
+    """Script alone (the normal autosave shape, dialogue_md="") still saves."""
+    sid = _make_story(dialogue_md="", script_md="AARAV: real content")
+    assert "real content" in lib.load_story(sid)["script"]

@@ -339,7 +339,12 @@ def save_story(
     under different URLs that slip through here are collapsed by every
     later image refresh, which backfills content/perceptual hashes and
     collapses stored duplicates (issue #57).
+
+    Raises ValueError when the story has no content (both dialogue and
+    script are blank) — an empty story is never persisted.
     """
+    if not (dialogue_md or "").strip() and not (script_md or "").strip():
+        raise ValueError("Cannot save: the story content is empty.")
     story_id = new_story_id()
     image_urls, _, _ = _dedupe_stored_image_entries(image_urls, [], [])
     meta = {
