@@ -424,6 +424,46 @@ class TestSourceRefreshOnResolution:
         assert changed is False
         assert updated == {}
 
+    def test_repair_refreshes_stale_source_when_resolution_fails(self, monkeypatch):
+        # #230: bot-blocking publisher (Times of India) — resolve_final_url
+        # returns "" but the stale "DuckDuckGo" label must still be
+        # refreshed from the URL's domain. Fail-open keeps the URL as-is.
+        url = "https://timesofindia.indiatimes.com/city/pune/x-123.cms"
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": url, "source": "DuckDuckGo"}],
+            {})  # resolution fails -> ""
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is True
+        lk = updated["news_links"][0]
+        assert lk["url"] == url
+        assert lk["source"] == "Times of India"
+        assert "refreshed 1 source label" in note
+
+    def test_repair_keeps_good_source_when_resolution_fails(self, monkeypatch):
+        # #230: fail-open on the URL — a good label must not be touched.
+        url = "https://timesofindia.indiatimes.com/city/pune/x-123.cms"
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": url, "source": "Times of India"}],
+            {})  # resolution fails -> ""
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is False
+        assert updated == {}
+        assert "already final" in note
+
+    def test_repair_still_drops_dead_redirect_when_resolution_fails(self, monkeypatch):
+        # #230 must not weaken the #143 loud-drop for known redirect hosts.
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": "https://news.google.com/rss/articles/DEAD",
+              "source": "DuckDuckGo"}],
+            {})  # resolution fails -> ""
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is True
+        assert updated["news_links"] == []
+        assert "dropped 1" in note
+
 
 class TestDdgStaleSourceRefresh227:
     """#227: DDG unwraps to the final publisher URL at parse time, so the
@@ -502,3 +542,4 @@ class TestDdgStaleSourceRefresh227:
             kept, _ = f._resolve_aggregator_links(arts)
         assert kept[0].source == "DuckDuckGo"
         assert "could not derive publisher name" in caplog.text
+

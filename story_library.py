@@ -2663,6 +2663,9 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
     publisher, not the aggregator. Unresolvable redirect URLs
     (known aggregator hosts) are dropped loudly; other unresolvable
     URLs are kept (fail-open — likely direct links blocking bots).
+    #230: a stale aggregator label is refreshed from the URL's domain
+    whether or not resolution succeeds — fail-open applies to the
+    URL, not the label.
 
     Runs in background threads (called from refresh paths), never on
     the render path. Returns (changed, note).
@@ -2685,25 +2688,35 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
             dropped += 1
             continue
         final = news_fetcher.resolve_final_url(url)
+        # #230: a stale aggregator label is refreshed from the URL's
+        # domain whether or not resolution succeeds — the publisher is
+        # fully determined by the domain, no network call needed.
+        # Fail-open applies to the URL, not the label.
+        old_source = (lk.get("source") or "").strip()
+        new_source = old_source
+        if old_source in _STALE_AGGREGATOR_SOURCES:
+            new_source = publisher_name_from_url(final or url) or old_source
         if final:
             url_changed = final != url
-            old_source = (lk.get("source") or "").strip()
-            new_source = old_source
-            if url_changed or old_source in _STALE_AGGREGATOR_SOURCES:
-                new_source = publisher_name_from_url(final) or old_source
+            if url_changed:
+                new_source = publisher_name_from_url(final) or new_source
             if url_changed:
                 repaired += 1
             if new_source != old_source:
                 sources_refreshed += 1
             kept.append(dict(lk, url=final, source=new_source))
             continue
-        # Unresolvable: drop loudly only known redirect hosts (#143).
+        # Unresolvable: drop loudly only known redirect hosts (#143);
+        # otherwise fail-open on the URL but keep the refreshed label (#230).
         try:
             host = urllib.parse.urlparse(url).netloc.lower()
         except Exception:
             host = ""
         if host in news_fetcher._AGGREGATOR_REDIRECT_HOSTS:
             dropped += 1
+        elif new_source != old_source:
+            sources_refreshed += 1
+            kept.append(dict(lk, source=new_source))
         else:
             kept.append(lk)
     if repaired or dropped or sources_refreshed:
@@ -2721,7 +2734,8 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
 
 # Fetch-time source labels that name the aggregator/search engine rather
 # than the publisher (#153). When a stored link carries one of these,
-# the source is refreshed from the (resolved) URL's domain.
+# the source is refreshed from the URL's domain — even when redirect
+# resolution fails (#230).
 _STALE_AGGREGATOR_SOURCES = frozenset(
     {"Bing News", "DuckDuckGo", "News Wire", "Live Wire"}
 )
