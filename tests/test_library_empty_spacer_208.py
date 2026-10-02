@@ -4,19 +4,15 @@ Covers (static source checks, no Streamlit runtime needed):
   1. No empty ``st.markdown('')`` spacer CALLS remain in library_ui.py
      (the bug class: invisible blank paragraphs whose margins drift when
      Streamlit changes its empty-paragraph styling).
-  2. The replacement ``.lib-spacer-delete`` class exists in the injected
-     CSS with an explicit fixed height, and a div carrying that class is
-     rendered between the story radio list and the Delete-All trigger in
-     ``render_library_page`` — so the spacing intent is named and
-     version-proof.
+  2. #290 superseded the ``.lib-spacer-delete`` named spacer: Delete-all
+     moved into the "Stories · N" header row, so the spacer div and its
+     CSS class are both fully gone — no dead spacer code may linger.
 
 Run: python3 -m pytest tests/test_library_empty_spacer_208.py -v
 """
 
 import os
 import re
-
-import pytest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LIB_PATH = os.path.join(ROOT, "library_ui.py")
@@ -46,30 +42,13 @@ def test_no_empty_markdown_spacers_in_library_ui():
     )
 
 
-def test_named_spacer_css_class_exists_with_fixed_height():
-    """#208: .lib-spacer-delete defines an explicit fixed height in the
-    injected Library CSS (not a margin that can drift)."""
+def test_spacer_delete_fully_removed_with_header_move():
+    """#290: Delete-all moved into the header row, so the #208 named
+    spacer must be completely gone — neither the div nor its CSS class
+    may linger as dead code."""
     src = _source()
-    css = re.search(r"\.lib-spacer-delete\s*\{([^}]*)\}", src)
-    assert css, ".lib-spacer-delete CSS class not found in library_ui.py"
-    assert re.search(r"height\s*:\s*\d+px", css.group(1)), (
-        ".lib-spacer-delete must define an explicit fixed height "
-        f"(found: {css.group(1).strip()!r})"
-    )
-
-
-def test_named_spacer_used_before_delete_all():
-    """#208: the named spacer div is rendered just before the Delete-All
-    popover trigger in the master column."""
-    src = _source()
-    pattern = re.compile(
-        r'st\.markdown\(\s*\'<div class="lib-spacer-delete"></div>\'',
-        re.DOTALL,
-    )
-    m = pattern.search(src)
-    assert m, "no <div class=\"lib-spacer-delete\"> st.markdown call found"
-    # Sanity: the popover trigger must follow the spacer in render_library_page.
-    tail = src[m.end():]
-    assert re.search(r"_delete_popover\(", tail), (
-        "spacer div exists but no _delete_popover call follows it"
-    )
+    assert "lib-spacer-delete" not in src, (
+        ".lib-spacer-delete still referenced after the #290 header move")
+    # The delete-all popover still exists — now in the header, still with
+    # the explicit red verb (see the #58/#203 source-level tests).
+    assert 'popover_key="lib_delpop_all"' in src

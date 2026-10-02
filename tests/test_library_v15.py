@@ -878,7 +878,8 @@ def test_update_hashtags_ai_off_reports_failed_and_changes_nothing(libdir):
     assert meta["enrichment_status"] == "failed"
     assert meta["refresh_kind"] == ""
     assert "AI processing is disabled" in meta["refresh_note"]
-    assert "enable AI processing in Library settings" in meta["refresh_note"]
+    assert "story toolbar" in meta["refresh_note"], \
+        "the fail-loud note must point at the toolbar AI engine dropdown"
     assert meta["hashtags"] == ["#DogShowdown"], "failed refresh must change no tags"
 
 
@@ -1140,6 +1141,7 @@ class _FakeSt:
         self.toasts = []  # (message, icon) in render order
         self.dividers = []  # st.divider kwargs, in render order (#78)
         self.spinners = []  # spinner text shown, in render order (#209)
+        self.radios = []  # {"label", "options", "key"} per radio, in order
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
@@ -1180,6 +1182,28 @@ class _FakeSt:
         self.popover_kwargs = {"label": label, **k}
         self.popovers.append(self.popover_kwargs)
         return _FakeCtx()
+
+    def selectbox(self, label, options, index=0, key=None, **k):
+        # Toolbar AI engine dropdown: return the persisted widget value
+        # when the test set one, else the option at `index` (Streamlit's
+        # default selection with no prior interaction).
+        opts = list(options)
+        if key is not None and key in self.session_state:
+            return self.session_state[key]
+        return opts[index] if opts else None
+
+    def radio(self, label, options, key=None, **k):
+        # Media-type radio in the upload popover / story picker: default
+        # to the first option like Streamlit does with no prior selection.
+        opts = list(options)
+        self.radios.append({"label": label, "options": opts, "key": key})
+        if key is not None and key in self.session_state:
+            return self.session_state[key]
+        return opts[0] if opts else None
+
+    def file_uploader(self, *a, **k):
+        # No file chosen in tests.
+        return None
 
     def dialog(self, title, **k):
         # #119/#130: st.dialog is a decorator at import time. The returned
@@ -1229,7 +1253,8 @@ def _ui_with_fake_st(clicks=()):
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
                      "link_button", "code", "toast", "divider",
-                     "text_input", "spinner"):  # #159 Telegram setup/share
+                     "text_input", "spinner", "selectbox",
+                     "radio", "file_uploader"):  # #159 Telegram setup/share
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -2418,12 +2443,13 @@ def test_detail_toolbar_weights_fit_full_labels():
     labels never change mid-work, so the static labels are the longest
     state. #46: Share/Copy joined the same row. #220: the row is grouped
     refresh ×3 | share+copy | destructive (reset + delete) with hairline
-    separator columns between groups — the two separator slots are the
-    only addition (total 10.24), every action keeps its own weight, and
-    the #24 baseline alignment is preserved."""
+    separator columns between groups. The upload trigger and the AI engine
+    dropdown joined the middle group beside Share/Copy (total 13.34);
+    every action keeps its own weight, and the #24 baseline alignment is
+    preserved."""
     lui, _fake = _ui_with_fake_st()
-    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.24
-    assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0
+    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 13.34
+    assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.1
     # Icon columns fit the glyph + spinner (generous headroom); text
     # columns unchanged from the #38 fit.
     assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # hashtag icon button
@@ -2432,9 +2458,11 @@ def test_detail_toolbar_weights_fit_full_labels():
     assert lui._DETAIL_TOOLBAR_WEIGHTS[3] <= 0.2  # #220 separator
     assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Share popover trigger
     assert lui._DETAIL_TOOLBAR_WEIGHTS[5] >= 1.0  # Copy popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] <= 0.2  # #220 separator
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[8] >= 1.3  # Reset popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[9] >= 1.5  # Delete popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] >= 1.0  # Upload popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[7] >= 1.5  # AI engine dropdown
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[8] <= 0.2  # #220 separator
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[10] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[11] >= 1.5  # Delete popover trigger
     assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
 
 

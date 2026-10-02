@@ -63,7 +63,12 @@ def test_images_row_is_vertically_centered(libdir):
     _assert_single_centered_row(fake, "_render_images_row")
 
 
-def test_upload_row_is_vertically_centered(libdir):
+def test_upload_trigger_has_no_row_to_center(libdir):
+    """The standalone Upload row is gone — the toolbar trigger renders no
+    columns row, so there is nothing to vertically center. (It inherits
+    the detail toolbar's vertical centering.)"""
     lui, fake = _ui_with_recording_st()
-    lui._render_upload_row("sid1")
-    _assert_single_centered_row(fake, "_render_upload_row")
+    lui._render_upload_popover_trigger("sid1")
+    assert fake.column_specs == [], (
+        f"upload trigger must render no columns() row; "
+        f"saw {fake.column_specs}")

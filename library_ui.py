@@ -26,18 +26,65 @@ TAB_LIBRARY = "Library"
 def _library_ai_engine() -> str | None:
     """Engine mode for Library AI processing, or None when it is disabled.
 
-    Reads the persisted ``library_ai_enabled`` / ``library_ai_engine`` prefs
-    (off by default). The AI only ever suggests hashtags — it never alters
-    the screenplay, story content, verified links, or images.
+    The persisted ``library_ai_engine`` pref holds an engine label or the
+    "None" label (``LIBRARY_AI_ENGINE_NONE_LABEL``) — selecting "None" in
+    the toolbar's AI engine dropdown disables AI processing. The AI only
+    ever suggests hashtags — it never alters the screenplay, story
+    content, verified links, or images.
+
+    Legacy migration: before the "None" option existed, the "Enable AI
+    processing" toggle governed this. A missing engine pref resolves to
+    the default engine when the old toggle was on, else to None (AI stays
+    off, exactly as it was). An unknown label resolves to None — the
+    fail-safe direction is "AI off", never a surprise engine.
     """
     try:
         prefs = lib.load_prefs()
     except Exception:
         return None
-    if not prefs.get("library_ai_enabled", False):
+    label = prefs.get("library_ai_engine")
+    if label is None:
+        if not prefs.get("library_ai_enabled", False):
+            return None
+        label = lib.DEFAULT_LIBRARY_AI_ENGINE
+    if label == lib.LIBRARY_AI_ENGINE_NONE_LABEL:
         return None
-    label = prefs.get("library_ai_engine", lib.DEFAULT_LIBRARY_AI_ENGINE)
     return lib.LIBRARY_ENGINE_OPTIONS.get(label)
+
+
+def _render_ai_engine_selectbox() -> None:
+    """AI engine dropdown in the story-detail toolbar.
+
+    Replaces the removed "Enable AI processing" toggle + header dropdown.
+    Selecting "None" disables AI processing (the engine resolves to None);
+    invoking AI then fails loudly instead of silently falling back.
+    """
+    _labels = [lib.LIBRARY_AI_ENGINE_NONE_LABEL] + list(
+        lib.LIBRARY_ENGINE_OPTIONS.keys())
+    try:
+        _prefs = lib.load_prefs()
+    except Exception:
+        _prefs = {}
+    _saved = _prefs.get("library_ai_engine")
+    if _saved is None:
+        # Legacy migration mirrors _library_ai_engine(): the old toggle's
+        # state decides the initial selection.
+        _saved = (lib.DEFAULT_LIBRARY_AI_ENGINE
+                  if _prefs.get("library_ai_enabled", False)
+                  else lib.LIBRARY_AI_ENGINE_NONE_LABEL)
+    if _saved not in _labels:
+        _saved = lib.LIBRARY_AI_ENGINE_NONE_LABEL
+    _new = st.selectbox(
+        "AI engine", options=_labels,
+        index=_labels.index(_saved),
+        key="lib_ai_engine", label_visibility="collapsed",
+        help="Pick the AI engine for hashtag suggestions — "
+             "None disables AI processing")
+    if _new != _saved:
+        try:
+            lib.save_prefs({"library_ai_engine": _new})
+        except Exception as e:
+            st.error(f"Could not save the AI engine choice: {e}")
 
 
 # ---------------------------------------------------------------------------
@@ -637,13 +684,29 @@ def inject_library_css() -> None:
         border-bottom: 1px solid var(--line);
         margin: 12px 0;
     }
-    /* #208: explicit named spacer between the story radio list and the
-       Delete-All trigger. Replaces a stray st.markdown("") — an empty
-       paragraph whose margins drift across Streamlit versions. HIG §1:
-       group related items with intentional, named negative space instead
-       of invisible hacks, so the spacing intent is version-proof. */
-    .lib-spacer-delete {
-        height: 12px;
+    /* #290: the "Stories · N" header is a borderless toggle button that
+       collapses the master view. Marker-scoped: the hidden marker div
+       sits directly before the button's element container. Borderless
+       (macOS HIG: toolbar items have no bezel); the chevron flips with
+       the collapsed state. Theme tokens only. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-master-toggle"]) {
+        display: none !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-master-toggle"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"]
+        button[kind="tertiary"] {
+        border: none !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        font-size: 15px !important;
+        font-weight: 600 !important;
+        color: var(--ink) !important;
+        padding-left: 0 !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-master-toggle"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"]
+        button[kind="tertiary"]:hover {
+        color: var(--accent) !important;
     }
     /* #220: hairline VERTICAL separator between the detail toolbar's
        three action groups (macOS HIG §1: max three toolbar groups,
@@ -674,14 +737,14 @@ def inject_library_css() -> None:
        upload glyph), with a visible theme-safe border so it reads as a
        real button, not a bare glyph. Marker-scoped: the hidden
        [data-marker="lib-upload-btn"] div sits directly before the
-       popover's element container inside the Upload row's button column.
-       The border uses a neutral translucent gray — theme-safe in light
-       and dark mode. */
+       popover's element container inside the detail toolbar's upload
+       column. The border uses a neutral translucent gray — theme-safe in
+       light and dark mode. */
     /* #162: the lib-upload-btn marker div is display:none, but its
        stElementContainer wrapper still occupies one inter-element gap
-       in the button column's vertical block (the #24/#53/#68 pattern) —
-       pushing the upload popover button below the "Upload" title's
-       optical center. Collapse the wrapper; the `+` sibling selectors
+       in the toolbar column's vertical block (the #24/#53/#68 pattern) —
+       nudging the upload popover button off the toolbar's optical
+       center. Collapse the wrapper; the `+` sibling selectors
        below keep matching on DOM order regardless of display. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-upload-btn"]) {
         display: none !important;
@@ -907,13 +970,6 @@ def _inject_story_list_css() -> None:
     div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
         + div[data-testid="stElementContainer"] [data-testid="stRadio"] label > div:first-child {
         display: none !important;
-    }
-    /* Sidebar section header */
-    .lib-sidebar-label {
-        font-size: 12px;
-        font-weight: 600;
-        opacity: 0.55;
-        margin: 2px 0 6px 2px;
     }
     /* v1.6 (#24): the lib-danger-/lib-danger-pop- marker divs are
        display:none themselves, but their stElementContainer wrapper still
@@ -1839,28 +1895,19 @@ def _render_images_row(story_id: str, img_urls: list, uploaded: list,
             busy_kinds=busy_kinds)
 
 
-def _render_upload_row(story_id: str) -> None:
-    """#154: the Upload section as ONE reusable component.
+def _render_upload_popover_trigger(story_id: str) -> None:
+    """The Upload action as a toolbar trigger (icon-only popover).
 
-    Renders the full row — "Upload" title + upload popover button
-    (Video/Image picker) — and OWNS its alignment: the [11, 1] column
-    split, vertical centering, the title cell, and the button cell
-    (with its marker) all live inside this function.
-
-    Pure refactor of the inline block in ``_render_story_detail``
-    (#154): no behavior change.
+    The standalone full-width Upload row is gone — the upload popover
+    trigger lives in the detail toolbar beside Share/Copy. The
+    lib-upload-btn marker keeps the marker-scoped themed border on the
+    trigger (see the CSS rule). The popover body (Video/Image picker) is
+    unchanged: ``_render_upload_popover``.
     """
-    # (Video/Image radio + file uploader). Title and button share one
-    # line, vertically centered.
-    _u1, _u2 = st.columns([11, 1], vertical_alignment="center")
-    with _u1:
-        st.markdown('<div class="lib-section lib-section-inline">Upload</div>',
-                    unsafe_allow_html=True)
-    with _u2:
-        st.markdown('<div data-marker="lib-upload-btn" style="display:none"></div>',
-                    unsafe_allow_html=True)
-        with st.popover("", icon=_TB_ICON_UPLOAD, help="Upload video or image"):
-            _render_upload_popover(story_id)
+    st.markdown('<div data-marker="lib-upload-btn" style="display:none"></div>',
+                unsafe_allow_html=True)
+    with st.popover("", icon=_TB_ICON_UPLOAD, help="Upload video or image"):
+        _render_upload_popover(story_id)
 
 
 # #181: the success toast must fire at most once per warm-up completion.
@@ -2219,67 +2266,31 @@ def render_library_page() -> None:
                     unsafe_allow_html=True)
         return
 
-    # Header row: story count leading; AI processing controls trailing
-    # (macOS HIG: view controls live in the header, trailing side).
-    _prefs = lib.load_prefs()
-    _ai_on = bool(_prefs.get("library_ai_enabled", False))
-    _engine_labels = list(lib.LIBRARY_ENGINE_OPTIONS.keys())
-    _engine_label = _prefs.get("library_ai_engine", lib.DEFAULT_LIBRARY_AI_ENGINE)
-    if _engine_label not in _engine_labels:
-        _engine_label = lib.DEFAULT_LIBRARY_AI_ENGINE
-    hh1, hh2, hh3 = st.columns([4.4, 2.6, 3.0], vertical_alignment="center")
-    with hh1:
-        st.markdown(f'<div class="lib-sidebar-label">Stories · {len(stories)}</div>',
+    # Header row: collapsible "Stories · N" toggle + Delete-all (#290).
+    # The toggle is borderless (macOS HIG: toolbar items have no bezel);
+    # the chevron flips with the collapsed state. Delete-all uses the
+    # shared Apple-style destructive confirmation (destructive red /
+    # Cancel normal). The old "Enable AI processing" toggle is gone —
+    # the AI engine dropdown (with its None option) lives in the
+    # story-detail toolbar.
+    _collapsed = bool(st.session_state.get("lib_master_collapsed", False))
+    _hh1, _hh2 = st.columns([11, 1], vertical_alignment="center")
+    with _hh1:
+        st.markdown('<div data-marker="lib-master-toggle"></div>',
                     unsafe_allow_html=True)
-    with hh2:
-        _new_ai = st.toggle(
-            "Enable AI processing", value=_ai_on, key="lib_ai_toggle",
-            help="Enable AI hashtag suggestions; script, links, and images "
-                 "stay untouched")
-        if _new_ai != _ai_on:
-            lib.save_prefs({"library_ai_enabled": _new_ai})
-            _ai_on = _new_ai  # use the fresh value for the rest of this run
-    with hh3:
-        _new_engine = st.selectbox(
-            "AI engine", options=_engine_labels,
-            index=_engine_labels.index(_engine_label),
-            disabled=not _ai_on, key="lib_ai_engine",
-            label_visibility="collapsed",
-            help="Pick the AI engine for hashtag suggestions")
-        if _new_engine != _engine_label:
-            lib.save_prefs({"library_ai_engine": _new_engine})
-    st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
-
-    master, detail = st.columns([1, 3])
-    with master:
-        # macOS sidebar: the story list is a single-select list with an
-        # accent-tinted selected row (like Mail/Finder). Newest first, so
-        # the latest story is selected on entry.
-        ids = [s.get("id", "") for s in stories]
-        titles = {s.get("id", ""): (s.get("title", "Untitled") or "Untitled")[:38]
-                  for s in stories}
-        if st.session_state.get("lib_story_radio") not in ids:
-            # Reset a stale selection (e.g. after a delete) before the
-            # widget is created so it falls back to the first row.
-            st.session_state.pop("lib_story_radio", None)
-        st.markdown('<div data-marker="lib-story-list" style="display:none"></div>',
-                    unsafe_allow_html=True)
-        sel = st.radio(
-            "Stories",
-            options=ids,
-            format_func=lambda sid: titles.get(sid, "?"),
-            index=0,
-            key="lib_story_radio",
-            label_visibility="collapsed",
-        )
-        st.session_state["lib_selected_story"] = sel
-        # Delete-all lives in the master section (dialog confirm).
+        if st.button(
+                f"Stories · {len(stories)}",
+                icon=":material/chevron_right:" if _collapsed
+                     else ":material/expand_more:",
+                key="lib_master_toggle",
+                type="tertiary",
+                help=("Expand the stories list" if _collapsed
+                      else "Collapse the stories list")):
+            st.session_state["lib_master_collapsed"] = not _collapsed
+            st.rerun()
+    with _hh2:
         # #203: icon-only trigger (trash metaphor) — empty text label;
         # the verb-first help tag carries the label for tooltip + a11y.
-        # #208: explicit named spacer between the story radio list and the
-        # Delete-All trigger. Replaces a stray st.markdown("") whose
-        # empty-paragraph margins drift across Streamlit versions.
-        st.markdown('<div class="lib-spacer-delete"></div>', unsafe_allow_html=True)
         _delete_popover(
             trigger_label="",
             trigger_icon=_TB_ICON_DELETE,
@@ -2292,8 +2303,58 @@ def render_library_page() -> None:
             destructive_label="Delete all stories",
             _pending_delete_kind="all",
         )
-    with detail:
+    st.divider()
+
+    # Story selection (shared by collapsed and expanded layouts).
+    # macOS sidebar: the story list is a single-select list with an
+    # accent-tinted selected row (like Mail/Finder). Newest first, so
+    # the latest story is selected on entry.
+    ids = [s.get("id", "") for s in stories]
+    titles = {s.get("id", ""): (s.get("title", "Untitled") or "Untitled")[:38]
+              for s in stories}
+    # #290: the collapsed master view keeps a two-item peek under the
+    # header — never header-only. Newest first, same order as the list.
+    _visible_ids = ids if not _collapsed else ids[:2]
+    if st.session_state.get("lib_story_radio") not in _visible_ids:
+        # Reset a stale selection (e.g. after a delete, or a selection
+        # outside the collapsed peek) before the widget is created so it
+        # falls back to the first visible row.
+        st.session_state.pop("lib_story_radio", None)
+    _sel = st.session_state.get("lib_selected_story")
+    sel = _sel if _sel in _visible_ids else (
+        _visible_ids[0] if _visible_ids else "")
+
+    def _render_story_radio() -> str:
+        """The story picker radio (full list or two-item peek).
+
+        The lib-story-list marker scopes the shared sidebar styling, so
+        the peek looks identical to the master list.
+        """
+        st.markdown('<div data-marker="lib-story-list" style="display:none"></div>',
+                    unsafe_allow_html=True)
+        _picked = st.radio(
+            "Stories",
+            options=_visible_ids,
+            format_func=lambda sid: titles.get(sid, "?"),
+            index=0,
+            key="lib_story_radio",
+            label_visibility="collapsed",
+        )
+        st.session_state["lib_selected_story"] = _picked
+        return _picked
+
+    if _collapsed:
+        # Collapsed: the two-item peek sits directly under the header;
+        # the detail goes full width below it.
+        sel = _render_story_radio()
+        st.divider()
         _render_story_detail(sel)
+    else:
+        master, detail = st.columns([1, 3])
+        with master:
+            sel = _render_story_radio()
+        with detail:
+            _render_story_detail(sel)
 
     # #130: single shared delete dialog — invoked at most once per script
     # run, after all delete triggers have rendered. If no delete is pending,
@@ -3236,20 +3297,23 @@ def _copy_button(label: str, text: str, key: str, icon: str) -> None:
 # columns shrank to icon width and the freed weight moved to the spacer —
 # the row stays full-width with no dead space in the action area and Delete
 # stays visually trailing. #80: the news button is icon-only too (same 0.9
-# slot); the spacer gives up 0.9 to keep the total unchanged (10.0) so the
-# overall layout is preserved and the #24 baseline alignment is untouched.
+# slot). The upload trigger and AI engine dropdown joined the middle
+# group beside Share/Copy; the #24 baseline alignment is untouched.
 # #220 (HIG §1: max three toolbar groups): the detail toolbar is grouped
-# as refresh ×3 | share+copy | destructive (reset + delete trailing),
-# with a hairline separator column between groups. Reset moved next to
-# Delete so the two destructive actions share one group; the spacer
-# still pushes the destructive group trailing. Existing action weights
-# are untouched — the two separator slots are the only addition, so the
-# total grows from 10.0 to 10.24 and every button keeps its exact share
-# of the row (columns distribute proportionally).
+# as refresh ×3 | share+copy+upload+engine | destructive (reset + delete
+# trailing), with a hairline separator column between groups. Reset moved
+# next to Delete so the two destructive actions share one group; the
+# spacer still pushes the destructive group trailing. Existing action
+# weights are untouched — the two separator slots are the only addition,
+# so the total grows from 10.24 to 13.34 and every button keeps its exact
+# share of the row (columns distribute proportionally). The upload
+# trigger (icon-only popover, 1.1) and the AI engine dropdown (2.0) join
+# the middle group beside Share/Copy — the standalone Upload row and the
+# "Enable AI processing" toggle are gone.
 _TB_SEP_W = 0.12
-_DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, _TB_SEP_W, 1.1, 1.1, _TB_SEP_W,
-                           2.0, 1.4, 1.7]
-_TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
+_DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, _TB_SEP_W, 1.1, 1.1, 1.1, 2.0,
+                           _TB_SEP_W, 2.0, 1.4, 1.7]
+_TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 1.1, 3.2, 1.5]
 
 
 def _reset_file_uploader(key: str) -> None:
@@ -3711,9 +3775,9 @@ def _render_story_detail(story_id: str) -> None:
         )
 
     if _editing:
-        # Title edit mode: Save/Cancel lead, Share/Copy stay available,
-        # Delete stays trailing.
-        ec1, ec2, ec3, ec4, _esp, ec5 = st.columns(
+        # Title edit mode: Save/Cancel lead, Share/Copy/Upload stay
+        # available, Delete stays trailing.
+        ec1, ec2, ec3, ec4, ec8, _esp, ec5 = st.columns(
             _TITLE_EDIT_TOOLBAR_WEIGHTS, vertical_alignment="center")
         with ec1:
             if st.button("Save", key=f"lib_title_save_{story_id}"):  # rule 1: one primary per screen (fine-tune keeps it)
@@ -3730,14 +3794,16 @@ def _render_story_detail(story_id: str) -> None:
             _render_share_popover(story_id, _share_text, meta)
         with ec4:
             _render_copy_popover(story_id, meta, script_md)
+        with ec8:
+            _render_upload_popover_trigger(story_id)
         with ec5:
             _story_delete_popover()
     else:
         # #220: three visually separated groups (HIG §1) — refresh ×3 |
-        # share+copy | destructive (reset + delete). The separator columns
-        # are thin slots only; all action weights are unchanged.
-        # #206: the row stays vertically centered.
-        (tc1, tc2, tc3, _sep1, tc5, tc6, _sep2, _tsp, tc4, tc7
+        # share+copy+upload+engine | destructive (reset + delete). The
+        # separator columns are thin slots only; all action weights are
+        # unchanged. #206: the row stays vertically centered.
+        (tc1, tc2, tc3, _sep1, tc5, tc6, tc8, tcEng, _sep2, _tsp, tc4, tc7
          ) = st.columns(_DETAIL_TOOLBAR_WEIGHTS, vertical_alignment="center")
         with tc1:
             _render_kind_button(
@@ -3769,6 +3835,10 @@ def _render_story_detail(story_id: str) -> None:
             _render_share_popover(story_id, _share_text, meta)
         with tc6:
             _render_copy_popover(story_id, meta, script_md)
+        with tc8:
+            _render_upload_popover_trigger(story_id)
+        with tcEng:
+            _render_ai_engine_selectbox()
         with _sep2:
             _render_toolbar_separator()
         with tc4:
@@ -3891,23 +3961,19 @@ def _render_story_detail(story_id: str) -> None:
     vpath = lib.media_path(story_id, video_file) if video_file else None
     if vpath:
         st.video(str(vpath))
-    # #94: one-line upload row — "Upload" title on the left, upload
-    # button on the right. Clicking the button opens a popover offering
-    # a Video / Image selection; the chosen uploader then runs the
-    # upload + processing flow (same widget keys, same
-    # store_video_upload / store_image_upload paths, same success/error
-    # handling, popover body in _render_upload_popover). Uploads stay
-    # exempt from the #83 image cap and are never auto-removed.
+    # #94: the one-line upload row is gone — the upload affordance is the
+    # icon-only popover trigger in the detail toolbar above (with
+    # Share/Copy). Clicking it opens a popover offering a Video / Image
+    # selection; the chosen uploader then runs the upload + processing
+    # flow (same widget keys, same store_video_upload /
+    # store_image_upload paths, same success/error handling, popover body
+    # in _render_upload_popover). Uploads stay exempt from the #83 image
+    # cap and are never auto-removed.
     # #145: the uploader is reset after every upload so the same file is
     # never stored twice (widget values persist across reruns).
     # #114: the trigger is icon-only (native material upload glyph, no
-    # "⬆" text/emoji) with a visible theme-safe border (see CSS marker
-    # rule below); the popover body carries the upload affordance
-    # (Video/Image radio + file uploader). Title and button share one
-    # line, vertically centered.
-    # #154: the whole row is the reusable _render_upload_row component —
-    # it owns its own alignment, so layout fixes land there, not here.
-    _render_upload_row(story_id)
+    # text/emoji) with a visible theme-safe border (see the lib-upload-btn
+    # marker rule in the Library CSS).
 
     # (Refresh actions live in the detail toolbar at the top; Share/Copy
     # actions sit in the Actions row just below it.)

@@ -118,6 +118,13 @@ class _FakeSt(types.ModuleType):
         # #78: menu section separator inside the Share popover.
         self.events.append(("divider", kwargs))
 
+    def selectbox(self, label, options, index=0, key=None, **kwargs):
+        # Toolbar AI engine dropdown: record + return Streamlit's default
+        # (the option at `index`).
+        self.events.append(("selectbox", label, list(options), key))
+        opts = list(options)
+        return opts[index] if opts else None
+
 
 @pytest.fixture()
 def libdir(tmp_path, monkeypatch):
