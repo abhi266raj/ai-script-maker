@@ -2044,6 +2044,24 @@ def _script_markdown(script) -> str:
     return "\n".join(lines).strip()
 
 
+def _autosave_completed_guards() -> set:
+    """Session-state set of guard strings for completed auto-saves.
+
+    Issue #279: each (batch result, script) combination must auto-save at
+    most once per session. The old single scalar ``lib_autosaved_for``
+    remembered only the LAST save, so browsing back to an earlier script
+    (A -> B -> A) re-saved it. The set remembers every completed guard.
+    """
+    guards = st.session_state.get("lib_autosaved_guards")
+    if isinstance(guards, str):
+        # Defensive: fold a scalar left by an older build into the set.
+        guards = {guards}
+    elif not isinstance(guards, set):
+        guards = set()
+    st.session_state["lib_autosaved_guards"] = guards
+    return guards
+
+
 def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None:
     """Auto-save the finished story once (guarded against Streamlit reruns).
 
@@ -2051,12 +2069,17 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
     in the Studio (overlay/SFX toggles applied). It is stored verbatim —
     never regenerated, never a CTA added. On failure: surfaces the error
     with a manual "Save to library" fallback.
+
+    The guard is a set of completed guard strings (see
+    ``_autosave_completed_guards``): each (batch result, script) pair
+    saves at most once per session, no matter how the user navigates
+    between scripts (#279).
     """
     res_id = id(batch_result)
     script_id = getattr(script, "id", "?")
     sel_idx = st.session_state.get("selected_script_idx", 0)
     guard = f"{res_id}:{script_id}:{sel_idx}"
-    if st.session_state.get("lib_autosaved_for") == guard:
+    if guard in _autosave_completed_guards():
         return
     if st.session_state.get("lib_save_failed_for") == guard:
         _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
@@ -2075,7 +2098,7 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         st.error(f"Auto-save to library failed: {e}")
         _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
-    st.session_state["lib_autosaved_for"] = guard
+    _autosave_completed_guards().add(guard)
     st.session_state.pop("lib_save_failed_for", None)
     topic = st.session_state.get("run_topic", "") or ""
     _ok, _why = lib.start_enrichment(story_id, topic)
@@ -2168,7 +2191,7 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
         except Exception as e:
             st.error(f"Save to library failed: {e}")
             return
-        st.session_state["lib_autosaved_for"] = guard
+        _autosave_completed_guards().add(guard)
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
         _ok, _why = lib.start_enrichment(story_id, topic)
