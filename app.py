@@ -398,25 +398,6 @@ def sanitize_visual_prompt(text: str) -> str:
     return t.strip()
 
 
-POLITICAL_NAMES_BLACKLIST = {
-    "rahul", "modi", "narendra", "kejriwal", "gandhi", "amit shah", "amit",
-    "yogi", "adityanath", "sonia", "priyanka", "mamata", "stalin", "pawar",
-    "fadnavis", "shinde", "thackeray", "nitish", "lalu", "tejaswi"
-}
-
-
-def sanitize_character_name(name: str) -> str:
-    """Ensure characters never use politician names to prevent policy flags."""
-    if not name:
-        return ""
-    t = name
-    for pol in POLITICAL_NAMES_BLACKLIST:
-        if re.search(rf"\b{pol}\b", t, re.IGNORECASE):
-            t = re.sub(rf"\b{pol}\b", "Rohan", t, flags=re.IGNORECASE)
-            t = t.replace("राहुल", "रोहन").replace("अमित", "आरव").replace("मोदी", "कबीर")
-    return t
-
-
 def clean_beat_action(text: str) -> str:
     """Strip camera framing and prompt jargon, returning pure physical actor action."""
     return clean_physical_action(text)
