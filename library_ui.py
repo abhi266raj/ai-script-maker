@@ -3507,6 +3507,9 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
                 story_context="\n".join(_ctx_parts),
                 history=_history,
                 tone=(meta.get("tone") or "").strip(),
+                # #210: the toolbar's selected engine — never the default.
+                # None (AI disabled) raises loudly inside fine_tune_script.
+                engine_mode=_library_ai_engine(),
             )
         except Exception as e:
             st.error(f"Fine tune failed: {e}")
