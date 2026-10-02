@@ -1,14 +1,19 @@
-"""Tests for #207: theme follows Streamlit's rendered theme, not the OS.
+"""Tests for #207 (revised #258): theme follows Streamlit's rendered theme,
+with graceful OS fallback.
 
 Verifies (statically, following the repo's established source-assertion
 pattern — see test_dialog_icon_theme_v162.py):
 - The injected `studioSyncTheme` JS derives `data-theme` from Streamlit's
-  RENDERED DOM (computed styles of Streamlit's theme-painted sidebar-toggle
-  icon), never from `prefers-color-scheme` / `matchMedia` / localStorage.
-- Failure is loud: no probe => `data-theme` is left unset (no silent OS
-  fallback) and a visible error banner + console.error are surfaced.
+  RENDERED DOM (computed styles of Streamlit's theme-painted icon controls),
+  probed across several native controls so detection never depends on the
+  sidebar existing.
+- `prefers-color-scheme` / `matchMedia` appear ONLY in the OS-fallback
+  function, which runs solely after the grace period with no probe success;
+  a probe success always takes precedence over the fallback.
+- Failure is graceful (#258): no error banner, no console.error — one
+  console.warn, then the OS value. Fail loudly in tests, gracefully in app.
 - The app's own CSS can never poison the probes: no color/background/fill/
-  stroke rule may target the probe selectors.
+  stroke rule may target the probes' icon descendants.
 - The node unit tests exercising the detection logic
   (tests/test_theme_detection_207.js) pass.
 """
@@ -26,7 +31,13 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 APP_PY = Path(__file__).resolve().parent.parent / "app.py"
 NODE_TEST = Path(__file__).resolve().parent / "test_theme_detection_207.js"
 
-PROBE_TESTIDS = ["stExpandSidebarButton", "stSidebarCollapseButton"]
+PROBE_TESTIDS = [
+    "stExpandSidebarButton",
+    "stSidebarCollapseButton",
+    "stMainMenu",
+    "stToolbar",
+    "stHeader",
+]
 
 
 def _theme_script():
@@ -46,6 +57,23 @@ def _theme_script_code():
     return script
 
 
+def _fn_body(script, name):
+    """Extract the body of `function <name>() { ... }` via brace matching."""
+    start = script.find("function " + name + "()")
+    assert start != -1, f"{name} not found in theme script"
+    brace = script.find("{", start)
+    depth = 0
+    for i in range(brace, len(script)):
+        ch = script[i]
+        if ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return script[brace + 1 : i]
+    raise AssertionError(f"unbalanced braces in {name}")
+
+
 def _app_css():
     """Extract the main <style> CSS block from app.py."""
     src = APP_PY.read_text(encoding="utf-8")
@@ -54,18 +82,22 @@ def _app_css():
     return re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.DOTALL)
 
 
-# --- the OS must not be consulted ------------------------------------------------
+# --- the OS is only a fallback, never the primary signal ---------------------------
 
-def test_no_os_media_query_in_theme_script():
+def test_os_media_query_only_in_fallback():
+    """prefers-color-scheme / matchMedia may appear ONLY in the OS-fallback
+    function (#258); the DOM-probe detector must never consult the OS."""
     script = _theme_script_code()
-    assert "prefers-color-scheme" not in script, \
-        "theme detection must not read the OS media query (#207)"
-
-
-def test_no_match_media_in_theme_script():
-    script = _theme_script_code()
-    assert "matchMedia" not in script, \
-        "theme detection must not use matchMedia (#207)"
+    det_body = _fn_body(script, "studioDetectRenderedTheme")
+    assert "matchMedia" not in det_body, \
+        "studioDetectRenderedTheme must not use matchMedia (#207)"
+    assert "prefers-color-scheme" not in det_body, \
+        "studioDetectRenderedTheme must not read the OS media query (#207)"
+    fb_body = _fn_body(script, "studioOsFallbackTheme")
+    assert "matchMedia" in fb_body, \
+        "OS fallback must read matchMedia (#258)"
+    assert "prefers-color-scheme" in fb_body, \
+        "OS fallback must query prefers-color-scheme (#258)"
 
 
 def test_no_localstorage_theme_scan():
@@ -83,6 +115,9 @@ def test_detection_probes_rendered_dom():
     for testid in PROBE_TESTIDS:
         assert testid in script, \
             f"detection must probe Streamlit's {testid}"
+    # more than the two sidebar buttons: detection must not depend on the
+    # sidebar existing (#258).
+    assert len(PROBE_TESTIDS) > 2
 
 
 def test_detection_classifies_by_luminance():
@@ -91,53 +126,72 @@ def test_detection_classifies_by_luminance():
     assert "0.5" in script, "luminance threshold missing"
 
 
-def test_data_theme_set_from_detected_value():
-    script = _theme_script()
-    # data-theme is written from the detected value on all three roots...
-    assert script.count("setAttribute('data-theme'") >= 3 or \
-        script.count('setAttribute("data-theme"') >= 3 or \
-        script.count("setAttribute('data-theme', themeVal)") >= 1, \
-        "data-theme must be set from the detected theme value"
-    # ...only after detection succeeded (null => early return, no write).
-    det_pos = script.find("studioDetectRenderedTheme()")
-    null_guard = script.find("if (!themeVal)")
-    first_write = script.find("setAttribute('data-theme'")
-    assert det_pos != -1 and null_guard != -1 and first_write != -1
-    assert det_pos < null_guard < first_write, \
-        "detection -> null-guard -> data-theme write ordering broken"
-
-
-# --- failure is loud, never a silent OS fallback ---------------------------------
-
-def test_failure_surfaces_visible_error():
-    script = _theme_script()
-    assert "console.error" in script, "detection failure must log loudly"
-    assert "studio-theme-detection-error" in script, \
-        "detection failure must surface a visible error banner"
-    assert 'role", "alert"' in script or "role', 'alert'" in script, \
-        "error banner must be announced to assistive tech"
-
-
-def test_no_silent_os_fallback_on_failure():
+def test_data_theme_written_from_both_paths():
     script = _theme_script_code()
-    # On detection failure the function returns BEFORE any data-theme write;
-    # there is no OS-derived default anywhere in the script.
-    assert "prefers-color-scheme" not in script
-    assert "matchMedia" not in script
-    # The null path returns early (grace-period ticks) instead of defaulting.
-    m = re.search(r"if \(!themeVal\) \{([\s\S]*?)\n        \}", script)
-    assert m, "null-detection guard missing"
-    guard_body = m.group(1)
-    assert "return;" in guard_body, "null detection must return without guessing"
-    assert "setAttribute" not in guard_body, \
-        "null detection must not write data-theme"
+    body = _fn_body(script, "studioSyncTheme")
+    assert "studioApplyTheme(themeVal)" in body, \
+        "probe path must apply the detected theme"
+    assert "studioApplyTheme(osTheme)" in body, \
+        "fallback path must apply the OS theme"
+
+
+def test_probe_success_takes_precedence():
+    """When Streamlit's rendered value is known it always wins: the probe
+    result is applied (and the tick returns) BEFORE the fallback is ever
+    consulted (#207 contract, preserved by #258)."""
+    script = _theme_script_code()
+    body = _fn_body(script, "studioSyncTheme")
+    det = body.find("studioDetectRenderedTheme()")
+    fb = body.find("studioOsFallbackTheme()")
+    assert det != -1 and fb != -1 and det < fb, \
+        "probe must be consulted before the OS fallback"
+
+
+def test_fallback_gated_by_grace_period():
+    """The OS fallback runs only after STUDIO_THEME_FAIL_GRACE_TICKS
+    consecutive probe failures — never on the first blind tick."""
+    script = _theme_script_code()
+    body = _fn_body(script, "studioSyncTheme")
+    grace = body.find("STUDIO_THEME_FAIL_GRACE_TICKS")
+    fb = body.find("studioOsFallbackTheme()")
+    assert grace != -1 and fb != -1 and grace < fb, \
+        "OS fallback must be gated behind the grace period"
+
+
+# --- failure is graceful (#258): warn once, no banner, no console.error -----------
+
+def test_no_error_banner():
+    script = _theme_script()
+    assert "studio-theme-detection-error" not in script, \
+        "the #207 red banner path must be gone (#258)"
+    assert "Theme detection failed" not in script, \
+        "banner copy must be gone (#258)"
+
+
+def test_failure_warns_once_never_errors():
+    script = _theme_script_code()
+    assert "console.warn" in script, \
+        "fallback must log one console.warn (#258)"
+    assert "console.error" not in script, \
+        "theme detection must not console.error in the app (#258)"
 
 
 # --- the app's CSS must never poison the probes -----------------------------------
 
-def test_css_does_not_paint_probes():
-    """A color/background/fill/stroke rule targeting a probe (or its icon
-    descendants) would make detection read the app's own theme: circular.
+def _selector_poisoned(sel_norm, testid):
+    """True if the selector paints icon descendants of the probe: such a
+    rule would be read as Streamlit's theme color (the skip-inherited guard
+    only neutralises paint on the probe root itself)."""
+    for m in re.finditer(re.escape(testid), sel_norm):
+        rest = sel_norm[m.end() :].split(",")[0]
+        if re.search(r"[\s>+~]+[a-zA-Z*]*\b(span|svg|path|button|i)\b", rest):
+            return True
+    return False
+
+
+def test_css_does_not_paint_probe_descendants():
+    """A color/background/fill/stroke rule targeting a probe's icon
+    descendants would make detection read the app's own theme: circular.
     This test fails loudly if such a rule is ever added."""
     css = _app_css()
     poisoned = []
@@ -149,19 +203,10 @@ def test_css_does_not_paint_probes():
         ):
             continue
         for testid in PROBE_TESTIDS:
-            if testid in sel_norm:
+            if _selector_poisoned(sel_norm, testid):
                 poisoned.append(sel_norm[:120])
-        # The probes live under the header/toolbar: those subtrees must not
-        # set text color on descendants either (inheritance would poison the
-        # icon read).
-        if re.search(
-            r'\[data-testid="st(Toolbar|Header|SidebarHeader)"\][^\{]*'
-            r"(span|svg|button|i)\b",
-            sel_norm,
-        ):
-            poisoned.append(sel_norm[:120])
     assert not poisoned, \
-        f"CSS would poison the #207 theme probes: {poisoned}"
+        f"CSS would poison the #207/#258 theme probes: {poisoned}"
 
 
 # --- node logic tests --------------------------------------------------------------

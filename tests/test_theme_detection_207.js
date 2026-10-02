@@ -1,12 +1,14 @@
-/* Node unit tests for the #207 theme-detection JS injected by app.py.
+/* Node unit tests for the #207/#258 theme-detection JS injected by app.py.
  *
  * Extracts the <script> block containing studioSyncTheme from app.py, runs it
  * against a fake DOM, and verifies detection behaviour:
  *   - dark/light classification from Streamlit's rendered icon color
  *   - the icon's direct theme color wins over inherited (poisoned) values
- *   - no probe => no data-theme is set (never a silent OS fallback)
- *   - after the grace period a visible error banner + console.error appear
- *   - recovery clears the banner and sets data-theme
+ *   - probes beyond the sidebar buttons are consulted (#258)
+ *   - no probe => silent OS fallback after the grace period: data-theme is
+ *     set from matchMedia, one console.warn, NO banner, NO console.error
+ *   - a late probe success always overrides the OS fallback
+ *   - OS Auto-switches are picked up while in fallback mode
  *
  * Run: node tests/test_theme_detection_207.js
  */
@@ -59,7 +61,7 @@ function makeEl(tag) {
       return child;
     },
     querySelectorAll(sel) {
-      // supports the probe's simple selectors: 'span, svg, path, i'
+      // supports the probe's simple selectors: 'button, span, svg, path, i'
       const tags = sel.split(",").map((s) => s.trim().toUpperCase());
       const out = [];
       (function walk(n) {
@@ -87,15 +89,17 @@ function check(name, cond, extra) {
 // Captured interval tick (studioSyncTheme re-probe).
 let tick = null;
 const errorLogs = [];
+const warnLogs = [];
 
 // Per-test probe stubs, replaced between scenarios.
-let probeStubs = {}; // testid -> button stub (or missing)
+let probeStubs = {}; // testid -> element stub (or missing)
+// Per-test OS theme for the matchMedia stub.
+let osDark = false;
 
 function buildEnv() {
   const documentElement = makeEl("html");
   const body = makeEl("body");
   const stApp = makeEl("div");
-  const bannerHolder = { el: null }; // tracks appended banner
 
   const document = {
     readyState: "complete",
@@ -109,8 +113,8 @@ function buildEnv() {
       if (mm && probeStubs[mm[1]]) return probeStubs[mm[1]];
       return null;
     },
-    getElementById(id) {
-      return bannerHolder.el && bannerHolder.el.id === id ? bannerHolder.el : null;
+    getElementById() {
+      return null;
     },
     createElement(tag) {
       return makeEl(tag);
@@ -122,31 +126,26 @@ function buildEnv() {
     getComputedStyle(el) {
       return { color: el._color, fill: el._fill };
     },
+    matchMedia(query) {
+      return { matches: osDark, media: query };
+    },
     console: {
       error(...a) {
         errorLogs.push(a.join(" "));
       },
+      warn(...a) {
+        warnLogs.push(a.join(" "));
+      },
     },
   };
 
-  // body.appendChild tracks the banner so getElementById can find it.
-  const origAppend = body.appendChild.bind(body);
-  body.appendChild = (child) => {
-    if (child.id === "studio-theme-detection-error") bannerHolder.el = child;
-    return origAppend(child);
-  };
-  const origRemove = body.removeChild.bind(body);
-  body.removeChild = (child) => {
-    if (bannerHolder.el === child) bannerHolder.el = null;
-    return origRemove(child);
-  };
-
-  return { document, window, documentElement, body, stApp, bannerHolder };
+  return { document, window, documentElement, body, stApp };
 }
 
 function runScript(env) {
   tick = null;
   errorLogs.length = 0;
+  warnLogs.length = 0;
   const sandbox = {
     document: env.document,
     window: env.window,
@@ -194,23 +193,25 @@ console.log("--- scenario 1: dark rendered theme -> data-theme=dark ---");
 probeStubs = {
   stExpandSidebarButton: makeProbeButton({ iconColor: "rgba(250, 250, 250, 0.6)" }),
 };
+osDark = false;
 let env = buildEnv();
 runScript(env);
 let dt = dataTheme(env);
 check("html data-theme=dark", dt.html === "dark", JSON.stringify(dt));
 check("body data-theme=dark", dt.body === "dark", JSON.stringify(dt));
 check("stApp data-theme=dark", dt.stApp === "dark", JSON.stringify(dt));
-check("no error banner", env.bannerHolder.el === null);
 check("no console.error", errorLogs.length === 0, errorLogs.join("|"));
+check("no console.warn", warnLogs.length === 0, warnLogs.join("|"));
 
 console.log("--- scenario 2: light rendered theme -> data-theme=light ---");
 probeStubs = {
   stExpandSidebarButton: makeProbeButton({ iconColor: "rgba(49, 51, 63, 0.6)" }),
 };
+osDark = true; // OS disagrees: probe must still win
 env = buildEnv();
 runScript(env);
 dt = dataTheme(env);
-check("html data-theme=light", dt.html === "light", JSON.stringify(dt));
+check("html data-theme=light (probe beats OS)", dt.html === "light", JSON.stringify(dt));
 check("body data-theme=light", dt.body === "light", JSON.stringify(dt));
 
 console.log("--- scenario 3: stale data-theme cannot lock itself in ---");
@@ -224,22 +225,36 @@ probeStubs = {
     btnColor: "rgb(250, 250, 250)",
   }),
 };
+osDark = false;
 env = buildEnv();
 env.documentElement.setAttribute("data-theme", "dark"); // stale/wrong value
 runScript(env);
 dt = dataTheme(env);
 check("icon color wins -> light (no lock-in)", dt.html === "light", JSON.stringify(dt));
 
-console.log("--- scenario 4: collapse-button probe used when expand absent ---");
+console.log("--- scenario 4: non-sidebar probes are consulted (#258) ---");
 probeStubs = {
-  stSidebarCollapseButton: makeProbeButton({ iconColor: "rgb(250, 250, 250)" }),
+  // no sidebar buttons at all: detection must not depend on the sidebar
+  stToolbar: (() => {
+    const bar = makeEl("div");
+    bar._color = "rgb(31, 26, 20)"; // app --ink inherited (must be ignored)
+    const btn = makeEl("button");
+    btn._color = "rgb(31, 26, 20)";
+    const svg = makeEl("svg");
+    svg._color = "rgb(31, 26, 20)"; // inherits, must be skipped
+    svg._fill = "rgb(250, 250, 250)"; // direct theme fill
+    btn.appendChild(svg);
+    bar.appendChild(btn);
+    return bar;
+  })(),
 };
+osDark = false;
 env = buildEnv();
 runScript(env);
 dt = dataTheme(env);
-check("fallback probe -> dark", dt.html === "dark", JSON.stringify(dt));
+check("toolbar probe -> dark", dt.html === "dark", JSON.stringify(dt));
 
-console.log("--- scenario 5: svg fill fallback ---");
+console.log("--- scenario 5: svg fill fallback on sidebar probe ---");
 probeStubs = {
   stExpandSidebarButton: (() => {
     const btn = makeEl("button");
@@ -256,41 +271,60 @@ runScript(env);
 dt = dataTheme(env);
 check("fill fallback -> dark", dt.html === "dark", JSON.stringify(dt));
 
-console.log("--- scenario 6: no probe -> loud failure, never silent fallback ---");
+console.log("--- scenario 6: no probe -> silent OS fallback after grace (#258) ---");
 probeStubs = {};
+osDark = true; // OS dark
 env = buildEnv();
 runScript(env);
 dt = dataTheme(env);
-check("data-theme left unset (html)", dt.html === null, JSON.stringify(dt));
-check("data-theme left unset (body)", dt.body === null, JSON.stringify(dt));
-check("no banner during grace period", env.bannerHolder.el === null);
+check("data-theme unset during grace (html)", dt.html === null, JSON.stringify(dt));
+check("data-theme unset during grace (body)", dt.body === null, JSON.stringify(dt));
+check("no warn during grace", warnLogs.length === 0, warnLogs.join("|"));
 // exhaust the grace period: 20 ticks
 for (let i = 0; i < 20; i++) tick();
-check("banner shown after grace", env.bannerHolder.el !== null);
-check("banner has role=alert", env.bannerHolder.el.getAttribute("role") === "alert");
-check(
-  "banner mentions #207",
-  (env.bannerHolder.el.textContent || "").includes("#207")
-);
-check("console.error called", errorLogs.length > 0, errorLogs.join("|"));
-check(
-  "console.error never mentions OS fallback as a guess",
-  !errorLogs.some((l) => /guessing|fallback to the OS value/i.test(l) && !/instead of guessing/.test(l))
-);
 dt = dataTheme(env);
-check("data-theme STILL unset after failure", dt.html === null, JSON.stringify(dt));
+check("fallback applies OS dark (html)", dt.html === "dark", JSON.stringify(dt));
+check("fallback applies OS dark (body)", dt.body === "dark", JSON.stringify(dt));
+check("fallback applies OS dark (stApp)", dt.stApp === "dark", JSON.stringify(dt));
+check("exactly one console.warn", warnLogs.length === 1, warnLogs.join("|"));
+check("no console.error", errorLogs.length === 0, errorLogs.join("|"));
+check("no banner element created", env.document.getElementById("studio-theme-detection-error") === null);
+// further ticks must not warn again
+for (let i = 0; i < 5; i++) tick();
+check("warn still exactly once", warnLogs.length === 1, warnLogs.join("|"));
 
-console.log("--- scenario 7: recovery clears banner and applies theme ---");
-// banner already up from scenario 6; now the probe appears (late render).
+console.log("--- scenario 7: OS Auto-switch picked up while in fallback ---");
+// still no probe; OS flips light
+osDark = false;
+tick();
+dt = dataTheme(env);
+check("fallback follows OS to light", dt.html === "light", JSON.stringify(dt));
+check("still exactly one warn", warnLogs.length === 1, warnLogs.join("|"));
+
+console.log("--- scenario 8: late probe success overrides the OS fallback ---");
+// banner-free fallback is showing OS light; now the probe appears (late render)
+// reporting the dark theme Streamlit actually rendered.
 probeStubs = {
-  stExpandSidebarButton: makeProbeButton({ iconColor: "rgb(49, 51, 63)" }),
+  stExpandSidebarButton: makeProbeButton({ iconColor: "rgb(250, 250, 250)" }),
 };
-tick(); // one more probe tick with the probe present
-check("banner removed on recovery", env.bannerHolder.el === null);
+osDark = false;
+tick();
 dt = dataTheme(env);
-check("data-theme=light after recovery", dt.html === "light", JSON.stringify(dt));
+check("probe overrides fallback -> dark", dt.html === "dark", JSON.stringify(dt));
+check("no warn on recovery", warnLogs.length === 1, warnLogs.join("|"));
 
-console.log("--- scenario 8: luminance unit checks via pure functions ---");
+console.log("--- scenario 9: probe precedence over disagreeing OS ---");
+probeStubs = {
+  stSidebarCollapseButton: makeProbeButton({ iconColor: "rgb(49, 51, 63)" }),
+};
+osDark = true; // OS dark, Streamlit rendered light
+env = buildEnv();
+runScript(env);
+dt = dataTheme(env);
+check("probe wins immediately -> light", dt.html === "light", JSON.stringify(dt));
+check("no warn (no fallback engaged)", warnLogs.length === 0, warnLogs.join("|"));
+
+console.log("--- scenario 10: luminance unit checks via pure functions ---");
 // Re-extract the pure helpers and test them directly.
 const helpers = new Function(
   SCRIPT.match(/function studioParseRgb[\s\S]*?\n    \}/)[0] +

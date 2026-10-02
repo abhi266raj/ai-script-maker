@@ -1399,35 +1399,44 @@ st.html(
         setupAccordion();
     }
 
-    /* Theme contract (#207; HIG §4 — https://developer.apple.com/design/human-interface-guidelines/):
+    /* Theme contract (#207, revised #258; HIG §4 — https://developer.apple.com/design/human-interface-guidelines/):
        `data-theme` MUST mirror the theme Streamlit actually rendered
-       (menu → Settings → Theme), never the OS. `prefers-color-scheme`
-       breaks the moment the user picks Light/Dark opposite the OS, and a
-       one-time OS read goes stale when Auto switches at runtime. Reading
-       `.stApp`'s computed background is NOT an option either — the app's own
-       CSS paints `.stApp` with `var(--paper) !important`, so that read is
-       circular: whichever theme wins the first paint would lock itself in.
-       Detection instead samples the computed `color` of Streamlit's
-       sidebar-toggle icon. Streamlit paints that icon with the ACTIVE
-       theme's `fadedText60` emotion color (explicit `color` prop on the icon
-       component in the Streamlit 1.64 frontend), so the computed value IS
-       the rendered theme — unpoisoned by the app's CSS, which must never set
+       (menu → Settings → Theme) whenever that value is detectable — never
+       the OS while it is known. `prefers-color-scheme` breaks the moment the
+       user picks Light/Dark opposite the OS, and a one-time OS read goes
+       stale when Auto switches at runtime. Reading `.stApp`'s computed
+       background is NOT an option either — the app's own CSS paints `.stApp`
+       with `var(--paper) !important`, so that read is circular: whichever
+       theme wins the first paint would lock itself in.
+       Detection samples the computed `color`/`fill` of Streamlit-native icon
+       controls (sidebar toggles, main menu, toolbar, header). Streamlit
+       paints those icons with the ACTIVE theme's emotion colors (explicit
+       `color` props in the frontend), so the computed value IS the rendered
+       theme — unpoisoned by the app's CSS, which must never set
        color / background / fill on these probes (guarded by
        tests/test_theme_detection_207.py). Relative luminance > 0.5 means
        light text ⇒ dark theme. The 250 ms re-probe picks up Settings →
-       Theme changes with no OS listener at all.
-       FAIL LOUDLY: if no probe yields a parseable color (Streamlit hasn't
-       rendered yet, or a future Streamlit renames the testids), `data-theme`
-       is left unset and a visible error banner is shown after a short grace
-       period — the OS value is NEVER used as a silent fallback. (Until the
-       first successful detection, the CSS `@media (prefers-color-scheme:
-       dark)` block above remains the pre-JS first-paint fallback.) */
+       Theme changes with no OS listener at all, and a late probe success
+       always overrides the fallback.
+       GRACEFUL DEGRADATION (#258): the probes depend on Streamlit's DOM,
+       which varies by version and configuration. If no probe yields a
+       parseable color after a short grace period, `data-theme` falls back to
+       `prefers-color-scheme` — silently (one console.warn, no banner).
+       HIG §7: in-foreground updates stay discoverable but not distracting;
+       a fixed red banner for a condition the user cannot act on is worse
+       than the fallback it replaced. (Until the first JS write, the CSS
+       `@media (prefers-color-scheme: dark)` block above remains the pre-JS
+       first-paint fallback.) */
     var STUDIO_THEME_PROBES = [
         '[data-testid="stExpandSidebarButton"]',
-        '[data-testid="stSidebarCollapseButton"]'
+        '[data-testid="stSidebarCollapseButton"]',
+        '[data-testid="stMainMenu"]',
+        '[data-testid="stToolbar"]',
+        'header[data-testid="stHeader"]'
     ];
     var STUDIO_THEME_FAIL_GRACE_TICKS = 20; /* 20 × 250 ms ≈ 5 s */
     var studioThemeFailTicks = 0;
+    var studioThemeFallbackWarned = false;
 
     function studioParseRgb(colorStr) {
         if (!colorStr || typeof colorStr !== 'string') return null;
@@ -1447,18 +1456,18 @@ st.html(
     /* Returns 'dark', 'light', or null. Never consults the OS. */
     function studioDetectRenderedTheme() {
         for (var p = 0; p < STUDIO_THEME_PROBES.length; p++) {
-            var btn = null;
-            try { btn = document.querySelector(STUDIO_THEME_PROBES[p]); } catch (eQ) { btn = null; }
-            if (!btn) continue;
-            /* The button itself can inherit the app's own data-theme-driven
-               color from the header, so only descendants are read — and a
-               descendant merely inheriting that same value is skipped. What
-               remains is Streamlit's direct theme color on the icon. */
+            var root = null;
+            try { root = document.querySelector(STUDIO_THEME_PROBES[p]); } catch (eQ) { root = null; }
+            if (!root) continue;
+            /* The probe root can inherit the app's own data-theme-driven
+               color, so only descendants are read — and a descendant merely
+               inheriting that same value is skipped. What remains is
+               Streamlit's direct theme color on the icon. */
             var inherited = null;
-            try { inherited = window.getComputedStyle(btn).color; } catch (eC) { inherited = null; }
+            try { inherited = window.getComputedStyle(root).color; } catch (eC) { inherited = null; }
             var nodes = [];
             try {
-                var found = btn.querySelectorAll('span, svg, path, i');
+                var found = root.querySelectorAll('button, span, svg, path, i');
                 for (var i = 0; i < found.length; i++) nodes.push(found[i]);
             } catch (eN) {}
             for (var k = 0; k < nodes.length; k++) {
@@ -1474,58 +1483,56 @@ st.html(
         return null;
     }
 
-    function studioThemeError(show) {
-        var id = 'studio-theme-detection-error';
-        var el = null;
-        try { el = document.getElementById(id); } catch (eG) { el = null; }
-        if (!show) {
-            if (el && el.parentNode) {
-                try { el.parentNode.removeChild(el); } catch (eR) {}
+    /* OS fallback (#258): consulted ONLY when the rendered theme is not
+       detectable. Reads matchMedia live on every call so OS Auto-switches
+       are picked up by the 250 ms re-probe. Returns 'dark'/'light'/null. */
+    function studioOsFallbackTheme() {
+        try {
+            if (window.matchMedia) {
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
             }
-            return;
-        }
-        if (el) return;
-        try {
-            el = document.createElement('div');
-        } catch (eM) { return; }
-        el.id = id;
-        el.setAttribute('role', 'alert');
-        el.textContent = 'Theme detection failed (#207): the app could not read Streamlit\u2019s rendered theme, so page styling fell back to the OS theme. If Streamlit\u2019s Settings \u2192 Theme disagrees with your OS appearance, colors may mismatch.';
-        el.style.cssText = 'position:fixed;top:0;left:0;right:0;z-index:2147483647;' +
-            'background:#8c1d1d;color:#ffffff;text-align:center;' +
-            'font:600 13px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;' +
-            'padding:10px 16px;';
-        try {
-            if (document.body) document.body.appendChild(el);
-            else document.documentElement.appendChild(el);
-        } catch (eA) {}
+        } catch (eM) {}
+        return null;
     }
 
-    function studioSyncTheme() {
-        var themeVal = null;
-        try { themeVal = studioDetectRenderedTheme(); } catch (eD) { themeVal = null; }
-        if (!themeVal) {
-            studioThemeFailTicks++;
-            if (studioThemeFailTicks >= STUDIO_THEME_FAIL_GRACE_TICKS) {
-                if (window.console && window.console.error) {
-                    window.console.error('[studioSyncTheme] #207: unable to determine Streamlit\u2019s rendered theme after ' + studioThemeFailTicks + ' attempts; leaving data-theme unset instead of guessing from the OS.');
-                }
-                studioThemeError(true);
-            }
-            return;
-        }
-        studioThemeFailTicks = 0;
-        studioThemeError(false);
+    function studioApplyTheme(themeVal) {
         if (document.documentElement.getAttribute('data-theme') !== themeVal) {
             document.documentElement.setAttribute('data-theme', themeVal);
         }
         if (document.body && document.body.getAttribute('data-theme') !== themeVal) {
             document.body.setAttribute('data-theme', themeVal);
         }
-        var stApp = document.querySelector('.stApp');
+        var stApp = null;
+        try { stApp = document.querySelector('.stApp'); } catch (eT) {}
         if (stApp && stApp.getAttribute('data-theme') !== themeVal) {
             stApp.setAttribute('data-theme', themeVal);
         }
+    }
+
+    function studioSyncTheme() {
+        var themeVal = null;
+        try { themeVal = studioDetectRenderedTheme(); } catch (eD) { themeVal = null; }
+        if (themeVal) {
+            /* Streamlit's rendered value is known: it always wins. */
+            studioThemeFailTicks = 0;
+            studioApplyTheme(themeVal);
+            return;
+        }
+        studioThemeFailTicks++;
+        if (studioThemeFailTicks < STUDIO_THEME_FAIL_GRACE_TICKS) return;
+        /* Probes persistently blind: fall back to the OS theme silently.
+           One console.warn, no banner (HIG §7 — #258). The re-probe keeps
+           running, so a late probe success corrects data-theme. */
+        var osTheme = null;
+        try { osTheme = studioOsFallbackTheme(); } catch (eO) { osTheme = null; }
+        if (!osTheme) return;
+        if (!studioThemeFallbackWarned) {
+            studioThemeFallbackWarned = true;
+            if (window.console && window.console.warn) {
+                window.console.warn('[studioSyncTheme] #258: Streamlit rendered theme not detectable after ' + studioThemeFailTicks + ' attempts; using OS theme as fallback. Detection keeps probing and will correct data-theme when it succeeds.');
+            }
+        }
+        studioApplyTheme(osTheme);
     }
     studioSyncTheme();
     setInterval(studioSyncTheme, 250);
