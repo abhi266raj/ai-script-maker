@@ -1664,7 +1664,7 @@ def _render_fm_warmup_button() -> None:
     _label, _disabled = _fm_warmup_button_props(_state)
     if _disabled:
         st.button(_label, key="fm_warmup_btn", disabled=True,
-                  help="Warming up the on-device Apple FM model…",
+                  help="Warm up the on-device Apple FM model",
                   use_container_width=True)
         if not (_state or {}).get("auto"):
             # Manual warm-up: the initiating control owns its loading state.
@@ -1677,10 +1677,8 @@ def _render_fm_warmup_button() -> None:
             st.rerun()
         return
     if st.button(_label, key="fm_warmup_btn", disabled=False,
-                 help=("Developer: warm up the on-device Apple FM model now "
-                       "so the first generation doesn't pay the cold-start "
-                       "delay. Runs the FM availability probe (up to ~2 min "
-                       "on first run)."),
+                 help="Warm up the Apple FM model to skip the first "
+                      "generation's cold-start delay",
                  use_container_width=True):
         _ok, _reason = lib.start_fm_warmup()
         if not _ok:
@@ -1966,9 +1964,8 @@ def render_library_page() -> None:
     with hh2:
         _new_ai = st.toggle(
             "Enable AI processing", value=_ai_on, key="lib_ai_toggle",
-            help="When on, hashtag refreshes use the selected AI engine for "
-                 "content-aware suggestions. AI never changes your script, "
-                 "verified links, or images.")
+            help="Enable AI hashtag suggestions; script, links, and images "
+                 "stay untouched")
         if _new_ai != _ai_on:
             lib.save_prefs({"library_ai_enabled": _new_ai})
             _ai_on = _new_ai  # use the fresh value for the rest of this run
@@ -1978,8 +1975,7 @@ def render_library_page() -> None:
             index=_engine_labels.index(_engine_label),
             disabled=not _ai_on, key="lib_ai_engine",
             label_visibility="collapsed",
-            help="Engine used for AI hashtag suggestions. Disabled while "
-                 "AI processing is off.")
+            help="Pick the AI engine for hashtag suggestions")
         if _new_engine != _engine_label:
             lib.save_prefs({"library_ai_engine": _new_engine})
     st.markdown('<div class="lib-hairline"></div>', unsafe_allow_html=True)
@@ -2549,8 +2545,8 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                     "Send via WhatsApp",
                     icon=_TB_ICON_CHAT,
                     key=f"lib_wa_{story_id}",
-                    help="Share via WhatsApp — opens the Mac app when "
-                         "installed, otherwise your browser",
+                    help="Share via WhatsApp — opens the Mac app, otherwise "
+                         "your browser",
                     use_container_width=True,
                 ):
                     try:
@@ -2598,9 +2594,8 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                     "Share via Telegram",
                     icon=_TB_ICON_SEND,
                     key=f"lib_tg_{story_id}",
-                    help="Send the video + caption, then the news links, "
-                         "to Telegram via your bot — also broadcast to "
-                         "every group the bot is in",
+                    help="Send video + caption and news links to Telegram; "
+                         "also broadcast to groups",
                     use_container_width=True,
                 ):
                     try:
