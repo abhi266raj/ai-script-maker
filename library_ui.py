@@ -1691,7 +1691,14 @@ def _render_fm_warmup_button() -> None:
 def _render_fm_warmup_result() -> None:
     """Honest terminal result under the tab bar: success carries the real
     timing, failure carries the probe's own message verbatim (#4
-    messaging) — never a fake 'ready' state."""
+    messaging) — never a fake 'ready' state.
+
+    #204: the success branch now also renders a quiet persistent result
+    line (``st.caption``) on every rerun. The #181 toast is transient —
+    once it auto-dismissed there was zero on-screen evidence the warm-up
+    had succeeded. HIG §7: in-foreground updates stay in the UI,
+    discoverable but not distracting.
+    """
     _state = lib.read_fm_warmup_state()
     _stt = (_state or {}).get("state")
     if _stt == "done":
@@ -1706,8 +1713,13 @@ def _render_fm_warmup_result() -> None:
                     + (f" — {_msg}" if _msg else ""),
                     icon="✅")
             st.session_state[_FM_WARMUP_TOAST_ANNOUNCED_KEY] = _marker
+        # #204: quiet persistent terminal line — renders on every rerun
+        # while the state is terminal, independent of the toast. Never
+        # re-arms or duplicates the toast; no emoji (house rule).
+        st.caption(f"Apple FM warmed up in {_secs:.1f}s"
+                   + (f" — {_msg}" if _msg else ""))
     elif _stt == "failed":
-        _msg = (_state.get("message") or "unknown error").strip()
+        _msg = ((_state.get("message") or "").strip() or "unknown error")
         st.error(f"Warm-up failed: {_msg}")
         # Loud failure gets an explicit retry — never a silent stuck state.
         if st.button("Retry warm-up", key="fm_warmup_retry",
