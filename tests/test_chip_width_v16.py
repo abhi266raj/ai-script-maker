@@ -131,8 +131,8 @@ def test_chip_x_token_field_look_preserved():
 
 def test_chip_theme_colors_preserved():
     _, css = _load_lui()
-    assert "--lib-chip-bg: #F0E7D5;" in css, "#45 light chip fill"
-    assert "--lib-chip-bg: #4A4034;" in css, "#45 dark chip fill"
+    assert "--lib-chip-bg: var(--sunken);" in css, "light chip fill"
+    assert "--lib-chip-bg: var(--accent-tint);" in css, "dark chip fill"
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +189,8 @@ def test_newslink_row_uses_proportional_weights():
 
 def test_image_row_keeps_equal_columns():
     # Image cards are uniform 180px — equal weights stay correct there.
+    # NB: expressed as [1] * len(_cards) (equal weights) rather than
+    # st.columns(len(_cards)) so a Load more weight can be appended.
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    assert "_icols = st.columns(len(_cards))" in src
+    assert "_icols = st.columns([1] * len(_cards)" in src

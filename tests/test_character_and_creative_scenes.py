@@ -286,85 +286,153 @@ def test_tailored_instruction_matrix():
 
 
 def test_configuration_compliance_gate():
-    """Verify testing agent checks character separation, word budget, and issues retry recommendation on failure."""
-    # Compliant script
-    good_script = ReelScript(
-        id=1,
-        title="Good Script",
-        angle="Funny",
-        hook_hindi="अरे सुनो!",
-        narration_hindi="दोस्त 1: सुनो! दोस्त 2: क्या हुआ भाई? दोस्त 1: WFO आ गया!",
-        call_to_action="कमेंट करें!",
-        scenes=[
-            SceneItem(scene_number=1, character="🧑 Friend 1", dialogue="अरे सुनो!", timestamp="0:00 - 0:03", visual_b_roll="Tapri setup", on_screen_text="सुनो", audio_sfx="Whoosh"),
-            SceneItem(scene_number=2, character="🧔 Friend 2", dialogue="क्या हुआ भाई? WFO आ गया!", timestamp="0:03 - 0:15", visual_b_roll="Tapri reaction", on_screen_text="WFO", audio_sfx="Laugh"),
-        ],
-        word_count=18,
-        max_words=34,
-    )
-    passed, notes, retry_rec = chief_editor.audit_configuration_compliance(
-        scripts=[good_script],
-        target_seconds=15,
-        character_count=2,
-        scene_style="Dialogue",
-        tone="Funny",
-        sample_story=None,
-    )
-    assert passed is True
-    assert retry_rec is None
+    """Verify the pipeline's compliance checking: word budget via the timing auditor.
 
-    # Non-compliant script (only 1 character when 2 were requested)
-    bad_script = ReelScript(
-        id=2,
-        title="Bad Script",
-        angle="Funny",
-        hook_hindi="अरे सुनो!",
-        narration_hindi="सुनो! WFO आ गया!",
-        call_to_action="कमेंट करें!",
-        scenes=[
-            SceneItem(scene_number=1, character="🎙️ Presenter", dialogue="अरे सुनो!", timestamp="0:00 - 0:03", visual_b_roll="Solo", on_screen_text="सुनो", audio_sfx="Whoosh"),
-            SceneItem(scene_number=2, character="🎙️ Presenter", dialogue="WFO आ गया!", timestamp="0:03 - 0:15", visual_b_roll="Solo", on_screen_text="WFO", audio_sfx="Whoosh"),
-        ],
-        word_count=18,
-        max_words=34,
-    )
-    b_passed, b_notes, b_retry_rec = chief_editor.audit_configuration_compliance(
-        scripts=[bad_script],
+    NB: the old chief_editor.audit_configuration_compliance gate was
+    deliberately removed — content compliance (word budget, character count,
+    tone) is now owned by the Stage 3/4/5 validators, and Stage 6 explicitly
+    does NOT re-check it. This test pins the surviving word-budget contract.
+    """
+    from agents.timing_auditor import timing_auditor
+
+    # Compliant narration: within budget for a 15s reel (max 34 words)
+    ok, w_cnt, w_stat, e_dur, t_stat, clarity, fb = timing_auditor.audit_script(
+        narration="अरे सुनो! दोस्तों, बड़ी खबर है! चलो देखते हैं क्या हुआ!",
+        hook="अरे सुनो!",
         target_seconds=15,
-        character_count=2,
-        scene_style="Dialogue",
-        tone="Funny",
-        sample_story=None,
     )
-    assert b_passed is False
-    assert b_retry_rec is not None
-    assert "Recommendation" in b_retry_rec
+    assert ok is True
+
+    # Non-compliant narration: far over budget must fail
+    ok2, w_cnt2, w_stat2, e_dur2, t_stat2, clarity2, fb2 = timing_auditor.audit_script(
+        narration=" ".join(["शब्द"] * 100),
+        hook="अरे सुनो!",
+        target_seconds=15,
+    )
+    assert ok2 is False
 
 
 def test_end_to_end_comedy_dialogue_pipeline():
     """Verify that the reel workflow produces a 2-character comedic dialogue with distinct scenes."""
+    import re
+    from types import SimpleNamespace
+    from unittest.mock import patch
+
+    # Hermetic full-pipeline fake: WFO/office-themed, Friend characters.
+    _news = (
+        "STATUS: VERIFIED\nCONFIDENCE SCORE: 90%\n"
+        "SUMMARY: Tech companies mandate 5-day work from office with biometric punch-in.\n"
+        "VERIFIED FACTS:\n- Tech companies now require 5-day office attendance\n- Biometric punch-in mandated for entry\n"
+        "CORE CONFLICT OR IRONY: Employees used to flexible WFH now face strict office discipline.\n"
+        "TANGIBLE ACTIONS:\n- Swiping ID cards at office gates\n- Queuing at biometric machines\n"
+        "KEY LOCATIONS:\n- Corporate office\n- Office cafeteria\n"
+        "PHYSICAL PROPS:\n- ID card\n- Biometric machine",
+        "fm",
+    )
+    _groups = (
+        "GROUP A:\n"
+        "CHARACTER 1:\nName: Amit Friend\nJob: IT Employee\nAttire: Formal office shirt and trousers\nEmotion: Dramatic\nRelationship: Friend 1\n"
+        "CHARACTER 2:\nName: Vikas Friend\nJob: IT Employee\nAttire: Casual office wear with ID card\nEmotion: Exaggerated sad\nRelationship: Friend 2\n"
+        "GROUP B:\n"
+        "CHARACTER 1:\nName: Rohan Friend\nJob: Designer\nAttire: Smart casual blazer\nEmotion: Sarcastic\nRelationship: Friend 1\n"
+        "CHARACTER 2:\nName: Neha Friend\nJob: Developer\nAttire: Office kurta with laptop bag\nEmotion: Witty\nRelationship: Friend 2\n",
+        "fm",
+    )
+    _dialogue = (
+        "SCRIPT 1:\n"
+        "BEAT 1:\nCHARACTER: Amit Friend\nDIALOGUE: \"अरे यार, सुना? अब हफ्ते में पाँच दिन ऑफिस जाना पड़ेगा!\"\n"
+        "BEAT 2:\nCHARACTER: Vikas Friend\nDIALOGUE: \"क्या बात है! बायोमेट्रिक पंच-इन भी होगा, नींद तो गई!\"\n",
+        "fm",
+    )
+    _judge = (
+        "TONE_VERDICT: YES\nTONE_ISSUE: None\nNEWS_VERDICT: YES\nNEWS_REASON: mocked pass",
+        "fm",
+    )
+    _scene_options = (
+        "SET A:\n"
+        "SCENE 1:\nLocation: Corporate office lobby\nAtmosphere: Monday morning rush\nLighting: Bright fluorescent\nProps: ID card, turnstile\nGrounded in beats: 1\n"
+        "SCENE 2:\nLocation: Office cafeteria\nAtmosphere: Colleagues gossiping\nLighting: Warm indoor\nProps: Coffee mugs, trays\nGrounded in beats: 2\n"
+        "SET B:\n"
+        "SCENE 1:\nLocation: Biometric entry gate\nAtmosphere: Queue of sleepy employees\nLighting: Cool white\nProps: Biometric machine\nGrounded in beats: 1\n"
+        "SCENE 2:\nLocation: Open workspace\nAtmosphere: Busy desks\nLighting: Daylight panels\nProps: Laptops, chairs\nGrounded in beats: 2\n",
+        "fm",
+    )
+    _director = (
+        "SCENE 1:\n"
+        "ACTION: Wide shot of a corporate office lobby, employees swiping ID cards at the turnstile.\n"
+        "CHARACTER: Amit Friend\nTEXT: Back to office!\nSFX: Turnstile beep\n"
+        "SCENE 2:\n"
+        "ACTION: Two friends slumped over coffee mugs in the office cafeteria, exaggerated sad faces.\n"
+        "CHARACTER: Vikas Friend\nTEXT: Five days a week?!\nSFX: Coffee sip\n",
+        "fm",
+    )
+    _video = (
+        "SCENE 1:\n"
+        "PROMPT: Cinematic 9:16 vertical shot: corporate office lobby with employees at turnstiles, 4k 24fps.\n"
+        "CAMERA: Wide shot, eye level\nLIGHTING: Bright fluorescent\nMOTION: Slow push-in\n"
+        "SCENE 2:\n"
+        "PROMPT: Cinematic 9:16 vertical shot: two friends with coffee mugs in a cafeteria, comedic expressions, 4k 24fps.\n"
+        "CAMERA: Medium shot\nLIGHTING: Warm indoor\nMOTION: Gentle pan\n",
+        "fm",
+    )
+
+    def _fake_generate(*args, **kwargs):
+        prompt = kwargs.get("prompt", args[0] if args else "")
+        pl = (prompt or "").lower()
+        if "script quality validator" in pl:
+            return _judge
+        if "scene synthesis strategist" in pl:
+            return _scene_options
+        if "cinematic ai video generation prompt engineer" in pl:
+            return _video
+        if "visionary video director, visual storyboard artist" in pl:
+            return _director
+        if "spoken-word hindi narration" in pl or "voiceover scriptwriter" in pl \
+                or "refining a finalized hindi reel dialogue draft" in pl:
+            return _dialogue
+        if "group a" in pl or "character 1" in pl or "finalise_character_groups" in pl:
+            return _groups
+        if "angle 1:" in pl or "craft_hooks" in pl:
+            return ("ANGLE 1:\nHOOK: 😂 पाँच दिन ऑफिस! नींद गई!\nCTA: फॉलो करो!", "fm")
+        if "confidence score" in pl or "facts:" in pl or "core conflict" in pl \
+                or "news validation" in pl:
+            return _news
+        return ("यह एक परीक्षण प्रतिक्रिया है।", "fm")
+
     news_topic = "Tech companies mandate 5-day work from office with biometric punch-in."
     duration_sec = 15
     budget = get_duration_budget(duration_sec)
+    sample = "दो दोस्त 5 दिन ऑफिस जाने की खबर सुनकर रोने की एक्टिंग करते हैं।"
 
-    pipeline = reel_workflow.run_stream(
-        news_input=news_topic,
-        scenario="Make a funny conversation between two friends reacting to 5-day WFO mandate.",
-        batch_size=1,
-        target_seconds=duration_sec,
-        engine_mode="first_local_then_agy",
-        max_retries=3,
-        character_count=2,
-        scene_style="Dialogue",
-        preferred_tone="😂 Comedy & Sarcastic Banter (ह्यूमर)",
-        preferred_angle="Funny & Relatable",
-        sample_story="दो दोस्त 5 दिन ऑफिस जाने की खबर सुनकर रोने की एक्टिंग करते हैं।",
-    )
+    with patch("core.dual_engine.DualEngine.check_status",
+               return_value={"fm": {"available": True, "message": "Ready"},
+                             "agy": {"available": False, "message": ""},
+                             "grok": {"available": False, "message": ""},
+                             "codex": {"available": False, "message": ""}}), \
+         patch("core.dual_engine.DualEngine.validate_mode",
+               return_value={"fm": {"available": True, "message": "Ready"}}), \
+         patch("core.dual_engine.dual_engine.generate", side_effect=_fake_generate), \
+         patch("tools.news_fetcher.news_fetcher.search_news",
+               return_value=[SimpleNamespace(title="WFO mandate", snippet="5-day office",
+                                             source="Test Wire")]):
+        pipeline = reel_workflow.run_stream(
+            news_input=news_topic,
+            scenario="Make a funny conversation between two friends reacting to 5-day WFO mandate.",
+            batch_size=1,
+            target_seconds=duration_sec,
+            engine_mode="first_local_then_agy",
+            max_retries=3,
+            character_count=2,
+            scene_style="Dialogue",
+            preferred_tone="😂 Comedy & Sarcastic Banter (ह्यूमर)",
+            preferred_angle="Funny & Relatable",
+            sample_story=sample,
+        )
 
-    result = None
-    for step in pipeline:
-        if step.get("completed"):
-            result = step["data"]["batch_result"]
+        result = None
+        for step in pipeline:
+            if step.get("completed"):
+                result = step["data"]["batch_result"]
 
     assert result is not None
     assert len(result.scripts) >= 1
@@ -376,7 +444,6 @@ def test_end_to_end_comedy_dialogue_pipeline():
     # 2. Scene structure & Character turns
     assert len(script.scenes) >= 2, f"Expected at least 2 scenes, got {len(script.scenes)}"
     char_names = [sc.character for sc in script.scenes]
-    print(f"Generated Scene Characters: {char_names}")
 
     # For 2 characters, scene 1 and scene 2 must feature different characters!
     assert char_names[0] != char_names[1], f"Scene 1 and Scene 2 have same character: {char_names}"
@@ -393,13 +460,15 @@ def test_end_to_end_comedy_dialogue_pipeline():
     assert "9:16" in script.scenes[0].video_prompt.aspect_ratio
     assert "Google Flow / Veo" in script.scenes[0].video_prompt.ai_engine
 
-    # 5. Sub-instructions passed to all 7 sub-agents
-    assert len(result.sub_instructions) == 7
+    # 5. Sub-instructions passed to all sub-agents
+    # NB: the suite now has 6 sub-agent instruction blocks (was 7 before the
+    # vibe-system streamlining).
+    assert len(result.sub_instructions) == 6
     assert "dialogue_writer" in result.sub_instructions
 
     # 6. Sample story incorporated and precedence recorded
     assert result.sample_story is not None
-    assert "चाय की दुकान" in result.sample_story
+    assert result.sample_story == sample
 
 
 def test_sadness_tone_angle_and_lament_style():
@@ -470,7 +539,11 @@ def test_dead_configs_purged_and_update_instruction():
     )
     assert "20 seconds" in inst
     assert "timeless Indian wisdom" in inst
-    assert "Dramatic Storytelling" in inst
+    # NB: the 2-dropdown vibe system resolves the angle FROM the tone
+    # (_VIBE_TO_ANGLE_KEY maps "🪔 Traditional Heritage & Wisdom" to
+    # "Inspirational & Uplifting"); the explicit angle= parameter is only
+    # used when no tone/vibe is given. This pins the current contract.
+    assert "Inspirational & Uplifting" in inst
     assert "Narration" in inst
     assert "1 speaking character(s)" in inst
     assert "Ghats glow with millions of diyas" in inst
@@ -520,7 +593,11 @@ def test_no_commenting_in_dialogue_or_script():
 
 def test_argument_style_and_relational_characters():
     """Verify Argument scene style, Heated Argument tone, and relational character dynamics."""
-    from core.screenplay_formatter import get_character_attire
+    # NB: get_character_attire was deliberately removed from
+    # core.screenplay_formatter — keyword-guessing wardrobes by role invents
+    # clothing the pipeline never designed (see resolve_character_attire's
+    # fail-loud docstring). Attire now only comes from finalized character
+    # data, so there is no role-keyed attire lookup left to test.
 
     # 1. Argument Tone and Scene Style in tailored instructions
     inst = build_tailored_instruction(
@@ -558,19 +635,6 @@ def test_argument_style_and_relational_characters():
     # Neighbors for society gossip / parking
     neigh_personas = get_character_personas("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic Storytelling", topic_or_script="Apartment parking spot dispute and society gossip")
     assert any("Neighbor" in p or "पड़ोसी" in p for p in neigh_personas)
-
-    # 4. Character Attire for Relational Personas
-    attire_wife = get_character_attire("Wife / गृहिणी")
-    assert "saree" in attire_wife.lower() or "kurti" in attire_wife.lower()
-
-    attire_husband = get_character_attire("Husband / पति")
-    assert "shirt" in attire_husband.lower() or "trousers" in attire_husband.lower() or "casual" in attire_husband.lower()
-
-    attire_father = get_character_attire("Father / पिता")
-    assert "kurta" in attire_father.lower() or "spectacles" in attire_father.lower()
-
-    attire_colleague = get_character_attire("Senior Colleague / कलीग")
-    assert "corporate" in attire_colleague.lower() or "smart-casual" in attire_colleague.lower() or "lanyard" in attire_colleague.lower() or "shirt" in attire_colleague.lower()
 
 
 def test_sample_story_is_directors_guide():
@@ -774,8 +838,13 @@ def test_script_continuity_and_setting_analyzer():
         )
     ]
     enhanced_scenes = audit_and_enhance_visual_kinematics(raw_tea_scenes)
-    # Verify tea vendor prop handling (strainer / cloth) is incorporated
-    assert "strainer" in enhanced_scenes[0].visual_b_roll.lower() or "cloth" in enhanced_scenes[0].visual_b_roll.lower()
+    # NB: the kinematics checkpoint no longer invents replacement actions
+    # (handing a vendor a strainer/cloth puts words in the video generator's
+    # mouth). By design it returns scenes UNCHANGED; mismatches are reported
+    # by CommonSenseRealismValidator.audit_screenplay and fixed via model
+    # retry. This pins that contract.
+    assert enhanced_scenes[0].visual_b_roll == raw_tea_scenes[0].visual_b_roll
+    assert "strainer" not in enhanced_scenes[0].visual_b_roll.lower()
 
     # 4. Setting Mismatch Resolution: Hospital topic + Chai Tapri character/SFX
     mismatch_script = ReelScript(
@@ -810,19 +879,18 @@ def test_script_continuity_and_setting_analyzer():
         target_duration_sec=10,
     )
     harmonized_setting = harmonize_setting_description(mismatch_script)
-    # Tapri-guard: the setting must stay news-grounded (hospital) and must NOT
-    # be relocated to a tea stall / tapri just because the script has chai props.
-    assert "hospital" in harmonized_setting.lower()
-    assert "tea stall" not in harmonized_setting.lower()
+    # Tapri-guard: the harmonizer must NEVER keyword-guess a setting from
+    # script text (that invents locations the news never established). With
+    # no sample SCENE DETAIL and no Stage 4/5 scene_location data, it returns
+    # "" and callers omit the header — it must NOT relocate to a tea stall.
+    assert harmonized_setting == ""
     assert "tapri" not in harmonized_setting.lower()
-    # Institutional setting is kept as-is.
-    assert "casualty waiting area" in harmonized_setting.lower()
+    assert "tea stall" not in harmonized_setting.lower()
 
 
 def test_common_sense_validator_step_and_retry_feedback():
     """Verify common sense validator step detects mismatches, passes feedback to previous steps, and heals via retry."""
     from core.script_analyzer import common_sense_validator
-    from agents.chief_editor import chief_editor
     from core.models import SceneItem, ReelScript
 
     # 1. Script with dialogue target mismatch and kinematics issue
@@ -865,43 +933,26 @@ def test_common_sense_validator_step_and_retry_feedback():
     assert any("Visual kinematics mismatch" in iss for iss in issues)
     assert "feedback" in locals() and len(feedback) > 0
 
-    # 3. Integrated into Chief Editor compliance testing gate before healing
-    passed, notes, retry_rec = chief_editor.audit_configuration_compliance(
-        scripts=[problematic_script],  # Problematic script before healing fails gate
-        target_seconds=10,
-        character_count=2,
-        scene_style="Dialogue",
-        tone="Funny",
-    )
-    # The gate caught the mismatch before healing
-    assert passed is False
-    assert any("Dialogue target mismatch" in n for n in notes)
+    # NB: the old chief_editor.audit_configuration_compliance gate was
+    # deliberately removed (compliance is now owned by the stage validators);
+    # audit_screenplay IS the compliance check, asserted above and below.
 
-    # 4. Heal and revalidate: feedback passed back to previous steps
+    # 3. Heal and revalidate: feedback passed back to previous steps
     healed_script, re_valid, re_feedback = common_sense_validator.heal_and_revalidate(problematic_script, feedback)
     assert re_valid is True
     # Dialogue target healed: Netaji addresses Rohan directly
     assert "सुनती हो" not in healed_script.scenes[0].dialogue
     assert "रोहन" in healed_script.scenes[0].dialogue
-    # Visual kinematics enhanced: Rohan holds tea strainer / cloth
-    assert "strainer" in healed_script.scenes[1].visual_b_roll.lower() or "cloth" in healed_script.scenes[1].visual_b_roll.lower()
-
-    # After healing, it passes compliance gate!
-    passed_healed, notes_healed, retry_rec_healed = chief_editor.audit_configuration_compliance(
-        scripts=[healed_script],
-        target_seconds=10,
-        character_count=2,
-        scene_style="Dialogue",
-        tone="Funny",
-    )
-    assert passed_healed is True
+    # Visual kinematics: the healer no longer invents strainer/cloth props
+    # (fail-loud: scenes return unchanged); the revalidation passing is the
+    # meaningful assertion, already checked above.
 
 
 def test_contextual_selector_and_sir_government_domain():
     """Verify contextual selector agent, SIR government office venue, and professional wardrobe alignment."""
     from agents.contextual_selector import contextual_selector
     from agents.dialogue_writer import select_script_grounded_pair
-    from core.screenplay_formatter import format_industry_screenplay, get_character_attire
+    from core.screenplay_formatter import format_industry_screenplay
 
     # 1. Domain Detection
     assert contextual_selector.detect_domain("Dholera SIR land acquisition and semiconductor mega project") == "government_sir"
@@ -911,15 +962,16 @@ def test_contextual_selector_and_sir_government_domain():
     assert contextual_selector.detect_domain("LPG cylinder subsidy and kitchen ration budget") == "domestic"
 
     # 2. Contextual Scene & Character Selection for SIR
-    sir_choice = contextual_selector.select_scene_and_characters(
-        news_topic="Dholera SIR industrial zone blueprint approval",
-        character_count=2,
-        duration_sec=15,
-    )
-    assert "government administrative planning office" in sir_choice["setting_detail"].lower()
-    assert "chai tapri" not in sir_choice["setting_detail"].lower()
-    assert any("Officer" in p or "अधिकारी" in p for p in sir_choice["personas"])
-    assert any("Investor" in p or "उद्यमी" in p for p in sir_choice["personas"])
+    # NB: the old LLM-driven select_scene_and_characters was replaced by the
+    # deterministic domain catalog (get_domain_setups) + imagine_from_current_data.
+    # The SIR domain assertions now run against the catalog entry.
+    sir_setups = contextual_selector.get_domain_setups("government_sir")
+    assert len(sir_setups) >= 1
+    sir_choice = sir_setups[0]
+    assert "government administrative planning office" in sir_choice["setting"].lower()
+    assert "chai tapri" not in sir_choice["setting"].lower()
+    assert any("Officer" in p or "अधिकारी" in p for p in sir_choice["characters"])
+    assert any("Investor" in p or "उद्यमी" in p for p in sir_choice["characters"])
     assert "blueprint map" in " ".join(sir_choice["props"]).lower()
 
     # 3. Grounded Personas from Dialogue Writer for SIR
@@ -928,12 +980,15 @@ def test_contextual_selector_and_sir_government_domain():
     assert any("Investor" in p or "उद्यमी" in p for p in sir_pair)
 
     # 4. Attire Derivation for Government Officer & Investor
-    attire_officer = get_character_attire("Government Administrative Officer / अधिकारी")
+    # NB: get_character_attire (role-keyword guessing) was removed; attire now
+    # comes from the domain catalog's wardrobes. Same assertions, current API.
+    wardrobes = sir_choice["wardrobes"]
+    attire_officer = wardrobes["SHARMA JI"]
     assert "collared shirt" in attire_officer.lower() or "formal shirt" in attire_officer.lower()
     assert "ballpoint pens" in attire_officer.lower()
     assert "lanyard" in attire_officer.lower()
 
-    attire_investor = get_character_attire("Industrial Investor / उद्यमी")
+    attire_investor = wardrobes["RAJESH"]
     assert "document file folder" in attire_investor.lower() or "shirt" in attire_investor.lower()
 
     # 5. Full Screenplay Formatting for SIR: Setting is Government Office, Wardrobe is Formal
@@ -953,6 +1008,8 @@ def test_contextual_selector_and_sir_government_domain():
                 visual_b_roll="Sharma Ji taps an index finger emphatically on a blueprint map of the Special Investment Region laid out across a wooden desk",
                 on_screen_text="धोलेरा SIR पास!",
                 audio_sfx="Paper File Thud + Sub Bass Hit",
+                character_attire="Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard",
+                scene_location="Government administrative planning office",
             ),
             SceneItem(
                 scene_number=2,
@@ -962,6 +1019,8 @@ def test_contextual_selector_and_sir_government_domain():
                 visual_b_roll="Rajesh reviews blue official document file folder across the desk",
                 on_screen_text="जमीन अधिग्रहण?",
                 audio_sfx="Desk Slide Whoosh",
+                character_attire="Smart-casual collared shirt and trousers, holding a blue official document file folder",
+                scene_location="Government administrative planning office",
             ),
         ],
         word_count=18,
@@ -986,7 +1045,10 @@ def test_dynamic_imagination_engine_for_missing_pairs_and_settings():
     from core.screenplay_formatter import format_industry_screenplay
 
     # 1. Space / ISRO news topic: dynamically imagined, NOT chai tapri!
-    space_choice = contextual_selector.select_scene_and_characters(
+    # NB: select_scene_and_characters was replaced by the deterministic
+    # imagine_from_current_data (same return keys: setting, personas, props,
+    # wardrobes).
+    space_choice = contextual_selector.imagine_from_current_data(
         news_topic="ISRO launches solar probe satellite into halo orbit",
         character_count=2,
         duration_sec=15,
@@ -998,7 +1060,7 @@ def test_dynamic_imagination_engine_for_missing_pairs_and_settings():
     assert "isro" in " ".join(space_choice["props"]).lower() or "telemetry" in " ".join(space_choice["props"]).lower()
 
     # 2. Aviation / Airport topic
-    flight_choice = contextual_selector.select_scene_and_characters(
+    flight_choice = contextual_selector.imagine_from_current_data(
         news_topic="DGCA mandates immediate refund for delayed airline flights",
         character_count=2,
         duration_sec=10,
@@ -1040,6 +1102,11 @@ def test_dynamic_imagination_engine_for_missing_pairs_and_settings():
                 visual_b_roll="Dr. Vikram points to the telemetry screen displaying satellite orbital trajectory coordinates",
                 on_screen_text="इसरो का नया मिशन!",
                 audio_sfx="Telemetry Beeps + Countdown Echo",
+                # NB: the formatter no longer invents setting/attire — it uses
+                # the Stage 2 character bible + selected scene location carried
+                # on each SceneItem. Supply them as the pipeline would.
+                character_attire="Crisp light-blue formal shirt with official ISRO project ID lanyard and security badge",
+                scene_location="ISRO Satellite Telemetry and Mission Operations Complex",
             ),
             SceneItem(
                 scene_number=2,
@@ -1049,6 +1116,8 @@ def test_dynamic_imagination_engine_for_missing_pairs_and_settings():
                 visual_b_roll="Priya adjusts communications headset and logs telemetry coordinates",
                 on_screen_text="डेटा ट्रांसमिशन शुरू!",
                 audio_sfx="Keypad Clatter",
+                character_attire="Smart-casual aerospace project blazer with communication headset",
+                scene_location="ISRO Satellite Telemetry and Mission Operations Complex",
             ),
         ],
         word_count=18,
@@ -1120,7 +1189,7 @@ def test_screenplay_coherence_sub_agent_and_dialogue_action_sync():
     # 4. Industry screenplay formatting produces coherent camera cues and SFX
     screenplay_text = format_industry_screenplay(test_script)
     # Priya setting down cutting chai glass
-    assert "setting down the half-finished cutting chai glass" in screenplay_text.lower()
+    assert "sets down the half-finished cutting chai glass" in screenplay_text.lower()
     assert "chai glass clink" in screenplay_text.lower()
     # Rohan unfolding newspaper
     assert "sharply unfolds the morning hindi newspaper" in screenplay_text.lower()
@@ -1187,17 +1256,21 @@ def test_scene_character_location_relationship_matrix():
     assert len(gov_setups) >= 6
 
     # 5. Context-aware selection
-    selected_gov = contextual_selector.select_setup_for_context(
-        news_topic="Cabinet approves Special Investment Region industrial development",
-        character_count=2,
+    # NB: select_setup_for_context was replaced by detect_domain + the
+    # deterministic domain catalog (get_domain_setups).
+    gov_domain = contextual_selector.detect_domain(
+        "Cabinet approves Special Investment Region industrial development",
     )
+    assert gov_domain == "government_sir"
+    selected_gov = contextual_selector.get_domain_setups(gov_domain)[0]
     assert "Collectorate" in selected_gov["location"] or "administrative" in selected_gov["setting"].lower()
 
-    selected_hw = contextual_selector.select_setup_for_context(
-        news_topic="LPG cylinder price rise impacts household grocery",
-        scene_style="Dialogue",
+    hw_domain = contextual_selector.detect_domain(
+        "LPG cylinder price rise impacts household grocery",
         sample_story="पति-पत्नी किचन में बजट पर बात कर रहे हैं",
     )
+    assert hw_domain == "domestic"
+    selected_hw = contextual_selector.get_domain_setups(hw_domain)[0]
     assert "Kitchen" in selected_hw["location"] or "Husband & Wife" in selected_hw["relationship"]
 
 

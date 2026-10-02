@@ -43,9 +43,7 @@ def libdir(tmp_path, monkeypatch):
     monkeypatch.setattr(lib, "LIBRARY_ROOT", root)
     monkeypatch.setattr(lib, "STORIES_DIR", root / "stories")
     monkeypatch.setattr(lib, "PREFS_PATH", root / "prefs.json")
-    lib._reset_auto_cold_start_for_tests()
     yield root
-    lib._reset_auto_cold_start_for_tests()
 
 
 def _mailbox(libdir):
@@ -147,45 +145,32 @@ def test_warming_within_90s_not_recovered(libdir):
 
 
 # ---------------------------------------------------------------------------
-# auto flag: launch-time warm-up is purely informational
+# Manual-only: no automatic warm-up concept remains
 # ---------------------------------------------------------------------------
 
-def test_auto_kickoff_records_auto_flag(libdir, monkeypatch):
+def test_no_auto_cold_start_entrypoint():
+    """The automatic launch-time kick-off is gone: warm-up runs ONLY on
+    button tap."""
+    assert not hasattr(lib, "maybe_auto_cold_start"), \
+        "maybe_auto_cold_start must not exist — nothing automatic"
+    assert not hasattr(lib, "_reset_auto_cold_start_for_tests")
+
+
+def test_start_fm_warmup_takes_no_auto_kwarg(libdir, monkeypatch):
+    """The auto marker is gone from the kick-off signature and the
+    mailbox: every warm-up is manual."""
     gate = threading.Event()
 
-    def fake_worker():
+    def fake_worker(*a):
         gate.wait(timeout=10)
 
     monkeypatch.setattr(lib, "_fm_warmup_worker", fake_worker)
-    ok, _ = lib.start_fm_warmup(auto=True)
-    assert ok
-    assert lib.read_fm_warmup_state().get("auto") is True
-    gate.set()
-
-
-def test_manual_kickoff_records_auto_false(libdir, monkeypatch):
-    gate = threading.Event()
-
-    def fake_worker():
-        gate.wait(timeout=10)
-
-    monkeypatch.setattr(lib, "_fm_warmup_worker", fake_worker)
+    with pytest.raises(TypeError):
+        lib.start_fm_warmup(auto=True)
     ok, _ = lib.start_fm_warmup()
     assert ok
-    assert lib.read_fm_warmup_state().get("auto") is False
+    assert "auto" not in lib.read_fm_warmup_state()
     gate.set()
-
-
-def test_maybe_auto_cold_start_passes_auto_true(libdir, monkeypatch):
-    seen = {}
-
-    def fake_start(*, auto=False):
-        seen["auto"] = auto
-        return True, ""
-
-    monkeypatch.setattr(lib, "start_fm_warmup", fake_start)
-    lib.maybe_auto_cold_start()
-    assert seen.get("auto") is True
 
 
 # ---------------------------------------------------------------------------
@@ -197,27 +182,39 @@ def _ui_src():
             / "library_ui.py").read_text(encoding="utf-8")
 
 
-def test_auto_warming_skips_poll_loop():
-    """The render must not sleep/rerun-loop on an auto (launch-time)
-    warm-up — that churn is what made the app feel stuck on launch. The
-    poll loop must be guarded by the auto flag."""
+def test_manual_warming_poll_loop_unconditional():
+    """With no automatic warm-up left, the render poll loop is
+    unconditional: every warm-up is manual, so the button always owns its
+    loading state until the worker writes a terminal state."""
     src = _ui_src()
     idx = src.index("def _render_fm_warmup_button()")
     end = src.index("def _render_fm_warmup_result()", idx)
     body = src[idx:end]
-    assert 'get("auto")' in body, \
-        "auto warm-up must be distinguished from manual warm-up"
-    # The sleep/rerun poll must live under the not-auto branch.
-    idx_auto = body.index('get("auto")')
-    assert "st.rerun()" in body[idx_auto:], \
-        "poll loop must be conditional on the auto flag"
+    assert "maybe_auto_cold_start" not in src, \
+        "render_tab_bar must not trigger any automatic warm-up"
+    assert 'get("auto")' not in body, \
+        "the auto flag no longer exists"
+    # The sleep/rerun poll loop is still there for the manual warm-up.
+    assert "_time.sleep(1.0)" in body
+    assert "st.rerun()" in body
 
 
-def test_failed_result_has_retry_button():
-    """A loud failure must carry an explicit Retry option."""
+def test_failed_result_uses_autodismiss_toast_not_persistent_retry():
+    """User-requested exception to #213: the failure branch must surface
+    through the auto-dismissing ``_notify`` toast path (once per run via
+    the announced marker) and must NOT keep a persistent error banner or
+    an inline retry button. Retry stays available through the main
+    warm-up button in the tab bar (``_render_fm_warmup_button``), which is
+    always rendered."""
     src = _ui_src()
     idx = src.index("def _render_fm_warmup_result()")
     end = src.index("def render_tab_bar()", idx)
     body = src[idx:end]
-    assert "Retry warm-up" in body
-    assert "fm_warmup_retry" in body
+    assert "_notify(f\"Warm-up failed:" in body, \
+        "failure must go through the auto-dismiss toast path"
+    assert "fm_warmup_retry" not in body, \
+        "no inline retry button — the tab-bar warm-up button is the retry path"
+    assert "Retry warm-up" not in body
+    # The main warm-up button is always rendered by render_tab_bar.
+    tab_idx = src.index("def render_tab_bar()")
+    assert "_render_fm_warmup_button()" in src[tab_idx:tab_idx + 2000]

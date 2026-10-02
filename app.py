@@ -11,7 +11,81 @@ import re
 import copy
 import json
 import contextlib
+import subprocess
 import streamlit as st
+
+
+def _streamlit_pin_from_requirements() -> str | None:
+    """Read the pinned streamlit version from requirements.txt.
+
+    Returns the version string after ``streamlit==``, or None when the
+    pin cannot be determined (missing/unreadable file). Pure file read —
+    never raises.
+    """
+    try:
+        req_path = os.path.join(_app_dir, "requirements.txt")
+        with open(req_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped.startswith("streamlit=="):
+                    # Drop inline comments/extras:
+                    # "1.64.0  # UI framework (app.py) — PINNED" -> "1.64.0"
+                    token = stripped.split("==", 1)[1].split("#", 1)[0].strip()
+                    return token.split()[0] if token else None
+    except OSError:
+        pass
+    return None
+
+
+def _check_streamlit_pin(installed: str | None, pin: str | None) -> None:
+    """Fail loudly when the installed Streamlit differs from the pin.
+
+    The entire UI contract — popover dismissal behavior, the DOM markers
+    the CSS selects on, the theme probes — is built and tested against the
+    pinned Streamlit (#200/#254). A different installed version silently
+    breaks UI behavior, so a mismatch raises instead of misbehaving.
+    Pure function (no I/O) so it is unit-testable.
+    """
+    if not pin:
+        raise RuntimeError(
+            "requirements.txt does not pin streamlit with 'streamlit==X' — "
+            "the UI contract cannot be verified (#200)."
+        )
+    if installed != pin:
+        raise RuntimeError(
+            f"Streamlit version mismatch: installed {installed!r}, "
+            f"required {pin!r}. Reinstall with "
+            "`pip install -r requirements.txt` — popovers, theming and "
+            "alignment are built against the pinned version and misbehave "
+            "otherwise."
+        )
+
+
+_check_streamlit_pin(getattr(st, "__version__", None),
+                     _streamlit_pin_from_requirements())
+
+
+def _running_commit() -> str | None:
+    """Short git commit hash of the running checkout, or None.
+
+    Display-only ground truth (#286): lets anyone looking at the app answer
+    "what code is this actually running?" at a glance, next to the version.
+    Fail-soft by design — a missing .git (packaged app) or missing git
+    binary simply shows no hash; this must never break startup.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", _app_dir, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+_RUNNING_COMMIT = _running_commit()
 from core.constants import (
     VIBE_DESI_SWAG, VIBE_HERITAGE, VIBE_VIRAL, VIBE_COMEDY, VIBE_BREAKING,
     VIBE_ANALYSIS, VIBE_CINEMATIC, VIBE_EMOTIONAL, VIBE_HEATED,
@@ -26,11 +100,28 @@ from core.dual_engine import dual_engine
 from core.metrics import get_duration_budget
 from core.prompt_matrix import build_tailored_instruction
 from core.config import load_config, save_config, reset_to_defaults
+from core.refresh_guard import (  # #196: Refresh button owns its loading state
+    claim_refresh,
+    is_refresh_busy,
+    release_refresh,
+    reset_refresh_claim,
+)
 from tools.news_fetcher import news_fetcher, NewsFetchError
 # v1.5: Saved Stories Library (tab bar + storage + auto-save)
 import story_library  # noqa: F401
 from library_ui import render_tab_bar, render_library_page, maybe_autosave_story
 from core.workflow import reel_workflow
+from core.stepwise_flow import (
+    step_run_inflight,
+    request_step_run,
+    complete_step_run,
+    inflight_action,
+    ACTION_LAUNCH,
+    ACTION_RETRY,
+    ACTION_PROCEED,
+    ACTION_RERUN,
+    ACTION_RESTART,
+)
 from agents.dialogue_writer import strip_commenting_and_cta
 from core.screenplay_formatter import (
     format_industry_screenplay,
@@ -56,6 +147,10 @@ ENGINE_NAMES_REV = {v: k for k, v in ENGINE_OPTIONS.items()}
 from core.version import __version__ as APP_VERSION
 import streamlit.components.v1 as components
 from core.server_manager import get_server_info, stop_server_async, restart_server_async
+
+# Single-flight guard for the continuous generation pipeline (issue #195):
+# the Generate button owns its loading state via `generation_in_flight`.
+from core.generation_guard import begin_run, button_params, end_run, is_in_flight
 
 # Merged story source: manual topic entry plus every news feed (replaces the
 # Stage names for display in collapsible history (continuous + step-wise).
@@ -352,100 +447,293 @@ st.markdown(
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;600;700&display=swap');
 
-    /* Light: 60% Paper canvas, 30% Card & typography, 10% Terracotta orange actions.
-       Dark: 60% Warm earth canvas, 30% Elevated cards & parchment type, 10% Terracotta orange. */
+    /* ================================================================
+       KHABARWAANI ADMIN THEME — SINGLE SOURCE OF TRUTH
+       ----------------------------------------------------------------
+       User-supplied palette (verbatim). HOW TO CHANGE THEME COLORS:
+       edit ONLY the --pal-* values in the :root block below. Every
+       semantic token (--accent, --paper, --ink, --danger, ...) references
+       these via var(). The three appearance blocks (light /
+       dark@​media / dark[data-theme]) contain NO hex literals — only
+       var() references (plus the --scheme keyword). Component CSS must
+       reference semantic tokens, never hard-coded hex.
+
+       Full spec (tokens, style, balance, rules): docs/COLOR_PALETTE.md
+
+       4 ROLES (label hierarchy, HIG §4):
+         --primary    → --accent  (brand/action)
+         --secondary  → --ink-2   (≥4.5:1 text on bg — strict)
+         --tertiary   → --ink-3   (hints/disabled — non-essential text)
+         --quaternary → warm gray (faintest; decorative-only — never
+                                   for essential text)
+       --on-accent is #FFFFFF on light, #1C1B19 on dark. Info states use
+       grey/ink ONLY — never blue.
+       Contrast tiers (enforced by tests/test_theme_palette_contrast.py):
+         TIER 1 ≥4.5:1 — ink/ink-2 on paper/card/sunken, danger on paper,
+           ink on all tints, on-accent on accent (dark).
+         TIER 2 ≥3:1 (WCAG large-text/UI floor, user's explicit spec
+           values, measured not faked) — white on accent (light primary
+           buttons, 3.37:1), success/warning solids on paper/tints.
+       ================================================================ */
+    :root {
+        /* Layers */
+        --pal-paper-light: #F5F3EE;      --pal-paper-dark: #1C1B19;
+        --pal-card-light: #FFFFFF;       --pal-card-dark: #262522;
+        --pal-sunken-light: #EFECE4;     --pal-sunken-dark: #2E2D29;
+        --pal-popover-light: #FFFFFF;    --pal-popover-dark: #2E2D29;
+        --pal-hover-light: #F0EDE5;      --pal-hover-dark: #34332E;
+        --pal-scrim-light: rgba(31, 30, 27, .40);
+        --pal-scrim-dark: rgba(0, 0, 0, .60);
+        /* Lines */
+        --pal-line-light: #E3DFD5;       --pal-line-dark: #3A3833;
+        --pal-line-strong-light: #CFCABD; --pal-line-strong-dark: #4A4740;
+        /* Text */
+        --pal-ink-light: #1F1E1B;        --pal-ink-dark: #F1EEE6;
+        --pal-ink2-light: #6B675F;       --pal-ink2-dark: #A39E92;
+        --pal-ink3-light: #9A958A;       --pal-ink3-dark: #77726A;
+        --pal-on-accent-light: #FFFFFF;  --pal-on-accent-dark: #1C1B19;
+        /* Brand */
+        --pal-accent-light: #E0692A;     --pal-accent-dark: #EA7A3D;
+        --pal-accent-hover-light: #C9581D; --pal-accent-hover-dark: #F28C54;
+        --pal-accent-tint-light: #F8E6DA; --pal-accent-tint-dark: #3A2A20;
+        /* Status */
+        --pal-danger-light: #B3382C;    --pal-danger-dark: #E5604F;
+        --pal-danger-tint-light: #F7E4E1; --pal-danger-tint-dark: #3A2220;
+        --pal-success-light: #3F7D58;    --pal-success-dark: #5DAE7F;
+        --pal-success-tint-light: #E3F0E8; --pal-success-tint-dark: #1F2E25;
+        --pal-warning-light: #A8741A;    --pal-warning-dark: #D9A441;
+        --pal-warning-tint-light: #F7ECD6; --pal-warning-tint-dark: #33291A;
+        /* Decorative tier (warm gray; never essential text) */
+        --pal-quaternary-light: #C4BFAF; --pal-quaternary-dark: #57534A;
+        /* Shape */
+        --radius: 10px;
+        --radius-lg: 12px;
+        --pal-shadow-sm-light: 0 1px 2px rgba(31, 30, 27, .06);
+        --pal-shadow-sm-dark: none;
+        --pal-shadow-pop-light: 0 8px 24px rgba(31, 30, 27, .12);
+        --pal-shadow-pop-dark: 0 8px 24px rgba(0, 0, 0, .40);
+    }
+
+    /* Light: warm paper canvas, white cards, orange accent.
+       Semantic mapping only — every value is a var() reference. */
     :root,
     [data-theme="light"] {
-        /* Standard 60-30-10 Color Tokens */
-        --bg-primary: #FAF7F0;
-        --bg-secondary: #FFFCF6;
-        --bg-tertiary: #F5EFE6;
-        --bg-hover: #EFE6D8;
-        --border-primary: #E4D9C8;
-        --text-primary: #1F1A14;
-        --text-secondary: #5C5348;
-        --text-tertiary: #8C8275;
-        --primary: #E0692A;
-        --primary-hover: #C4551C;
-        --primary-subtle: #FDF1EA;
-        --secondary: #5C5348;
-        --tertiary: #8C8275;
-        
-        /* Direct token aliases */
-        --paper: var(--bg-primary);
-        --card: var(--bg-secondary);
-        --field: var(--bg-tertiary);
-        --hover: var(--bg-hover);
-        --line: var(--border-primary);
-        --ink: var(--text-primary);
-        --ink-deep: #1C1712;
-        --muted: var(--text-secondary);
-        --orange: var(--primary);
-        --orange-press: var(--primary-hover);
+        --paper: var(--pal-paper-light);
+        --card: var(--pal-card-light);
+        --sunken: var(--pal-sunken-light);
+        --popover: var(--pal-popover-light);
+        --hover: var(--pal-hover-light);
+        --scrim: var(--pal-scrim-light);
+        --line: var(--pal-line-light);
+        --line-strong: var(--pal-line-strong-light);
+        --ink: var(--pal-ink-light);
+        --ink-2: var(--pal-ink2-light);
+        --ink-3: var(--pal-ink3-light);
+        --on-accent: var(--pal-on-accent-light);
+        --accent: var(--pal-accent-light);
+        --accent-hover: var(--pal-accent-hover-light);
+        --accent-tint: var(--pal-accent-tint-light);
+        --danger: var(--pal-danger-light);
+        --danger-tint: var(--pal-danger-tint-light);
+        --success: var(--pal-success-light);
+        --success-tint: var(--pal-success-tint-light);
+        --warning: var(--pal-warning-light);
+        --warning-tint: var(--pal-warning-tint-light);
+        --shadow-sm: var(--pal-shadow-sm-light);
+        --shadow-pop: var(--pal-shadow-pop-light);
+        /* 4 roles */
+        --primary: var(--accent);
+        --secondary: var(--ink-2);
+        --tertiary: var(--ink-3);
+        --quaternary: var(--pal-quaternary-light);
+        /* Compat aliases for existing component CSS */
+        --bg-primary: var(--paper);
+        --bg-secondary: var(--card);
+        --bg-tertiary: var(--sunken);
+        --bg-hover: var(--hover);
+        --border-primary: var(--line);
+        --text-primary: var(--ink);
+        --text-secondary: var(--secondary);
+        --text-tertiary: var(--tertiary);
+        --text-quaternary: var(--quaternary);
+        --field: var(--sunken);
+        --muted: var(--ink-2);
+        --ink-deep: var(--ink);
+        --orange: var(--accent);
+        --orange-press: var(--accent-hover);
+        --primary-hover: var(--accent-hover);
+        --primary-strong: var(--accent);
+        --primary-subtle: var(--accent-tint);
+        --on-primary: var(--on-accent);
+        --ok: var(--success);
+        --ok-text: var(--success);
+        --bad: var(--danger);
+        --bad-text: var(--danger);
+        --warn: var(--warning);
+        --warn-text: var(--warning);
         --scheme: light;
     }
+
 
     @media (prefers-color-scheme: dark) {
         :root:not([data-theme="light"]),
         html:not([data-theme="light"]),
         body:not([data-theme="light"]) {
-            --bg-primary: #2C261F;
-            --bg-secondary: #3A3229;
-            --bg-tertiary: #342C24;
-            --bg-hover: #4A4036;
-            --border-primary: #5A4E42;
-            --text-primary: #FAF7F0;
-            --text-secondary: #D4C7B6;
-            --text-tertiary: #A89B8B;
-            --primary: #E0692A;
-            --primary-hover: #F08A52;
-            --primary-subtle: #3D291C;
-            --secondary: #D4C7B6;
-            --tertiary: #A89B8B;
-
-            --paper: var(--bg-primary);
-            --card: var(--bg-secondary);
-            --field: var(--bg-tertiary);
-            --hover: var(--bg-hover);
-            --line: var(--border-primary);
-            --ink: var(--text-primary);
-            --ink-deep: var(--text-primary);
-            --muted: var(--text-secondary);
-            --orange: var(--primary);
-            --orange-press: var(--primary-hover);
+            --paper: var(--pal-paper-dark);
+            --card: var(--pal-card-dark);
+            --sunken: var(--pal-sunken-dark);
+            --popover: var(--pal-popover-dark);
+            --hover: var(--pal-hover-dark);
+            --scrim: var(--pal-scrim-dark);
+            --line: var(--pal-line-dark);
+            --line-strong: var(--pal-line-strong-dark);
+            --ink: var(--pal-ink-dark);
+            --ink-2: var(--pal-ink2-dark);
+            --ink-3: var(--pal-ink3-dark);
+            --on-accent: var(--pal-on-accent-dark);
+            --accent: var(--pal-accent-dark);
+            --accent-hover: var(--pal-accent-hover-dark);
+            --accent-tint: var(--pal-accent-tint-dark);
+            --danger: var(--pal-danger-dark);
+            --danger-tint: var(--pal-danger-tint-dark);
+            --success: var(--pal-success-dark);
+            --success-tint: var(--pal-success-tint-dark);
+            --warning: var(--pal-warning-dark);
+            --warning-tint: var(--pal-warning-tint-dark);
+            --shadow-sm: var(--pal-shadow-sm-dark);
+            --shadow-pop: var(--pal-shadow-pop-dark);
+            --primary: var(--accent);
+            --secondary: var(--ink-2);
+            --tertiary: var(--ink-3);
+            --quaternary: var(--pal-quaternary-dark);
+            --bg-primary: var(--paper);
+            --bg-secondary: var(--card);
+            --bg-tertiary: var(--sunken);
+            --bg-hover: var(--hover);
+            --border-primary: var(--line);
+            --text-primary: var(--ink);
+            --text-secondary: var(--secondary);
+            --text-tertiary: var(--tertiary);
+            --text-quaternary: var(--quaternary);
+            --field: var(--sunken);
+            --muted: var(--ink-2);
+            --ink-deep: var(--ink);
+            --orange: var(--accent);
+            --orange-press: var(--accent-hover);
+            --primary-hover: var(--accent-hover);
+            --primary-strong: var(--accent);
+            --primary-subtle: var(--accent-tint);
+            --on-primary: var(--on-accent);
+            --ok: var(--success);
+            --ok-text: var(--success);
+            --bad: var(--danger);
+            --bad-text: var(--danger);
+            --warn: var(--warning);
+            --warn-text: var(--warning);
             --scheme: dark;
         }
     }
+
 
     :root[data-theme="dark"],
     html[data-theme="dark"],
     body[data-theme="dark"],
     [data-theme="dark"] {
-        --bg-primary: #2C261F;
-        --bg-secondary: #3A3229;
-        --bg-tertiary: #342C24;
-        --bg-hover: #4A4036;
-        --border-primary: #5A4E42;
-        --text-primary: #FAF7F0;
-        --text-secondary: #D4C7B6;
-        --text-tertiary: #A89B8B;
-        --primary: #E0692A;
-        --primary-hover: #F08A52;
-        --primary-subtle: #3D291C;
-        --secondary: #D4C7B6;
-        --tertiary: #A89B8B;
+            --paper: var(--pal-paper-dark);
+            --card: var(--pal-card-dark);
+            --sunken: var(--pal-sunken-dark);
+            --popover: var(--pal-popover-dark);
+            --hover: var(--pal-hover-dark);
+            --scrim: var(--pal-scrim-dark);
+            --line: var(--pal-line-dark);
+            --line-strong: var(--pal-line-strong-dark);
+            --ink: var(--pal-ink-dark);
+            --ink-2: var(--pal-ink2-dark);
+            --ink-3: var(--pal-ink3-dark);
+            --on-accent: var(--pal-on-accent-dark);
+            --accent: var(--pal-accent-dark);
+            --accent-hover: var(--pal-accent-hover-dark);
+            --accent-tint: var(--pal-accent-tint-dark);
+            --danger: var(--pal-danger-dark);
+            --danger-tint: var(--pal-danger-tint-dark);
+            --success: var(--pal-success-dark);
+            --success-tint: var(--pal-success-tint-dark);
+            --warning: var(--pal-warning-dark);
+            --warning-tint: var(--pal-warning-tint-dark);
+            --shadow-sm: var(--pal-shadow-sm-dark);
+            --shadow-pop: var(--pal-shadow-pop-dark);
+            --primary: var(--accent);
+            --secondary: var(--ink-2);
+            --tertiary: var(--ink-3);
+            --quaternary: var(--pal-quaternary-dark);
+            --bg-primary: var(--paper);
+            --bg-secondary: var(--card);
+            --bg-tertiary: var(--sunken);
+            --bg-hover: var(--hover);
+            --border-primary: var(--line);
+            --text-primary: var(--ink);
+            --text-secondary: var(--secondary);
+            --text-tertiary: var(--tertiary);
+            --text-quaternary: var(--quaternary);
+            --field: var(--sunken);
+            --muted: var(--ink-2);
+            --ink-deep: var(--ink);
+            --orange: var(--accent);
+            --orange-press: var(--accent-hover);
+            --primary-hover: var(--accent-hover);
+            --primary-strong: var(--accent);
+            --primary-subtle: var(--accent-tint);
+            --on-primary: var(--on-accent);
+            --ok: var(--success);
+            --ok-text: var(--success);
+            --bad: var(--danger);
+            --bad-text: var(--danger);
+            --warn: var(--warning);
+            --warn-text: var(--warning);
+            --scheme: dark;
+    }
 
-        --paper: var(--bg-primary);
-        --card: var(--bg-secondary);
-        --field: var(--bg-tertiary);
-        --hover: var(--bg-hover);
-        --line: var(--border-primary);
-        --ink: var(--text-primary);
-        --ink-deep: var(--text-primary);
-        --muted: var(--text-secondary);
-        --orange: var(--primary);
-        --orange-press: var(--primary-hover);
-        --scheme: dark;
+    body[data-theme="dark"],
+    [data-theme="dark"] {
+        --paper: var(--pal-paper-dark);
+        --card: var(--pal-card-dark);
+        --sunken: var(--pal-sunken-dark);
+        --popover: var(--pal-popover-dark);
+        --hover: var(--pal-hover-dark);
+        --scrim: var(--pal-scrim-dark);
+        --line: var(--pal-line-dark);
+        --line-strong: var(--pal-line-strong-dark);
+        --ink: var(--pal-ink-dark);
+        --ink-2: var(--pal-ink2-dark);
+        --ink-3: var(--pal-ink3-dark);
+        --on-accent: var(--pal-on-accent-dark);
+        --accent: var(--pal-accent-dark);
+        --accent-hover: var(--pal-accent-hover-dark);
+        --accent-tint: var(--pal-accent-tint-dark);
+        --danger: var(--pal-danger-dark);
+        --danger-tint: var(--pal-danger-tint-dark);
+        --success: var(--pal-success-dark);
+        --success-tint: var(--pal-success-tint-dark);
+        --warning: var(--pal-warning-dark);
+        --warning-tint: var(--pal-warning-tint-dark);
+        --primary: var(--accent);
+        --secondary: var(--ink-2);
+        --tertiary: var(--ink-3);
+        --quaternary: var(--pal-quaternary-dark);
+        --bg-primary: var(--paper);
+        --bg-secondary: var(--card);
+        --bg-tertiary: var(--sunken);
+        --bg-hover: var(--hover);
+        --border-primary: var(--line);
+        --text-primary: var(--ink);
+        --text-secondary: var(--ink-2);
+        --text-tertiary: var(--ink-3);
+        --shadow-sm: var(--pal-shadow-sm-dark);
+        --shadow-pop: var(--pal-shadow-pop-dark);
+        --ok: var(--success);
+        --bad: var(--danger);
+        --ok-text: var(--success);
+        --bad-text: var(--danger);
     }
 
     :root, html, body,
@@ -487,10 +775,13 @@ st.markdown(
         background: var(--hover) !important;
         border-color: var(--orange) !important;
     }
-    [data-testid="stFileUploaderDropzoneInstructions"],
-    [data-testid="stFileUploaderDropzoneInstructions"] p,
-    [data-testid="stFileUploaderDropzoneInstructions"] span {
-        color: var(--muted) !important;
+    /* #280 — the app places no practical limit on upload size (see
+       maxUploadSize in .streamlit/config.toml), so Streamlit's native
+       "{size} per file" caption is noise, not information. Hide the
+       instructions line; the dropzone, its label, and the Browse button
+       stay fully visible and themed. */
+    [data-testid="stFileUploaderDropzoneInstructions"] {
+        display: none !important;
     }
 
     .block-container {
@@ -522,8 +813,16 @@ st.markdown(
         font-size: 0.8rem !important;
         font-weight: 600 !important;
     }
-    .stCaption, .stCaption p {
-        color: var(--muted) !important;
+    /* Captions: Streamlit 1.64 renders [data-testid="stCaptionContainer"]
+       with native opacity-0.6 dimming (the old .stCaption selector is
+       dead — no such class in the 1.64 DOM). Force --ink-2, full opacity. */
+    [data-testid="stCaptionContainer"],
+    [data-testid="stCaptionContainer"] p,
+    [data-testid="stImageCaption"],
+    [data-testid="stImageCaption"] p {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+        opacity: 1 !important;
     }
 
     .nav { padding: 4px 2px 18px 2px; }
@@ -533,8 +832,8 @@ st.markdown(
     }
     .nav-sub { font-size: 0.8rem; color: var(--muted) !important; margin-top: 2px; }
     .nav-ver { font-size: 0.7rem; font-weight: 600; color: var(--muted) !important; }
-    .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: #1c7c3a; padding: 4px 0; border-bottom: 3px solid #1c7c3a; }
-    .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--orange); padding: 4px 0; border-bottom: 3px solid var(--orange); }
+    .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--ok-text); padding: 4px 0; border-bottom: 3px solid var(--ok-text); }
+    .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--primary-strong); padding: 4px 0; border-bottom: 3px solid var(--primary); }
     .step-wait { text-align: center; font-size: 0.75rem; font-weight: 500; color: var(--muted); padding: 4px 0; border-bottom: 3px solid var(--line); }
 
     .ios-section-label {
@@ -561,7 +860,8 @@ st.markdown(
         color: inherit;
     }
 
-    /* Primary buttons */
+    /* Primary buttons — Khabarwaani spec: accent fill, on-accent text,
+       transparent border, 36px system, soft shadow. */
     button[data-testid="stBaseButton-primary"],
     button[data-testid="baseButton-primary"],
     button[kind="primary"],
@@ -570,16 +870,16 @@ st.markdown(
     .stButton > button[data-testid="baseButton-primary"],
     [data-testid="stFormSubmitButton"] button[kind="primary"],
     [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"] {
-        background-color: var(--orange) !important;
-        background: var(--orange) !important;
-        color: #FAF7F0 !important;
-        border: 1px solid var(--orange) !important;
-        border-radius: 10px !important;
+        background-color: var(--accent) !important;
+        background: var(--accent) !important;
+        color: var(--on-accent) !important;
+        border: 1px solid transparent !important;
+        border-radius: var(--radius) !important;
         font-weight: 600 !important;
-        box-shadow: none !important;
-        min-height: 40px !important;
+        box-shadow: var(--shadow-sm) !important;
+        min-height: 36px !important;
         font-size: 0.88rem !important;
-        transition: background 120ms ease, border-color 120ms ease !important;
+        transition: background 150ms ease, border-color 150ms ease !important;
     }
 
     button[data-testid="stBaseButton-primary"]:hover,
@@ -590,10 +890,10 @@ st.markdown(
     .stButton > button[data-testid="baseButton-primary"]:hover,
     [data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
     [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"]:hover {
-        background-color: var(--orange-press) !important;
-        background: var(--orange-press) !important;
-        color: #FAF7F0 !important;
-        border-color: var(--orange-press) !important;
+        background-color: var(--accent-hover) !important;
+        background: var(--accent-hover) !important;
+        color: var(--on-accent) !important;
+        border-color: transparent !important;
     }
 
     button[data-testid="stBaseButton-primary"] *,
@@ -602,79 +902,136 @@ st.markdown(
     .stButton > button[kind="primary"] *,
     .stButton > button[data-testid="stBaseButton-primary"] *,
     .stButton > button[data-testid="baseButton-primary"] * {
-        color: #FAF7F0 !important;
+        color: var(--on-accent) !important;
     }
 
-    /* Secondary buttons */
+    /* #269: disabled primary buttons — the rule above forces --on-accent
+       (white) on ALL descendants of a primary button, including when it is
+       disabled. Without this override a disabled primary button (e.g. the
+       "Fine tuning…" loading state) renders white text on the light
+       --sunken background: unreadable. Disabled = --ink-3 on --sunken in
+       both modes (Khabarwaani spec: .btn:disabled). Specificity (0,2,1)
+       beats the (0,1,1) rule above. */
+    button[data-testid="stBaseButton-primary"]:disabled *,
+    button[data-testid="baseButton-primary"]:disabled *,
+    button[kind="primary"]:disabled *,
+    .stButton > button[kind="primary"]:disabled *,
+    .stButton > button[data-testid="stBaseButton-primary"]:disabled *,
+    .stButton > button[data-testid="baseButton-primary"]:disabled * {
+        color: var(--ink-3) !important;
+    }
+
+    /* Secondary buttons — Khabarwaani spec: card fill, 1px line border,
+       36px system, soft shadow; hover lifts border to line-strong.
+       #271: the catch-all selectors below MUST exclude primary buttons via
+       :not(...). Without the guard, e.g. `div[data-testid="stButton"] button`
+       (0,1,2) out-specifies the primary rule (0,1,1), painting primary
+       buttons with the white --card background while the primary `*` rule
+       keeps their text --on-accent (white) — white on white. */
     button[data-testid="stBaseButton-secondary"],
     button[data-testid="baseButton-secondary"],
     button[kind="secondary"],
-    .stButton > button,
-    .stDownloadButton > button,
-    [data-testid="stDownloadButton"] button,
-    [data-testid="stFormSubmitButton"] button,
-    [data-testid="stPopover"] button,
-    [data-testid="stPopover"] > button,
+    .stButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    .stDownloadButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stDownloadButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stFormSubmitButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stPopover"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stPopover"] > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
     [data-testid="stPopoverButton"],
     button[data-testid="stPopoverButton"],
-    div[data-testid="stButton"] button {
+    div[data-testid="stButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]) {
         background-color: var(--card) !important;
         background: var(--card) !important;
         color: var(--ink) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
+        border-radius: var(--radius) !important;
         font-weight: 600 !important;
-        box-shadow: none !important;
-        min-height: 40px !important;
+        box-shadow: var(--shadow-sm) !important;
+        min-height: 36px !important;
         font-size: 0.88rem !important;
-        transition: background 120ms ease, border-color 120ms ease, color 120ms ease !important;
+        transition: background 150ms ease, border-color 150ms ease, color 150ms ease !important;
     }
 
     button[data-testid="stBaseButton-secondary"]:hover,
     button[data-testid="baseButton-secondary"]:hover,
     button[kind="secondary"]:hover,
-    .stButton > button:hover,
-    .stDownloadButton > button:hover,
-    [data-testid="stDownloadButton"] button:hover,
-    [data-testid="stFormSubmitButton"] button:hover,
-    [data-testid="stPopover"] button:hover,
-    [data-testid="stPopover"] > button:hover,
+    .stButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    .stDownloadButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stDownloadButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stFormSubmitButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stPopover"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stPopover"] > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
     [data-testid="stPopoverButton"]:hover,
     button[data-testid="stPopoverButton"]:hover,
-    div[data-testid="stButton"] button:hover {
+    div[data-testid="stButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover {
         background-color: var(--hover) !important;
         background: var(--hover) !important;
         color: var(--ink) !important;
-        border-color: var(--line) !important;
+        border-color: var(--line-strong) !important;
     }
 
     button[data-testid="stBaseButton-secondary"]:active,
     button[data-testid="baseButton-secondary"]:active,
     button[kind="secondary"]:active,
-    .stButton > button:active,
-    .stDownloadButton > button:active,
-    [data-testid="stDownloadButton"] button:active,
-    [data-testid="stFormSubmitButton"] button:active,
-    [data-testid="stPopover"] button:active,
-    [data-testid="stPopover"] > button:active,
+    .stButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    .stDownloadButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stDownloadButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stFormSubmitButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stPopover"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stPopover"] > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
     [data-testid="stPopoverButton"]:active,
     button[data-testid="stPopoverButton"]:active,
-    div[data-testid="stButton"] button:active {
+    div[data-testid="stButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active {
         background-color: var(--hover) !important;
         background: var(--hover) !important;
         color: var(--ink) !important;
     }
 
+    /* Disabled buttons: ink-3 text on sunken — quiet, never red. */
+    .stButton > button:disabled,
+    div[data-testid="stButton"] button:disabled,
+    button[data-testid="stBaseButton-primary"]:disabled,
+    button[data-testid="stBaseButton-secondary"]:disabled,
+    .stDownloadButton > button:disabled,
+    [data-testid="stDownloadButton"] button:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+        background-color: var(--sunken) !important;
+        background: var(--sunken) !important;
+        border-color: var(--line) !important;
+        box-shadow: none !important;
+        opacity: 1 !important;
+    }
+    /* Disabled button labels/icons: the * rules below force --ink/--on-accent
+       on descendants — override to --ink-3 when disabled (else white text
+       on sunken, ~1.2:1). */
+    button[data-testid="stBaseButton-primary"]:disabled *,
+    button[data-testid="stBaseButton-secondary"]:disabled *,
+    .stButton > button:disabled *,
+    .stDownloadButton > button:disabled * {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+
+    /* Focus-visible: 2px accent ring, 2px offset (Khabarwaani spec). */
     button[data-testid="stBaseButton-secondary"]:focus,
     button[data-testid="stBaseButton-secondary"]:focus-visible,
     .stButton > button:focus,
     .stButton > button:focus-visible,
+    .stDownloadButton > button:focus-visible,
+    [data-testid="stDownloadButton"] button:focus-visible,
+    [data-testid="stLinkButton"] a:focus-visible,
     [data-testid="stPopover"] button:focus,
     [data-testid="stPopover"] button:focus-visible,
     [data-testid="stPopoverButton"]:focus,
     [data-testid="stPopoverButton"]:focus-visible {
-        outline: none !important;
-        box-shadow: 0 0 0 2px var(--orange) !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: var(--shadow-sm) !important;
+    }
+    /* News-link chips render as anchors: kill the native red focus glow. */
+    [data-testid="stLinkButton"] a:focus-visible {
+        box-shadow: none !important;
     }
 
     button[data-testid="stBaseButton-secondary"] *,
@@ -691,20 +1048,20 @@ st.markdown(
         -webkit-text-fill-color: var(--ink) !important;
     }
 
-    /* Form controls: input, textarea, select */
+    /* Form controls: input, textarea, select.
+       Single border only: the border lives on the trigger/field itself —
+       the outer [data-baseweb="select"] wrapper must NOT carry a border
+       (it rendered a double border: outer ring + inner field). */
     textarea, input, select,
     [data-baseweb="input"],
     [data-baseweb="input"] input,
     [data-baseweb="textarea"],
     [data-baseweb="textarea"] textarea,
-    [data-baseweb="select"],
     [data-baseweb="select"] > div,
     [data-baseweb="select"] span,
     [data-baseweb="base-input"],
     [data-baseweb="base-input"] input,
     [data-testid="stNumberInput"] input,
-    [data-testid="stTextInput"] input,
-    [data-testid="stTextArea"] textarea,
     [data-testid="stSelectbox"] div[class*="e1fp86qc0"] {
         -moz-appearance: none !important;
         appearance: none !important;
@@ -713,28 +1070,102 @@ st.markdown(
         color: var(--ink) !important;
         caret-color: var(--ink) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
+        border-radius: var(--radius) !important;
+    }
+    /* Text input / textarea: Streamlit 1.64 paints the visible box on the
+       ROOT element ([data-testid="stTextInputRootElement"] /
+       [data-testid="stTextAreaRootElement"]) — native secondaryBg + a red
+       :focus-within border. The border lives on the root (single border
+       only); the inner field is transparent and borderless. */
+    [data-testid="stTextInputRootElement"],
+    [data-testid="stTextAreaRootElement"] {
+        background: var(--sunken) !important;
+        background-color: var(--sunken) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: var(--radius) !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stTextInputRootElement"]:focus-within,
+    [data-testid="stTextAreaRootElement"]:focus-within {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea {
+        -moz-appearance: none !important;
+        appearance: none !important;
+        color-scheme: var(--scheme) !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        caret-color: var(--ink) !important;
+        border: none !important;
+        box-shadow: none !important;
+        outline: none !important;
+        border-radius: var(--radius) !important;
+    }
+    [data-testid="stTextInput"] input:disabled,
+    [data-testid="stTextArea"] textarea:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    /* Text-input clear (x) button: ink-3 at rest, accent on hover. */
+    [data-testid="stTextInput"] button[data-testid="stTextInputClearButton"] {
+        color: var(--ink-3) !important;
+    }
+    [data-testid="stTextInput"] button[data-testid="stTextInputClearButton"]:hover {
+        color: var(--accent) !important;
+    }
+    /* "Press Enter to apply" hint under focused text inputs. */
+    [data-testid="InputInstructions"] {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    /* The select wrapper itself: no border, no background — the inner
+       trigger div above is the single bordered field. */
+    [data-baseweb="select"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
 
     textarea::placeholder, input::placeholder,
     [data-baseweb="input"] input::placeholder,
     [data-baseweb="textarea"] textarea::placeholder,
     ::placeholder {
-        color: var(--muted) !important;
-        opacity: 0.8 !important;
+        color: var(--ink-3) !important;
+        opacity: 1 !important;
     }
 
-    /* Selectbox closed trigger container */
+    /* Focus: accent border + 3px accent-tint ring (Khabarwaani spec).
+       Text input / textarea focus lives on the root (:focus-within,
+       defined above) — not the inner field. */
+    textarea:focus-visible, input:focus-visible, select:focus-visible,
+    [data-baseweb="input"]:focus-within,
+    [data-baseweb="textarea"]:focus-within,
+    [data-testid="stNumberInput"] input:focus {
+        outline: none !important;
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+
+    /* Selectbox closed trigger container — the single bordered field. */
     [data-baseweb="select"] > div,
     [data-testid="stSelectbox"] div[class*="e1fp86qc0"],
     [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
         background-color: var(--field) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
+        border-radius: var(--radius) !important;
         min-height: 40px !important;
         height: 40px !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
+    }
+    [data-testid="stSelectbox"]:focus-within div[class*="e1fp86qc0"],
+    [data-testid="stSelectbox"]:focus-within div[data-baseweb="select"] > div {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
     }
     [data-baseweb="select"],
     [data-baseweb="select"] *,
@@ -847,8 +1278,8 @@ st.markdown(
     [data-testid="stPopoverBody"] code,
     div[class*="ecfxx9g0"] code {
         background: var(--field) !important;
-        color: var(--orange) !important;
-        -webkit-text-fill-color: var(--orange) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
         padding: 2px 6px !important;
         border-radius: 4px !important;
         border: 1px solid var(--line) !important;
@@ -901,8 +1332,8 @@ st.markdown(
     li[role="option"][aria-selected="true"] *,
     div[class*="e1fp86qc7"][data-hovered] *,
     div[class*="e1fp86qc7"][data-focused] * {
-        color: var(--orange) !important;
-        -webkit-text-fill-color: var(--orange) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
         font-weight: 600 !important;
     }
 
@@ -928,8 +1359,111 @@ st.markdown(
     [data-testid="stCheckbox"] span {
         color: var(--ink) !important;
     }
-    [data-testid="stCheckbox"] [data-baseweb="checkbox"] span {
+    /* (checkbox box theming lives in the live-selector block below) */
+    /* Toggle/switch: off = line-strong, ON = accent. NEVER red (red reads
+       as error/"off"). Streamlit 1.64 renders st.toggle INSIDE
+       [data-testid="stCheckbox"] (no stToggle testid exists; the old
+       [data-testid="stToggle"] selectors were dead). State lives on
+       label[data-selected]; track = e15oan337, thumb = e15oan338. */
+    [data-testid="stCheckbox"] label div[class*="e15oan337"] {
+        background-color: var(--line-strong) !important;
+        border-color: var(--line-strong) !important;
+    }
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan337"] {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stCheckbox"] label div[class*="e15oan338"] {
+        background-color: var(--ink) !important;
+    }
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan338"] {
+        background-color: var(--on-accent) !important;
+    }
+    /* Checkbox: checked box + check = accent, never red. The old
+       [data-baseweb="checkbox"] selectors were dead (BaseWeb is gone
+       in 1.64); the box is e15oan335, state on label[data-selected]. */
+    [data-testid="stCheckbox"] label div[class*="e15oan335"] {
+        background-color: var(--sunken) !important;
         border-color: var(--line) !important;
+    }
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan335"] {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan335"] svg {
+        stroke: var(--on-accent) !important;
+        color: var(--on-accent) !important;
+    }
+    [data-testid="stCheckbox"] label[data-disabled] div[class*="e15oan335"] {
+        border-color: var(--ink-3) !important;
+    }
+    [data-testid="stCheckbox"] label[data-focus-visible] div[class*="e15oan335"],
+    [data-testid="stCheckbox"] label[data-focused] div[class*="e15oan335"] {
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+    /* #292: structural fallbacks for toggle/radio/checkbox. The hash
+       selectors above (e15oan337/338, e1mpz0hj4/5, e15oan335) are verified
+       against the 1.64.0 bundle, but emotion hashes are build-fragile: if
+       they ever change, these structural selectors (verified against the
+       same bundle's component tree) still theme the controls, so no
+       orphaned white circles. Toggle is scoped by input[role="switch"];
+       the track directly contains the leaf thumb div; the radio outer
+       directly contains the leaf inner dot; the checkbox box directly
+       contains the check svg. */
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label div:has(> div:not(:has(*))) {
+        background-color: var(--line-strong) !important;
+        border-color: var(--line-strong) !important;
+    }
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label[data-selected] div:has(> div:not(:has(*))) {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--ink) !important;
+    }
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label[data-selected] div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--on-accent) !important;
+    }
+    [data-testid="stCheckbox"]:not(:has(input[role="switch"])) label div:has(> svg) {
+        background-color: var(--sunken) !important;
+        border-color: var(--line) !important;
+    }
+    [data-testid="stCheckbox"]:not(:has(input[role="switch"])) label[data-selected] div:has(> svg) {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div:has(> div:not(:has(*))) {
+        background-color: var(--line) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div:has(> div:not(:has(*))),
+    [data-testid="stRadioOption"][data-selected] div:has(> div:not(:has(*))) {
+        background-color: var(--accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--paper) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div:has(> div:not(:has(*))) > div:not(:has(*)),
+    [data-testid="stRadioOption"][data-selected] div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--on-accent) !important;
+    }
+
+    /* Dividers: one consistent 1px line style, consistent height. */
+    hr,
+    [data-testid="stDivider"] hr,
+    [data-testid="stHorizontalBlock"] hr {
+        border: none !important;
+        border-top: 1px solid var(--line) !important;
+        margin: 12px 0 !important;
+        height: 0 !important;
+    }
+    /* Toolbar vertical separators: 1px wide, 20px tall. */
+    .toolbar .sep,
+    [data-toolbar-sep="1"] {
+        width: 1px !important;
+        height: 20px !important;
+        background: var(--line) !important;
+        margin: 0 4px !important;
+        flex: none !important;
     }
 
     code, pre, [data-testid="stCode"], [data-testid="stCode"] pre, pre code {
@@ -938,21 +1472,40 @@ st.markdown(
         border-color: var(--line) !important;
     }
 
+    /* Alerts, toasts, dialogs, popovers, menus, tooltips: popover
+       surface, 1px line border, large radius, pop shadow. */
     [data-testid="stAlert"],
     [data-testid="stNotification"],
     [data-testid="stDialog"] > div,
     [data-testid="stStatusWidget"],
     [data-testid="stToast"],
     div[class*="stToast"],
-    div[data-testid="stAlert"] > div {
-        background-color: var(--card) !important;
-        background: var(--card) !important;
+    div[data-testid="stAlert"] > div,
+    [data-testid="stPopoverBody"],
+    div[role="tooltip"] {
+        background-color: var(--popover) !important;
+        background: var(--popover) !important;
         color: var(--ink) !important;
         -webkit-text-fill-color: var(--ink) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22) !important;
+        border-radius: var(--radius-lg) !important;
+        box-shadow: var(--shadow-pop) !important;
     }
+    /* Modal overlay: scrim. */
+    [data-testid="stDialog"] {
+        background: var(--scrim) !important;
+    }
+    /* Menu-item hover: hover wash. */
+    [data-testid="stPopoverBody"] [role="menuitem"]:hover,
+    [data-testid="stPopoverBody"] [role="option"]:hover,
+    [data-baseweb="menu"] [role="menuitem"]:hover {
+        background: var(--hover) !important;
+    }
+    /* Status badges: tint background, solid text. */
+    .badge-success { background: var(--success-tint) !important; color: var(--success) !important; }
+    .badge-warning { background: var(--warning-tint) !important; color: var(--warning) !important; }
+    .badge-danger { background: var(--danger-tint) !important; color: var(--danger) !important; }
+    .hint { color: var(--ink-2) !important; }
     [data-testid="stAlert"] *,
     [data-testid="stNotification"] *,
     [data-testid="stToast"] *,
@@ -979,24 +1532,39 @@ st.markdown(
         border-top-color: var(--orange) !important;
     }
 
-    [data-baseweb="tab-list"] {
+    /* Tabs: Streamlit 1.64 tabs are react-aria (the old
+       [data-baseweb="tab*"] selectors were dead — BaseWeb is gone).
+       Selected tab text + underline = accent, never native red. */
+    [data-testid="stTabs"] [role="tablist"] {
         background-color: transparent !important;
         border-bottom: 1px solid var(--line) !important;
     }
-    [data-baseweb="tab"],
-    [data-baseweb="tab-highlight"] {
-        color: var(--muted) !important;
+    [data-testid="stTabs"] [role="tablist"]::after {
+        background-color: var(--line) !important;
+    }
+    [data-testid="stTabs"] [role="tablist"] button {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
         background-color: transparent !important;
     }
-    [data-baseweb="tab"]:hover {
+    [data-testid="stTabs"] [role="tablist"] button[data-hovered] {
         color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
         background-color: var(--hover) !important;
     }
-    [data-baseweb="tab"][aria-selected="true"] {
-        color: var(--orange) !important;
+    [data-testid="stTabs"] [role="tablist"] button[data-selected] {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
     }
-    [data-baseweb="tab-border"] {
-        background-color: var(--line) !important;
+    [data-testid="stTabs"] [role="tablist"] button .react-aria-SelectionIndicator {
+        background-color: var(--accent) !important;
+    }
+    [data-testid="stTabs"] [role="tablist"] button[data-focus-visible] {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+        box-shadow: none !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
     }
 
     /* — Phone Mockup & Script Elements (Cohesive Canvas) — */
@@ -1034,7 +1602,7 @@ st.markdown(
         margin-bottom: 16px;
     }
     .script-scene { margin-bottom: 18px; }
-    .script-time { font-weight: 700; font-size: 0.9rem; color: var(--orange); margin-bottom: 6px; }
+    .script-time { font-weight: 700; font-size: 0.9rem; color: var(--primary-strong); margin-bottom: 6px; }
     .script-visual { font-size: 0.92rem; line-height: 1.5; margin-bottom: 10px; }
     .script-character { font-size: 0.82rem; font-weight: 700; margin-bottom: 4px; }
     .script-dialogue { font-family: "Noto Sans Devanagari", sans-serif; font-size: 1rem; line-height: 1.6; }
@@ -1048,8 +1616,8 @@ st.markdown(
         background: var(--hover) !important; color: var(--ink) !important;
         border: 1px solid var(--line) !important;
     }
-    .pill-ok { background: #1c7c3a !important; color: #ffffff !important; border-color: #1c7c3a !important; }
-    .pill-bad { background: #c41e3a !important; color: #ffffff !important; border-color: #c41e3a !important; }
+    .pill-ok { background: var(--ok) !important; color: var(--on-primary) !important; border-color: var(--ok) !important; }
+    .pill-bad { background: var(--bad) !important; color: var(--on-primary) !important; border-color: var(--bad) !important; }
 
     .frame-card {
         background: var(--field) !important;
@@ -1064,7 +1632,7 @@ st.markdown(
     .frame-time { color: var(--muted) !important; font-size: 0.72rem; }
     .character-badge {
         display: inline-block; font-size: 0.7rem; font-weight: 600;
-        color: #FAF7F0 !important; background: var(--orange) !important;
+        color: var(--on-primary) !important; background: var(--primary-strong) !important;
         padding: 2px 8px; border-radius: 6px; margin-bottom: 6px;
     }
     .dialogue-text {
@@ -1091,14 +1659,14 @@ st.markdown(
         margin-bottom: 8px;
         color: var(--ink);
     }
-    .news-rank { font-size: 0.72rem; font-weight: 700; color: var(--orange); }
+    .news-rank { font-size: 0.72rem; font-weight: 700; color: var(--primary-strong); }
     .news-title { font-size: 0.92rem; font-weight: 600; color: var(--ink) !important; line-height: 1.35; }
     .news-meta { font-size: 0.72rem; color: var(--muted) !important; margin-top: 4px; }
 
     /* Alert and notification banner classes */
     .banner-error {
         background-color: var(--field) !important;
-        border: 1px solid #c41e3a !important;
+        border: 1px solid var(--bad) !important;
         border-radius: 8px !important;
         padding: 10px 12px !important;
         margin: 8px 0 !important;
@@ -1238,8 +1806,8 @@ st.markdown(
     [data-testid="stNumberInput"] button:hover {
         background-color: var(--card) !important;
         background: var(--card) !important;
-        color: var(--orange) !important;
-        -webkit-text-fill-color: var(--orange) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
     }
     /* (-) docks left, (+) docks right; only the divider side differs.
        Stable testids first, aria-label substring as fallback. */
@@ -1324,6 +1892,307 @@ st.markdown(
         border-radius: 10px !important;
         overflow: hidden !important;
     }
+
+    /* ================================================================
+       STREAMLIT-NATIVE COLOR AUDIT — full sweep (see issue #278).
+       Every rule below themes a sub-element that Streamlit 1.64 paints
+       with its own native colors, verified against the 1.64 frontend
+       bundle (not guessed). Only palette tokens are used — never
+       hard-coded colors. See docs/COLOR_PALETTE.md (binding spec).
+       Colors only: no layout, behavior, or wording changes.
+       ================================================================ */
+
+    /* — Expander (#278): the expanded summary paints native bgMix
+       (dark native bgMix) — force transparent; the outer card already draws
+       the surface. Hover/active/focus wash = --hover, never native. — */
+    [data-testid="stExpander"] summary {
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    [data-testid="stExpander"] summary:hover,
+    [data-testid="stExpander"] summary:active {
+        background: var(--hover) !important;
+        background-color: var(--hover) !important;
+    }
+    [data-testid="stExpander"] summary:focus-visible {
+        background: var(--hover) !important;
+        background-color: var(--hover) !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+    /* Inner details ring + header/body divider: native borderColor → line. */
+    [data-testid="stExpander"] details {
+        border-color: var(--line) !important;
+    }
+    [data-testid="stExpander"] [id="stExpanderDetails"] {
+        border-top-color: var(--line) !important;
+    }
+    /* st.status step connector line. */
+    [data-testid="stExpander"] [id="stExpanderStepConnector"] {
+        background: var(--line) !important;
+        background-color: var(--line) !important;
+    }
+
+    /* — Tooltip visible surface: the old div[role="tooltip"] rule hit the
+       transparent positioning wrapper, not the visible box — dark-on-dark.
+       The box is [data-testid="stTooltipContent"]. — */
+    div[data-testid="stTooltipContent"],
+    div[data-testid="stTooltipErrorContent"] {
+        background: var(--popover) !important;
+        background-color: var(--popover) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: var(--radius-lg) !important;
+        box-shadow: var(--shadow-pop) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    div[data-testid="stTooltipContent"] *,
+    div[data-testid="stTooltipErrorContent"] * {
+        background: transparent !important;
+        background-color: transparent !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+
+    /* — Toast: kill the native brightness filter (shifts --popover in
+       dark mode); theme the view-more and close hovers. — */
+    [data-testid="stToast"] {
+        filter: none !important;
+    }
+    button[data-testid="stToastViewButton"]:hover {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+    }
+    [data-testid="stToast"] [data-hovered] {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+
+    /* — Spinner cache gradient: native bgColor stops → paper. — */
+    div.stSpinner.stCacheSpinner {
+        background: linear-gradient(to bottom, var(--paper) 0%, var(--paper) 80%, transparent) !important;
+    }
+
+    /* — Progress: track = sunken; fill = accent (native is Streamlit blue,
+       both modes — palette: never blue). — */
+    div[data-testid="stProgressBarTrack"] {
+        background: var(--sunken) !important;
+        background-color: var(--sunken) !important;
+    }
+    div[data-testid="stProgressBarTrack"] > div {
+        background: var(--accent) !important;
+        background-color: var(--accent) !important;
+    }
+
+    /* — Dialog body text + close button: native bodyText → ink. — */
+    [data-testid="stDialog"] div[class*="ee2kfji5"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stDialog"] button[class*="ee2kfji3"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stDialog"] button[class*="ee2kfji3"]:hover {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+    [data-testid="stDialog"] button[class*="ee2kfji3"]:focus-visible {
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+
+    /* — Radio: selected ring = accent (never Streamlit-native red);
+       unselected ring = line; inner dot = paper / on-accent. — */
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div[class*="e1mpz0hj4"] {
+        background-color: var(--line) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div[class*="e1mpz0hj4"],
+    [data-testid="stRadioOption"][data-selected] div[class*="e1mpz0hj4"] {
+        background-color: var(--accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div[class*="e1mpz0hj5"] {
+        background-color: var(--paper) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div[class*="e1mpz0hj5"],
+    [data-testid="stRadioOption"][data-selected] div[class*="e1mpz0hj5"] {
+        background-color: var(--on-accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"][data-focus-visible] {
+        background-color: var(--accent-tint) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"][data-disabled] div[class*="e1mpz0hj4"] {
+        background-color: var(--ink-3) !important;
+    }
+
+    /* — Number input: stepper keyboard focus (native flashes white-on-red);
+       stepper disabled; container focus-within ring (a11y). — */
+    [data-testid="stNumberInput"] button:focus-visible {
+        background-color: var(--card) !important;
+        background: var(--card) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: -2px !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stNumberInput"] button:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+        background: var(--sunken) !important;
+        background-color: var(--sunken) !important;
+    }
+    [data-testid="stNumberInputContainer"]:focus-within {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+
+    /* — Selectbox dropdown options in the portal: text = ink (native
+       bodyText beats container inheritance); hover/focus = --hover;
+       disabled = ink-3; empty-state message = ink-3. — */
+    div[data-testid="stSelectboxVirtualDropdown"] li div[class*="e1fp86qc7"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    div[data-testid="stSelectboxVirtualDropdown"] li div[class*="e1fp86qc7"][data-disabled] {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    div[data-testid="stSelectboxVirtualDropdown"] span[class*="e1fp86qc6"] {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+
+    /* — File uploader: drag overlay, chips, icon tiles, delete, add. — */
+    [data-testid="stFileUploaderDropzone"]:focus-visible {
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stFileUploaderDropzone"] div[class*="e3v525e1"] {
+        background: var(--popover) !important;
+        background-color: var(--popover) !important;
+    }
+    [data-testid="stFileUploaderDropzone"] div[class*="e3v525e2"] {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+    }
+    [data-testid="stFileChip"] {
+        background: var(--card) !important;
+        background-color: var(--card) !important;
+        border: 1px solid var(--line) !important;
+    }
+    [data-testid="stFileChip"] [class*="e1dmul8p5"] {
+        background-color: var(--ink) !important;
+        color: var(--card) !important;
+        -webkit-text-fill-color: var(--card) !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipIconError"] {
+        background-color: var(--danger-tint) !important;
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipIconSpinner"] {
+        background-color: var(--sunken) !important;
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    [data-testid="stFileChipName"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipDeleteBtn"] > button {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipDeleteBtn"] > button:hover {
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
+    }
+    /* "Add files" (+) button: borderlessIcon kind paints native red. */
+    button[data-testid="stBaseButton-borderlessIcon"] {
+        background: transparent !important;
+        background-color: transparent !important;
+        border-color: transparent !important;
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+        box-shadow: none !important;
+    }
+    button[data-testid="stBaseButton-borderlessIcon"]:hover:not(:disabled) {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+    }
+    button[data-testid="stBaseButton-borderlessIcon"]:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+
+    /* — Password visibility toggle inside text inputs. — */
+    [data-testid="stTextInput"] button[class*="eqy66r59"] {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+    [data-testid="stTextInput"] button[class*="eqy66r59"]:hover:not(:disabled) {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stTextInput"] button[class*="eqy66r59"]:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    [data-testid="stTextInput"] button[class*="eqy66r59"]:focus-visible {
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+
+    /* — Segmented control: kill the native red focus box-shadow
+       (the accent outline is set in library_ui.py). — */
+    div[class*="eqzt73c26"][data-focus-visible] {
+        box-shadow: none !important;
+    }
+
+    /* — Markdown: links = ink (native is BLUE — palette: never blue);
+       blockquote border = line; tables = line. — */
+    [data-testid="stMarkdownContainer"] a,
+    [data-testid="stMarkdownContainer"] a:visited,
+    [data-testid="stMarkdownContainer"] a:hover,
+    [data-testid="stMarkdownContainer"] a:active {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stMarkdownContainer"] blockquote {
+        border-left-color: var(--line) !important;
+        opacity: 1 !important;
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+    [data-testid="stMarkdownContainer"] th,
+    [data-testid="stMarkdownContainer"] td,
+    [data-testid="stMarkdownContainer"] tr {
+        border-color: var(--line) !important;
+    }
+
+    /* — st.exception: same native kind-colored wrapper as alerts. — */
+    [data-testid="stException"] {
+        background-color: var(--popover) !important;
+        background: var(--popover) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: var(--radius-lg) !important;
+        box-shadow: var(--shadow-pop) !important;
+    }
+    [data-testid="stException"] * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
 </style>
 """,
     unsafe_allow_html=True,
@@ -1363,68 +2232,202 @@ st.html(
         setupAccordion();
     }
 
-    /* The app's theme contract is OS-following: the CSS `@media
-       (prefers-color-scheme: dark)` block and this script key off the SAME
-       OS signal, so they agree by construction. (Do NOT read .stApp's
-       computed background here — the app's own CSS paints .stApp with
-       `var(--paper) !important`, so that read is circular: whichever theme
-       wins the first paint locks itself in and native widgets end up
-       disagreeing with the page, e.g. white tab segments / white uploader
-       dropzone on the dark page.) */
-    function studioSyncTheme() {
-        var dark = false;
-        var detected = false;
-        /* 1) OS preference — the single source of truth. */
+    /* Theme contract (#207, revised #258; HIG §4 — https://developer.apple.com/design/human-interface-guidelines/):
+       `data-theme` MUST mirror the theme Streamlit actually rendered
+       (menu → Settings → Theme) whenever that value is detectable — never
+       the OS while it is known. `prefers-color-scheme` breaks the moment the
+       user picks Light/Dark opposite the OS, and a one-time OS read goes
+       stale when Auto switches at runtime. Reading `.stApp`'s computed
+       background is NOT an option either — the app's own CSS paints `.stApp`
+       with `var(--paper) !important`, so that read is circular: whichever
+       theme wins the first paint would lock itself in.
+       Detection samples the computed `color`/`fill` of Streamlit-native icon
+       controls (sidebar toggles, main menu, toolbar, header). Streamlit
+       paints those icons with the ACTIVE theme's emotion colors (explicit
+       `color` props in the frontend), so the computed value IS the rendered
+       theme — unpoisoned by the app's CSS, which must never set
+       color / background / fill on these probes (guarded by
+       tests/test_theme_detection_207.py). Relative luminance > 0.5 means
+       light text ⇒ dark theme. The 250 ms re-probe picks up Settings →
+       Theme changes with no OS listener at all, and a late probe success
+       always overrides the fallback.
+       GRACEFUL DEGRADATION (#258): the probes depend on Streamlit's DOM,
+       which varies by version and configuration. If no probe yields a
+       parseable color after a short grace period, `data-theme` falls back to
+       `prefers-color-scheme` — silently (one console.warn, no banner).
+       HIG §7: in-foreground updates stay discoverable but not distracting;
+       a fixed red banner for a condition the user cannot act on is worse
+       than the fallback it replaced. (Until the first JS write, the CSS
+       `@media (prefers-color-scheme: dark)` block above remains the pre-JS
+       first-paint fallback.) */
+    var STUDIO_THEME_PROBES = [
+        '[data-testid="stExpandSidebarButton"]',
+        '[data-testid="stSidebarCollapseButton"]',
+        '[data-testid="stMainMenu"]',
+        '[data-testid="stToolbar"]',
+        'header[data-testid="stHeader"]'
+    ];
+    var STUDIO_THEME_FAIL_GRACE_TICKS = 20; /* 20 × 250 ms ≈ 5 s */
+    var studioThemeFailTicks = 0;
+    var studioThemeFallbackWarned = false;
+
+    function studioParseRgb(colorStr) {
+        if (!colorStr || typeof colorStr !== 'string') return null;
+        var m = /rgba?\\(\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})\\s*,\\s*(\\d{1,3})/i.exec(colorStr);
+        if (!m) return null;
+        return [parseInt(m[1], 10), parseInt(m[2], 10), parseInt(m[3], 10)];
+    }
+
+    function studioLuminance(rgb) {
+        function lin(c) {
+            c = c / 255;
+            return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+        }
+        return 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2]);
+    }
+
+    /* Returns 'dark', 'light', or null. Never consults the OS. */
+    function studioDetectRenderedTheme() {
+        for (var p = 0; p < STUDIO_THEME_PROBES.length; p++) {
+            var root = null;
+            try { root = document.querySelector(STUDIO_THEME_PROBES[p]); } catch (eQ) { root = null; }
+            if (!root) continue;
+            /* The probe root can inherit the app's own data-theme-driven
+               color, so only descendants are read — and a descendant merely
+               inheriting that same value is skipped. What remains is
+               Streamlit's direct theme color on the icon. */
+            var inherited = null;
+            try { inherited = window.getComputedStyle(root).color; } catch (eC) { inherited = null; }
+            var nodes = [];
+            try {
+                var found = root.querySelectorAll('button, span, svg, path, i');
+                for (var i = 0; i < found.length; i++) nodes.push(found[i]);
+            } catch (eN) {}
+            for (var k = 0; k < nodes.length; k++) {
+                var cs = null;
+                try { cs = window.getComputedStyle(nodes[k]); } catch (eS) { continue; }
+                var rawColor = (cs.color && cs.color !== inherited) ? cs.color : null;
+                var rawFill = (cs.fill && cs.fill !== inherited) ? cs.fill : null;
+                var rgb = studioParseRgb(rawColor) || studioParseRgb(rawFill);
+                if (!rgb) continue;
+                return studioLuminance(rgb) > 0.5 ? 'dark' : 'light';
+            }
+        }
+        return null;
+    }
+
+    /* OS fallback (#258): consulted ONLY when the rendered theme is not
+       detectable. Reads matchMedia live on every call so OS Auto-switches
+       are picked up by the 250 ms re-probe. Returns 'dark'/'light'/null. */
+    function studioOsFallbackTheme() {
         try {
             if (window.matchMedia) {
-                dark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                detected = true;
+                return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
             }
-        } catch (err) {}
-        /* 2) Explicit stored theme choice overrides the OS when present
-           (future-proof; Streamlit 1.64 persists no such key). */
-        if (detected) {
-            try {
-                for (var i = 0; i < localStorage.length; i++) {
-                    var k = localStorage.key(i);
-                    if (k && k.indexOf('stActiveTheme') !== -1) {
-                        var raw = localStorage.getItem(k);
-                        if (raw) {
-                            var val = JSON.parse(raw);
-                            if (typeof val === 'string') {
-                                if (val === 'Dark') { dark = true; detected = true; }
-                                else if (val === 'Light') { dark = false; detected = true; }
-                            } else if (val && typeof val === 'object' && val.name) {
-                                if (val.name.indexOf('Dark') !== -1) { dark = true; detected = true; }
-                                else if (val.name.indexOf('Light') !== -1) { dark = false; detected = true; }
-                            }
-                        }
-                    }
-                }
-            } catch (err2) {}
-        }
+        } catch (eM) {}
+        return null;
+    }
 
-        var themeVal = dark ? 'dark' : 'light';
+    function studioApplyTheme(themeVal) {
         if (document.documentElement.getAttribute('data-theme') !== themeVal) {
             document.documentElement.setAttribute('data-theme', themeVal);
         }
         if (document.body && document.body.getAttribute('data-theme') !== themeVal) {
             document.body.setAttribute('data-theme', themeVal);
         }
-        var stApp = document.querySelector('.stApp');
+        var stApp = null;
+        try { stApp = document.querySelector('.stApp'); } catch (eT) {}
         if (stApp && stApp.getAttribute('data-theme') !== themeVal) {
             stApp.setAttribute('data-theme', themeVal);
         }
     }
+
+    function studioSyncTheme() {
+        var themeVal = null;
+        try { themeVal = studioDetectRenderedTheme(); } catch (eD) { themeVal = null; }
+        if (themeVal) {
+            /* Streamlit's rendered value is known: it always wins. */
+            studioThemeFailTicks = 0;
+            studioApplyTheme(themeVal);
+            return;
+        }
+        studioThemeFailTicks++;
+        if (studioThemeFailTicks < STUDIO_THEME_FAIL_GRACE_TICKS) return;
+        /* Probes persistently blind: fall back to the OS theme silently.
+           One console.warn, no banner (HIG §7 — #258). The re-probe keeps
+           running, so a late probe success corrects data-theme. */
+        var osTheme = null;
+        try { osTheme = studioOsFallbackTheme(); } catch (eO) { osTheme = null; }
+        if (!osTheme) return;
+        if (!studioThemeFallbackWarned) {
+            studioThemeFallbackWarned = true;
+            if (window.console && window.console.warn) {
+                window.console.warn('[studioSyncTheme] #258: Streamlit rendered theme not detectable after ' + studioThemeFailTicks + ' attempts; using OS theme as fallback. Detection keeps probing and will correct data-theme when it succeeds.');
+            }
+        }
+        studioApplyTheme(osTheme);
+    }
     studioSyncTheme();
     setInterval(studioSyncTheme, 250);
-    if (window.matchMedia) {
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', studioSyncTheme);
-    }
-    window.addEventListener('storage', studioSyncTheme);
 })();
 </script>
 """,
+    unsafe_allow_javascript=True,
+)
+
+# HIG §6: popovers are transient — they MUST dismiss on outside click.
+# Streamlit closes popovers natively through a document-level (bubble-phase)
+# click listener, but if anything in the page swallows that event the
+# popover stays open forever. This capture-phase guard guarantees the HIG
+# behavior: when a popover body is present and a click lands outside all
+# popover chrome, it dispatches a synthetic Escape keydown so Streamlit's
+# OWN popover close path runs (the same handler as a physical Escape key).
+# No timers — HIG popovers never auto-dismiss on a timer; a timed dismiss
+# would strand users mid-interaction with share/confirmation controls.
+st.html(
+    """
+<script>
+(function() {
+    if (window._studioPopoverDismissGuard) return;
+    window._studioPopoverDismissGuard = true;
+
+    function _studioPopoverClickIsInside(node) {
+        // Duck-typed on purpose: works for Elements from any realm and
+        // never throws on non-Element targets (e.g. document itself).
+        var el = (node && typeof node.closest === 'function')
+            ? node : (node ? node.parentElement : null);
+        if (!el || typeof el.closest !== 'function') return false;
+        // Mirrors Streamlit's own inside-check: the trigger button, the
+        // popover body, or any overlay root (e.g. a selectbox dropdown
+        // opened from inside a popover).
+        return !!(
+            el.closest('[data-testid="stPopover"]') ||
+            el.closest('[data-testid="stPopoverBody"]') ||
+            el.closest('[data-st-overlay-root="true"]')
+        );
+    }
+
+    function _studioPopoverDismissOnOutsideClick(e) {
+        var target = e && e.target ? e.target : null;
+        if (!target) return;
+        // Only act while a popover is actually open.
+        if (!document.querySelector('[data-testid="stPopoverBody"]')) return;
+        if (_studioPopoverClickIsInside(target)) return;
+        // Genuine outside click: close through Streamlit's own Escape
+        // path. Capture phase runs before any bubble-phase
+        // stopPropagation in the page can swallow the click.
+        try {
+            var ev = new KeyboardEvent('keydown', {
+                key: 'Escape', bubbles: true, cancelable: true,
+            });
+            document.dispatchEvent(ev);
+        } catch (err) {}
+    }
+
+    document.addEventListener('click', _studioPopoverDismissOnOutsideClick, true);
+})();
+</script>
+    """,
     unsafe_allow_javascript=True,
 )
 
@@ -1432,6 +2435,11 @@ if "batch_result" not in st.session_state:
     st.session_state.batch_result = None
 if "generation_error" not in st.session_state:
     st.session_state.generation_error = None
+if "generation_in_flight" not in st.session_state:
+    # Issue #195: True while the continuous pipeline owns the Generate
+    # button (button shows "Generating…" and stays disabled). Cleared in a
+    # finally when the run finishes, fails, or is interrupted.
+    st.session_state.generation_in_flight = False
 if "chosen_engine_mode" not in st.session_state:
     st.session_state.chosen_engine_mode = app_cfg.get("default_engine", "first_local_then_agy")
 if "chosen_duration" not in st.session_state:
@@ -1503,6 +2511,12 @@ if "stepwise_extra_instruction" not in st.session_state:
     st.session_state.stepwise_extra_instruction = ""
 if "stepwise_run_requested" not in st.session_state:
     st.session_state.stepwise_run_requested = False
+if "stepwise_inflight" not in st.session_state:
+    # In-flight step-wise run marker (issue #198, HIG §3): the action name of
+    # the run currently executing, or None. While set, every step-wise
+    # action button renders disabled and the initiating button shows a
+    # running label — no second click until the step result lands.
+    st.session_state.stepwise_inflight = None
 if "stepwise_completed_steps" not in st.session_state:
     st.session_state.stepwise_completed_steps = {}
 
@@ -1513,7 +2527,7 @@ if server_action == "stop":
     st.markdown(
         """
         <div class="server-status-card">
-            <h2 style="color: #cf1322; margin-top: 0;">🛑 Studio Server Stopped</h2>
+            <h2 style="color: var(--bad-text); margin-top: 0;">🛑 Studio Server Stopped</h2>
             <p>The server process has shut down cleanly. To resume, launch the app from the macOS Dock / Applications folder or restart it from your terminal.</p>
         </div>
         """,
@@ -1526,7 +2540,7 @@ elif server_action == "restart":
     st.markdown(
         """
         <div class="server-status-card">
-            <h2 style="color: var(--orange); margin-top: 0;">🔄 Studio Server Restarting</h2>
+            <h2 style="color: var(--primary-strong); margin-top: 0;">🔄 Studio Server Restarting</h2>
             <p>The studio server is rebooting. This page will automatically reconnect once the service is back online...</p>
             <div style="margin-top: 15px; font-size: 13px; color: var(--muted);">Reconnecting in seconds...</div>
         </div>
@@ -1566,11 +2580,12 @@ if _v15_view == "library":
 srv_info = get_server_info()
 col_brand, col_srv = st.columns([7.8, 2.2], vertical_alignment="center")
 with col_brand:
+    _commit_suffix = f" · {_RUNNING_COMMIT}" if _RUNNING_COMMIT else ""
     st.markdown(
         f"""
         <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
             <div>
-                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}</span></div>
+                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}{_commit_suffix}</span></div>
             </div>
         </div>
         """,
@@ -1603,7 +2618,24 @@ with col_settings:
         with story_heading:
             st.markdown('<div class="ios-section-label">Story &amp; Topic</div>', unsafe_allow_html=True)
         with story_refresh:
-            refresh_news = st.button("Refresh", help="Refresh headlines", use_container_width=True, key="refresh_news")
+            # HIG §3 (#196): the Refresh button owns its loading state — it
+            # renders disabled while a fetch it kicked off is in flight, and
+            # the activity indicator appears here, next to the button.
+            _refresh_busy = is_refresh_busy(st.session_state)
+            refresh_news = st.button("Refresh", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
+            refresh_indicator = st.empty()
+        # Claim the click once per fragment run: the first fetch site below
+        # takes the claim; stacked re-clicks (busy or inside the cooldown
+        # window) are ignored — no second fetch, ever.
+        _refresh_claimed = False
+        def _claim_refresh_once():
+            nonlocal _refresh_claimed
+            if _refresh_claimed:
+                return True
+            if claim_refresh(st.session_state):
+                _refresh_claimed = True
+                return True
+            return False
         with st.container(border=True):
             src_lbl, src_dd = st.columns([2.5, 5.5])
             with src_lbl:
@@ -1667,33 +2699,38 @@ with col_settings:
                 if not hl:
                     return ("error", f"{entry.get('tag', '')} has no attached headline — cannot generate.")
                 return _verify_headline(hl)
-            # Render a config issue in the matching style: red for errors, yellow for warnings.
+            # Render a config issue as a native alert (#199: no emoji in UI
+            # chrome — the lead icon is a Material shortcode, and Streamlit
+            # does not expand shortcodes inside raw-HTML divs, so the custom
+            # banner-error/banner-warning divs are replaced by native alerts).
             def _show_config_issue(severity, message):
                 if severity == "error":
-                    st.markdown(
-                        "<div class='banner-error'>"
-                        f"<b>❌ Config Error:</b> {message}"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
+                    st.error(f":material/error: **Config Error:** {message}")
                 elif severity == "warning":
-                    st.markdown(
-                        "<div class='banner-warning'>"
-                        f"<b>⚠️ Config Warning:</b> {message}"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
+                    st.warning(f":material/warning: **Config Warning:** {message}")
             if selected_source == TRENDING_HASHTAG_SOURCE:
                 # Same English famous-tag list as Instagram (X first, then Google Trends).
                 st.caption("English hashtags already trending on X and Google. Pick one, or type your own.")
                 _trend_cache = st.session_state.get("trending_hashtags")
                 if not _trend_cache or refresh_news:
-                    with st.spinner("Loading famous English hashtags…"):
+                    if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            st.session_state.trending_hashtags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196): the Refresh button owns this fetch —
+                            # the activity indicator renders next to the button
+                            # (refresh_indicator), never detached below.
+                            # Unlabeled spinner per HIG: don't label a spinning indicator.
+                            with refresh_indicator:
+                                with st.spinner(""):
+                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
+                            # Loud failure: visible warning, and allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
                             st.session_state.trending_hashtags = []
                             st.warning(f"Could not load English hashtags: {_gt_err}")
+                        else:
+                            st.session_state.trending_hashtags = _fetched_tags
+                        finally:
+                            release_refresh(st.session_state)
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("trending_hashtag_dropdown")
@@ -1735,12 +2772,24 @@ with col_settings:
                 st.caption("English hashtags already trending on X and Google. Instagram has no public tag feed, so these are the famous tags people are posting. Type your own if you want.")
                 _trend_cache = st.session_state.get("trending_hashtags")
                 if not _trend_cache or refresh_news:
-                    with st.spinner("Loading famous English hashtags…"):
+                    if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            st.session_state.trending_hashtags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196): the Refresh button owns this fetch —
+                            # the activity indicator renders next to the button
+                            # (refresh_indicator), never detached below.
+                            # Unlabeled spinner per HIG: don't label a spinning indicator.
+                            with refresh_indicator:
+                                with st.spinner(""):
+                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
+                            # Loud failure: visible warning, and allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
                             st.session_state.trending_hashtags = []
                             st.warning(f"Could not load English hashtags: {_gt_err}")
+                        else:
+                            st.session_state.trending_hashtags = _fetched_tags
+                        finally:
+                            release_refresh(st.session_state)
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("instagram_hashtag_dropdown")
@@ -1775,82 +2824,101 @@ with col_settings:
                         active_hashtag_article = next((e for e in _trend_cache if e["tag"] == _ig_pick), None)
             st.session_state.active_hashtag = active_hashtag
 
-            if is_feed_mode and (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat or st.session_state.get("loaded_hashtag") != st.session_state.get("active_hashtag")):
-                with st.spinner("Loading headlines…"):
-                    _ht = (st.session_state.get("active_hashtag") or "").strip()
-                    if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
-                        # Hashtag mode: every hashtag carries its own headline —
-                        # use it directly, no extra search needed.
-                        # Normalize the hashtag dict entry to a NewsArticle-like object
-                        # (dicts have "headline", articles need "title").
-                        if active_hashtag_article:
-                            if isinstance(active_hashtag_article, dict):
-                                from types import SimpleNamespace
-                                articles = [SimpleNamespace(
-                                    title=active_hashtag_article.get("headline", ""),
-                                    link=active_hashtag_article.get("link", ""),
-                                    source=active_hashtag_article.get("source", ""),
-                                    time_label="",
-                                )]
-                            else:
-                                articles = [active_hashtag_article]
-                        else:
-                            # Custom typed hashtag: search news about the topic.
-                            _query = _ht.lstrip("#").replace("#", " ")
-                            try:
-                                articles = news_fetcher.search_news(_query, limit=16)
-                            except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
-                                st.error(str(_nfe))
-                                articles = []
-                    elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
-                            articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
-                    elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                            articles = news_fetcher.get_india_trending(limit=16)
-                    elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                            articles = news_fetcher.get_top_indian_politics_news(limit=16)
-                    elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                            articles = news_fetcher.get_top_indian_culture_news(limit=16)
-                    elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                            articles = news_fetcher.get_top_india_tech_news(limit=16)
-                    elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                            articles = news_fetcher.get_top_tech_news(limit=16)
-                    elif "World" in selected_news_cat:
-                            articles = news_fetcher.get_top_world_news(limit=16)
-                    elif "Business" in selected_news_cat:
-                            articles = news_fetcher.get_top_business_news(limit=16)
-                    else:
-                            articles = news_fetcher.get_top_india_news(limit=16)
-                    st.session_state.live_news_articles = articles
-                    st.session_state.loaded_news_cat = selected_news_cat
-                    st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
-                    # Persist headlines to disk so they survive app restarts.
-                    # Selection is restored from disk on next launch.
-                    try:
-                        _to_cache = []
-                        for _a in articles[:16]:
-                            if isinstance(_a, dict):
-                                _to_cache.append({
-                                    "title": _a.get("title", ""),
-                                    "link": _a.get("link", ""),
-                                    "source": _a.get("source", ""),
-                                    "time_label": _a.get("time_label", ""),
-                                })
-                            else:
-                                _to_cache.append({
-                                    "title": getattr(_a, "title", ""),
-                                    "link": getattr(_a, "link", ""),
-                                    "source": getattr(_a, "source", ""),
-                                    "time_label": getattr(_a, "time_label", ""),
-                                })
-                        save_config("cached_headlines", _to_cache)
-                        save_config("cached_headlines_cat", selected_news_cat)
-                        save_config("cached_headlines_hashtag", st.session_state.get("active_hashtag", ""))
-                        import time as _time_mod2
-                        save_config("cached_headlines_ts", _time_mod2.time())
-                    except Exception as _cache_e:
-                        print(f"[headline-cache] save failed (non-fatal): {_cache_e}")
-
             if is_feed_mode:
+                # Headline row owns its fetch (#73): the "Loading headlines…" spinner
+                # renders inside the value column so it anchors to the dropdown it
+                # populates, instead of floating in the card gutter.
+                hl_lbl, hl_dd = st.columns([2.5, 5.5])
+                with hl_dd:
+                    _need_headlines = (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat or st.session_state.get("loaded_hashtag") != st.session_state.get("active_hashtag"))
+                    if _need_headlines and (not refresh_news or _claim_refresh_once() or not st.session_state.live_news_articles):
+                        articles = []
+                        try:
+                            # HIG §3 (#196): the Refresh button owns this fetch —
+                            # the activity indicator renders next to the button
+                            # (refresh_indicator), never detached below.
+                            # Unlabeled spinner per HIG: don't label a spinning indicator.
+                            with refresh_indicator:
+                                with st.spinner(""):
+                                    _ht = (st.session_state.get("active_hashtag") or "").strip()
+                                    if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
+                                        # Hashtag mode: every hashtag carries its own headline —
+                                        # use it directly, no extra search needed.
+                                        # Normalize the hashtag dict entry to a NewsArticle-like object
+                                        # (dicts have "headline", articles need "title").
+                                        if active_hashtag_article:
+                                            if isinstance(active_hashtag_article, dict):
+                                                from types import SimpleNamespace
+                                                articles = [SimpleNamespace(
+                                                    title=active_hashtag_article.get("headline", ""),
+                                                    link=active_hashtag_article.get("link", ""),
+                                                    source=active_hashtag_article.get("source", ""),
+                                                    time_label="",
+                                                )]
+                                            else:
+                                                articles = [active_hashtag_article]
+                                        else:
+                                            # Custom typed hashtag: search news about the topic.
+                                            _query = _ht.lstrip("#").replace("#", " ")
+                                            articles = news_fetcher.search_news(_query, limit=16)
+                                    elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                                            articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                                    elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                                            articles = news_fetcher.get_india_trending(limit=16)
+                                    elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
+                                            articles = news_fetcher.get_top_indian_politics_news(limit=16)
+                                    elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
+                                            articles = news_fetcher.get_top_indian_culture_news(limit=16)
+                                    elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
+                                            articles = news_fetcher.get_top_india_tech_news(limit=16)
+                                    elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
+                                            articles = news_fetcher.get_top_tech_news(limit=16)
+                                    elif "World" in selected_news_cat:
+                                            articles = news_fetcher.get_top_world_news(limit=16)
+                                    elif "Business" in selected_news_cat:
+                                            articles = news_fetcher.get_top_business_news(limit=16)
+                                    else:
+                                            articles = news_fetcher.get_top_india_news(limit=16)
+                        except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
+                            # Loud failure: visible error banner, and allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
+                            st.error(str(_nfe))
+                            articles = []
+                        except Exception:
+                            # Fail loudly (#196): never swallow unexpected errors; allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
+                            raise
+                        finally:
+                            release_refresh(st.session_state)
+                        st.session_state.live_news_articles = articles
+                        st.session_state.loaded_news_cat = selected_news_cat
+                        st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
+                        # Persist headlines to disk so they survive app restarts.
+                        # Selection is restored from disk on next launch.
+                        try:
+                            _to_cache = []
+                            for _a in articles[:16]:
+                                if isinstance(_a, dict):
+                                    _to_cache.append({
+                                        "title": _a.get("title", ""),
+                                        "link": _a.get("link", ""),
+                                        "source": _a.get("source", ""),
+                                        "time_label": _a.get("time_label", ""),
+                                    })
+                                else:
+                                    _to_cache.append({
+                                        "title": getattr(_a, "title", ""),
+                                        "link": getattr(_a, "link", ""),
+                                        "source": getattr(_a, "source", ""),
+                                        "time_label": getattr(_a, "time_label", ""),
+                                    })
+                            save_config("cached_headlines", _to_cache)
+                            save_config("cached_headlines_cat", selected_news_cat)
+                            save_config("cached_headlines_hashtag", st.session_state.get("active_hashtag", ""))
+                            import time as _time_mod2
+                            save_config("cached_headlines_ts", _time_mod2.time())
+                        except Exception as _cache_e:
+                            print(f"[headline-cache] save failed (non-fatal): {_cache_e}")
                 # Headline dropdown from live feed — persists selection and avoids re-fetching unless refreshed
                 arts = st.session_state.live_news_articles[:16]
                 # Articles may be NewsArticle objects OR dicts (trending hashtag source
@@ -1875,7 +2943,6 @@ with col_settings:
                         if _art_title(a) == active_headline or _art_title(a) == saved_headline:
                             hl_idx = i
                             break
-                    hl_lbl, hl_dd = st.columns([2.5, 5.5])
                     with hl_lbl:
                         st.markdown('<div class="cfg-label">Headline</div>', unsafe_allow_html=True)
                     with hl_dd:
@@ -1992,7 +3059,8 @@ with col_settings:
                 with c_info:
                     st.caption("Directs characters, narrative and tone — overrides creative settings on conflict (verified facts always win).")
                 with c_clear:
-                    if st.button("🗑️ Clear", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
+                    # #199: icon-only control — trash metaphor + verb-first help tag.
+                    if st.button("", icon=":material/delete:", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
                         st.session_state.chosen_sample_story = ""
                         st.session_state.sample_story_rev += 1
                         st.session_state.instruction_cfg_sig = None
@@ -2074,7 +3142,10 @@ with col_settings:
             save_config("scene_style", st.session_state.chosen_scene_style)
             _vibe_ok, _vibe_reason = check_vibe_format_compatible()
             if not _vibe_ok:
-                st.error(f"⚠️ {_vibe_reason}")
+                # #217 (HIG §6): this is a WARNING, not an error — render it
+                # with st.warning, not st.error. Keeps the :material/warning:
+                # icon per the merged #199 icon-only convention (no emoji).
+                st.warning(f":material/warning: {_vibe_reason}")
 
 
         dur_val = int(st.session_state.chosen_duration)
@@ -2111,7 +3182,8 @@ with col_settings:
         with inst_hdr_l:
             st.markdown('<div class="ios-section-label" style="margin-top:14px; margin-bottom:4px;">Instruction</div>', unsafe_allow_html=True)
         with inst_hdr_r:
-            if st.button("🔄 Update Instruction", help="Create or refresh instruction based on current config and selection", use_container_width=True, key="update_inst_btn"):
+            # #199: icon-only control — refresh metaphor + verb-first help tag.
+            if st.button("", icon=":material/refresh:", help="Create or refresh instruction based on current config and selection", use_container_width=True, key="update_inst_btn"):
                 st.session_state.instruction_cfg_sig = cfg_sig
                 st.session_state.instruction_rev += 1
                 st.session_state[f"instruction_text_{st.session_state.instruction_rev}"] = instruction_seed
@@ -2130,15 +3202,16 @@ with col_settings:
         )
         st.markdown('<div class="ios-section-label" style="margin-top:14px; margin-bottom:4px;">Generation Mode</div>', unsafe_allow_html=True)
         with st.container(border=True):
-            if st.button("✓ Verify Setup", use_container_width=True, key="verify_config_btn",
-                           help="Deterministic check: vibe↔format compatibility, character count vs format, sane ranges."):
+            # #199: icon-only control — check-circle metaphor + verb-first help tag.
+            if st.button("", icon=":material/check_circle:", use_container_width=True, key="verify_config_btn",
+                           help="Check the setup for vibe, format and character issues"):
                 _issues = validate_config()
                 if _issues:
-                    st.error("❌ Setup has problems:")
+                    st.error(":material/error: Setup has problems:")
                     for _i, _iss in enumerate(_issues, 1):
                         st.error(f"{_i}. {_iss}")
                 else:
-                    st.success(f"✅ Setup looks good — '{format_display_name(st.session_state.chosen_scene_style)}' format "
+                    st.success(f":material/check_circle: Setup looks good — '{format_display_name(st.session_state.chosen_scene_style)}' format "
                                f"with {st.session_state.chosen_character_count} character(s), "
                                f"'{vibe_display_name(st.session_state.chosen_tone)}' vibe. Ready to generate.")
         with st.container(border=True):
@@ -2153,6 +3226,10 @@ with col_settings:
                 horizontal=True,
                 label_visibility="collapsed",
                 key="workflow_mode_radio",
+                # #199: no emoji in UI chrome — the option values keep their
+                # emoji-prefixed form for saved-config compatibility, but the
+                # displayed labels are stripped of emoji.
+                format_func=lambda v: v.replace("⚡ ", "").replace("🪜 ", ""),
             )
             if sel_wf != st.session_state.get("workflow_mode"):
                 st.session_state.workflow_mode = sel_wf
@@ -2161,13 +3238,24 @@ with col_settings:
 
         if st.session_state.get("workflow_mode") == "🪜 Step-Wise":
             if not st.session_state.get("stepwise_active"):
-                launch_btn = st.button("🪜 Start Step-Wise Generation", type="primary", use_container_width=True, key="launch_stepwise_btn")
+                # Issue #198 / HIG §3: the launch button owns its loading
+                # state — while a step run is in flight it stays disabled so
+                # a second click can never queue a duplicate run.
+                # #199: icon-only primary launch — play metaphor + verb-first help tag.
+                _sw_locked = step_run_inflight(st.session_state)
+                launch_btn = st.button("", icon=":material/play_arrow:", type="primary", use_container_width=True, key="launch_stepwise_btn",
+                                       disabled=_sw_locked, help="Start step-wise script generation")
                 if launch_btn and st.session_state.get("active_story_input", "").strip():
                     _issues = validate_config()
                     if _issues:
-                        st.error("⛔ Cannot start — fix these first:")
+                        st.error(":material/block: Cannot start — fix these first:")
                         for _iss in _issues:
                             st.error(f"• {_iss}")
+                    elif not request_step_run(st.session_state, ACTION_LAUNCH):
+                        # Unreachable while the button is disabled; landing
+                        # here means session state is out of sync — fail
+                        # loudly and never queue a duplicate step run.
+                        st.error("A step-wise run is already in flight — please wait for it to finish.")
                     else:
                         st.session_state.stepwise_active = True
                         st.session_state.stepwise_current_step = 1
@@ -2175,7 +3263,6 @@ with col_settings:
                         st.session_state.stepwise_step_model = st.session_state.chosen_engine_mode
                         st.session_state.stepwise_extra_instruction = ""
                         st.session_state.stepwise_completed_steps = {}
-                        st.session_state.stepwise_run_requested = True
                         st.session_state.batch_result = None
                         st.session_state.generation_error = None
                         st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
@@ -2186,10 +3273,12 @@ with col_settings:
                         save_config("max_retries", st.session_state.chosen_max_retries)
                         st.rerun()
             else:
-                st.info(f"🪜 Step-Wise Active: Working on Step {st.session_state.get('stepwise_current_step', 1)} of 6")
+                st.info(f":material/info: Step-Wise Active: Working on Step {st.session_state.get('stepwise_current_step', 1)} of 6")
                 c_exit, c_new = st.columns([1, 1])
                 with c_exit:
-                    if st.button("❌ Exit Step-Wise", use_container_width=True, key="reset_stepwise_btn"):
+                    # #199: icon-only control — close metaphor + verb-first help tag.
+                    if st.button("", icon=":material/close:", use_container_width=True, key="reset_stepwise_btn",
+                                 help="Exit step-wise generation mode"):
                         st.session_state.stepwise_active = False
                         st.session_state.stepwise_state = None
                         st.session_state.stepwise_completed_steps = {}
@@ -2197,28 +3286,61 @@ with col_settings:
                         st.session_state.stepwise_run_requested = False
                         st.rerun()
                 with c_new:
-                    if st.button("🚀 Restart Step 1", use_container_width=True, key="restart_step1_btn"):
-                        st.session_state.stepwise_current_step = 1
-                        st.session_state.stepwise_state = None
-                        st.session_state.stepwise_completed_steps = {}
-                        st.session_state.stepwise_run_requested = True
+                    # Issue #198 / HIG §3: Restart initiates a step run, so it
+                    # owns its loading state — disabled while a run is in
+                    # flight, with the running label shown visibly.
+                    # #199: icon-only control at rest — restart metaphor +
+                    # verb-first help tag.
+                    _restart_inflight = inflight_action(st.session_state) == ACTION_RESTART
+                    _restart_label = "Restarting Step 1…" if _restart_inflight else ""
+                    _restart_icon = None if _restart_inflight else ":material/restart_alt:"
+                    if st.button(_restart_label, icon=_restart_icon, use_container_width=True, key="restart_step1_btn",
+                                 disabled=step_run_inflight(st.session_state),
+                                 help="Restart step-wise generation from step 1"):
+                        if not request_step_run(st.session_state, ACTION_RESTART):
+                            st.error("A step-wise run is already in flight — please wait for it to finish.")
+                        else:
+                            st.session_state.stepwise_current_step = 1
+                            st.session_state.stepwise_state = None
+                            st.session_state.stepwise_completed_steps = {}
+                            st.session_state.batch_result = None
+                            st.session_state.generation_error = None
+                            st.rerun()
+        else:
+            # Issue #195 / HIG §3: the Generate button owns its loading state.
+            # While a run is in flight it stays disabled, so a second click
+            # can never queue a duplicate pipeline. The flag is set here
+            # (before the rerun) so the button renders disabled for the whole
+            # multi-minute run, and released in a finally when the run ends.
+            # #199: icon-only primary launch — play metaphor + verb-first help tag.
+            _gen_btn = button_params(st.session_state)
+            launch_btn = st.button(
+                "",
+                icon=":material/play_arrow:",
+                type="primary",
+                use_container_width=True,
+                key="launch_continuous_btn",
+                disabled=_gen_btn["disabled"],
+                help="Generate the script in continuous mode",
+            )
+            if launch_btn and st.session_state.get("active_story_input", "").strip():
+                if is_in_flight(st.session_state):
+                    # Unreachable while the button is disabled; landing here
+                    # means session state is out of sync — fail loudly and
+                    # never queue a duplicate generation.
+                    st.error("A generation is already running — please wait for it to finish.")
+                else:
+                    _issues = validate_config()
+                    if _issues:
+                        st.error("⛔ Cannot generate — fix these first:")
+                        for _iss in _issues:
+                            st.error(f"• {_iss}")
+                    else:
+                        st.session_state.stepwise_active = False
+                        begin_run(st.session_state)
                         st.session_state.batch_result = None
                         st.session_state.generation_error = None
-                        st.rerun()
-        else:
-            launch_btn = st.button("Generate (Continuous)", type="primary", use_container_width=True, key="launch_continuous_btn")
-            if launch_btn and st.session_state.get("active_story_input", "").strip():
-                _issues = validate_config()
-                if _issues:
-                    st.error("⛔ Cannot generate — fix these first:")
-                    for _iss in _issues:
-                        st.error(f"• {_iss}")
-                else:
-                    st.session_state.stepwise_active = False
-                    st.session_state.run_requested = True
-                    st.session_state.batch_result = None
-                    st.session_state.generation_error = None
-                    st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
+                        st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
                 st.session_state.run_scenario = instruction_text.strip()
                 st.session_state.run_sample_story = st.session_state.get("chosen_sample_story", "").strip()
                 save_config("selected_headline", st.session_state.run_topic)
@@ -2398,6 +3520,38 @@ def _render_verification_report(verif, *, key_prefix="", as_expander=True):
     _render_raw_json(verif, label="Raw JSON — verification", key_prefix=key_prefix, as_expander=as_expander)
 
 
+def _inflight_claim(session, key, url):
+    """Phase 1 of button-owned loading (HIG §3, #197): mark the network work
+    for *url* as in-flight so the initiating button repaints disabled with
+    its spinner; the work itself runs on the ``st.rerun()`` below (phase 2).
+
+    *session* is ``st.session_state`` in the app, a plain dict in tests.
+    """
+    session[key] = url
+
+
+def _inflight_take(session, key, url):
+    """Phase-2 gate: True when this run should perform the in-flight work
+    claimed for *url*. Clears the claim and returns False when nothing is
+    pending, or when the pending claim targets a different URL (the selected
+    link changed before the rerun landed) — a stale marker must never run
+    work for the wrong link.
+    """
+    pending = session.get(key)
+    if not pending:
+        return False
+    if pending != url:
+        session.pop(key, None)
+        return False
+    return True
+
+
+def _inflight_clear(session, key):
+    """Drop an in-flight claim. Always called in a ``finally`` — a stuck
+    marker would leave the button disabled forever (#197)."""
+    session.pop(key, None)
+
+
 def _render_story_link_verifier(verif, *, key_prefix=""):
     """Stage 1.4 — fetch the exact story link, verify it is the same story
     (deterministic check, or LLM with the app's engine selection), and show
@@ -2432,8 +3586,41 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
     _store = st.session_state.setdefault("s1_story_links", {})
     _entry = _store.get(_sel_url) or {}
 
-    if st.button("Fetch story link", key=f"{key_prefix}sl_fetch",
+    # In-flight markers + outcome notices for the two buttons below (#197).
+    _fetch_run_key = f"{key_prefix}sl_fetch_running"
+    _fetch_err_key = f"{key_prefix}sl_fetch_error"
+    _fetch_warn_key = f"{key_prefix}sl_fetch_warning"
+    _verify_run_key = f"{key_prefix}sl_verify_running"
+    _verify_err_key = f"{key_prefix}sl_verify_error"
+
+    # Outcomes from the previous run's phase 2 are persisted in session
+    # state (the clearing rerun would otherwise drop them) — surface loudly.
+    _fetch_err = st.session_state.pop(_fetch_err_key, None)
+    if _fetch_err:
+        st.error(_fetch_err)
+    _fetch_warn = st.session_state.pop(_fetch_warn_key, None)
+    if _fetch_warn:
+        st.warning(_fetch_warn)
+    _verify_err = st.session_state.pop(_verify_err_key, None)
+    if _verify_err:
+        st.error(_verify_err)
+
+    # HIG §3: the Fetch button owns its loading state — while its fetch is
+    # in-flight it paints the native spinner, reads "Fetching…", and stays
+    # disabled (no second click, ever). Phase 1 claims the marker and reruns
+    # so the button repaints; phase 2 (below) does the network work.
+    _fetch_running = _inflight_take(st.session_state, _fetch_run_key, _sel_url)
+    if st.button("Fetching…" if _fetch_running else "Fetch story link",
+                 icon="spinner" if _fetch_running else None,
+                 key=f"{key_prefix}sl_fetch",
+                 disabled=_fetch_running,
                  help="Fetch the article page and pull its images"):
+        _inflight_claim(st.session_state, _fetch_run_key, _sel_url)
+        st.rerun()
+    if _fetch_running:
+        # Phase 2: perform the fetch. The marker is always cleared (finally)
+        # and outcomes persist across the rerun below — failures stay loud
+        # and the button never sticks disabled.
         try:
             with st.spinner("Fetching the article page…"):
                 _art = fetch_story_page(_sel_url)
@@ -2444,10 +3631,13 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
                       "images": _images, "verified": None, "reason": ""}
             _store[_sel_url] = _entry
             if not _images:
-                st.warning("Article fetched, but no usable images were found on the page.")
-            st.rerun()
+                st.session_state[_fetch_warn_key] = (
+                    "Article fetched, but no usable images were found on the page.")
         except Exception as e:
-            st.error(f"Fetch failed: {e}")
+            st.session_state[_fetch_err_key] = f"Fetch failed: {e}"
+        finally:
+            _inflight_clear(st.session_state, _fetch_run_key)
+        st.rerun()
 
     if not _entry.get("article"):
         st.caption("Fetch the link to verify the story and see its images.")
@@ -2471,7 +3661,17 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
     _use_llm = _ai_pick != "None"
     _engine_mode = ENGINE_OPTIONS[_ai_pick] if _use_llm else None
 
-    if st.button("Verify same story", key=f"{key_prefix}sl_verify"):
+    # HIG §3: the Verify button owns its loading state — same two phases
+    # as Fetch: disabled with the native spinner until its result lands.
+    _verify_running = _inflight_take(st.session_state, _verify_run_key, _sel_url)
+    if st.button("Verifying…" if _verify_running else "Verify same story",
+                 icon="spinner" if _verify_running else None,
+                 key=f"{key_prefix}sl_verify",
+                 disabled=_verify_running,
+                 help="Check the fetched article is the same story"):
+        _inflight_claim(st.session_state, _verify_run_key, _sel_url)
+        st.rerun()
+    if _verify_running:
         _headline = _model_field(verif, "headline", "") or ""
         _facts = _model_field(verif, "verified_facts", None) or []
         try:
@@ -2490,24 +3690,28 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
                 st.session_state["s1_verified_story_link"] = {
                     "title": _sel_title, "url": _sel_url, "source": _sel_source}
                 st.session_state["s1_kept_images"] = list(_entry.get("images", []))
-            st.rerun()
         except Exception as e:
-            st.error(f"Verification failed: {e}")
+            st.session_state[_verify_err_key] = f"Verification failed: {e}"
+        finally:
+            _inflight_clear(st.session_state, _verify_run_key)
+        st.rerun()
 
     if _entry.get("verified") is True:
-        st.success(f"✅ Same story confirmed — {_entry.get('reason', '')}")
+        st.success(f":material/check_circle: Same story confirmed — {_entry.get('reason', '')}")
     elif _entry.get("verified") is False:
-        st.warning(f"⚠️ {_entry.get('reason', '')}")
+        st.warning(f":material/warning: {_entry.get('reason', '')}")
 
     _imgs = _entry.get("images", []) or []
     if _imgs:
-        st.markdown(f"**🖼️ Article images ({len(_imgs)})** — ✕ removes one from the set")
+        st.markdown(f"**Article images ({len(_imgs)})** — the delete icon removes one from the set")
         _ncols = min(4, len(_imgs))
         _cols = st.columns(_ncols)
         for _i, _img in enumerate(list(_imgs)):
             with _cols[_i % _ncols]:
                 st.image(_img, use_container_width=True)
-                if st.button("✕ Remove", key=f"{key_prefix}sl_rm_{_i}"):
+                # #199: icon-only control — delete metaphor + verb-first help tag.
+                if st.button("", icon=":material/delete:", key=f"{key_prefix}sl_rm_{_i}",
+                             help="Remove this image from the set"):
                     _imgs.pop(_i)
                     _entry["images"] = _imgs
                     _store[_sel_url] = _entry
@@ -2738,7 +3942,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                         st.markdown(f"**Target Format:** {step_state.get('target_seconds', 60)}s • {format_display_name(step_state.get('scene_style', ''))}")
                     if step_state.get("verification_from_cache"):
                         _s1_ch = step_state.get("cache_age_hours", 0) or 0
-                        st.success(f"✓ Used cached verification from {_s1_ch:.1f} hours ago — API call skipped (24h cache)")
+                        st.success(f"Used cached verification from {_s1_ch:.1f} hours ago — API call skipped (24h cache)")
                     _render_verification_report(_ver, key_prefix=f"{key_prefix}s1_", as_expander=False)
                 else:
                     st.caption("No verification data.")
@@ -3539,229 +4743,154 @@ with col_output:
         # Stage outputs live OUTSIDE the status box so they stay visible
         # even when the status collapses.
         stage_output_box = st.empty()
-        with st.status("Generating…", expanded=True) as status_box:
-            progress_bar = st.progress(0)
-            status_text = st.empty()
-            try:
-                pipeline = reel_workflow.run_stream(
-                    news_input=st.session_state.run_topic,
-                    scenario=st.session_state.run_scenario,
-                    batch_size=st.session_state.chosen_batch_count,
-                    target_seconds=st.session_state.chosen_duration,
-                    engine_mode=st.session_state.chosen_engine_mode,
-                    max_retries=st.session_state.chosen_max_retries,
-                    preferred_angle=get_effective_angle(),
-                    character_count=st.session_state.chosen_character_count,
-                    scene_style=st.session_state.chosen_scene_style,
-                    preferred_tone=st.session_state.chosen_tone,
-                    sample_story=st.session_state.get("run_sample_story", ""),
-                )
-                for step in pipeline:
-                    # Live substep events: update tracker + heading, keep pumping.
-                    if step.get("type") == "substep":
-                        _ev_stage = _apply_live_substep(step)
-                        _ev_label = _live_stage_heading(
-                            _ev_stage, substep=step.get("substep"),
-                            name=step.get("name", ""))
-                        status_text.markdown(f"**{_ev_label}**")
-                        status_box.update(label=_ev_label)
-                        live_tracker_box.empty()
-                        with live_tracker_box.container():
-                            st.markdown(f"### {_ev_label}")
-                            for _sn in range(1, _ev_stage + 1):
-                                _render_live_tracker(_sn)
-                        continue
-                    step_num = step.get("step", 1)
-                    st.session_state._last_pipeline_step = step_num
-                    total_steps = step.get("total_steps", 6)
-                    progress_bar.progress(min(1.0, step_num / total_steps))
-                    if step.get("data") is None:
-                        # Stage started: live heading + fresh tracker.
-                        _label = _live_stage_heading(step_num)
-                        _init_live_stage(step_num)
-                        live_tracker_box.empty()
-                        with live_tracker_box.container():
-                            st.markdown(f"### {_label}")
-                            for _sn in range(1, step_num + 1):
-                                _render_live_tracker(_sn)
-                    else:
-                        # Stage completed.
-                        _label = _live_stage_heading(step_num, phase="complete")
-                        _live_done = (st.session_state.get("_live_substeps") or {}).get(step_num)
-                        if _live_done is not None:
-                            _live_done["done"] = True
-                            _live_done["failed_at"] = None
-                            # Mark any still-running substep as passed (stage
-                            # returned without a fail event).
-                            for _sid, _ent in _live_done["steps"].items():
-                                if _ent.get("status") == "running":
-                                    _ent["status"] = "pass"
-                                    _ent["detail"] = _ent.get("detail") or "Completed"
-                        live_tracker_box.empty()
-                        with live_tracker_box.container():
-                            st.markdown(f"### {_label}")
-                            for _sn in range(1, step_num + 1):
-                                _render_live_tracker(_sn)
-                    status_text.markdown(f"**{_label}**")
-                    status_box.update(label=_label)
-                    # Keep every completed stage's input + output visible while later stages run.
-                    # Accumulate new data, then ALWAYS re-render (even on in-progress
-                    # yields with no data) so previous stages stay visible.
-                    _sdata = step.get("data")
-                    if _sdata:
-                        # Defensive copy: never alias the pipeline's mutable
-                        # state dict into session state.
-                        _sdata = dict(_sdata)
-                        _sdata["retry_count"] = step.get("retry_count", 0)
-                        st.session_state._stage_outputs[step_num] = _sdata
-                    if st.session_state._stage_outputs:
-                        stage_output_box.empty()
-                        # CRITICAL: .empty() does NOT unregister widget keys
-                        # within the same script run (verified on Streamlit
-                        # 1.64 — re-rendering the same keyed widgets in a
-                        # loop raises StreamlitDuplicateElementKey). Every
-                        # re-render of the live preview therefore gets a
-                        # unique key prefix. This loses nothing: the script
-                        # is blocked inside the pipeline generator while the
-                        # loop runs, so no widget interaction can occur
-                        # mid-run; after completion the final rerun renders
-                        # the separate "done_" preview.
-                        _live_seq = st.session_state.get("_live_preview_seq", 0) + 1
-                        st.session_state._live_preview_seq = _live_seq
-                        with stage_output_box.container():
-                            _render_cumulative_preview(
-                                st.session_state._stage_outputs,
-                                key_prefix=f"live_r{_live_seq}_")
-                    if step.get("completed"):
-                        st.session_state.batch_result = step["data"]["batch_result"]
-                        st.session_state.generation_error = None
-                        st.session_state.selected_script_idx = 0
-                        save_config("selected_script_index", 0)
-                        progress_bar.progress(1.0)
-                        status_box.update(label="Ready — all 6 stages complete", state="complete", expanded=False)
-                        # Collapse stage history on completion: final output goes to the top,
-                        # stage details move into a collapsed expander below.
-                        st.session_state._pipeline_just_completed = True
-                        st.rerun()
-            except Exception as e:
-                st.session_state.batch_result = None
-                st.session_state.selected_script_idx = 0
-                _f_step = st.session_state.get("_last_pipeline_step", 1)
-                # Failure heading with the exact failing substep, and mark it
-                # failed in the live tracker so the partial summary is complete.
-                _f_live = (st.session_state.get("_live_substeps") or {}).get(_f_step, {})
-                _f_sub = _f_live.get("failed_at") or _f_live.get("current")
-                _f_steps = _f_live.get("steps", {})
-                if _f_sub and _f_sub in _f_steps and _f_steps[_f_sub].get("status") == "running":
-                    _f_steps[_f_sub]["status"] = "fail"
-                    _f_steps[_f_sub]["detail"] = str(e)[:200]
-                    _f_live["failed_at"] = _f_sub
-                _fail_label = _live_stage_heading(_f_step, substep=_f_sub, phase="failed")
-                st.session_state.generation_error = {
-                    "message": str(e),
-                    "error_type": type(e).__name__,
-                    "engine_mode": st.session_state.get("chosen_engine_mode", ""),
-                    "partial_output": getattr(e, "partial_output", "") or "",
-                    "step": _f_step,
-                    "failed_substep": _f_sub,
-                }
-                status_box.update(label=_fail_label, state="error")
-                live_tracker_box.empty()
-                with live_tracker_box.container():
-                    st.markdown(f"### {_fail_label}")
-                    _render_live_tracker(_f_step)
-                    _render_partial_substep_summary()
-
-    if st.session_state.get("stepwise_active") and st.session_state.get("stepwise_run_requested"):
-        st.session_state.stepwise_run_requested = False
-        curr_step = st.session_state.get("stepwise_current_step", 1)
-        step_model = st.session_state.get("stepwise_step_model", st.session_state.chosen_engine_mode)
-        extra_inst = st.session_state.get("stepwise_extra_instruction", "")
-
-        step_titles = {
-            1: "Stage 1: Wire Fact Validation",
-            2: "Stage 2: Character Finalisation",
-            3: "Stage 3: Dialogue Writing & Calibration",
-            4: "Stage 4: Scene Finalisation",
-            5: "Stage 5: Storyboards & AI Video Prompts",
-            6: "Stage 6: Integration & Final Validation",
-        }
-
-        with st.status(f"Executing {step_titles.get(curr_step, f'Step {curr_step}')} with {ENGINE_NAMES_REV.get(step_model, step_model)}…", expanded=True) as s_box:
-            try:
-                if curr_step == 1:
-                    st_res = reel_workflow.run_step_1(
+        # Issue #195: the Generate button owns this run. The try/finally
+        # releases the button whether the pipeline finishes, fails, or is
+        # interrupted — otherwise it could stay disabled forever.
+        try:
+            with st.status("Generating…", expanded=True) as status_box:
+                progress_bar = st.progress(0)
+                status_text = st.empty()
+                try:
+                    pipeline = reel_workflow.run_stream(
                         news_input=st.session_state.run_topic,
                         scenario=st.session_state.run_scenario,
                         batch_size=st.session_state.chosen_batch_count,
                         target_seconds=st.session_state.chosen_duration,
-                        engine_mode=step_model,
+                        engine_mode=st.session_state.chosen_engine_mode,
                         max_retries=st.session_state.chosen_max_retries,
                         preferred_angle=get_effective_angle(),
                         character_count=st.session_state.chosen_character_count,
                         scene_style=st.session_state.chosen_scene_style,
                         preferred_tone=st.session_state.chosen_tone,
                         sample_story=st.session_state.get("run_sample_story", ""),
-                        extra_instruction=extra_inst,
                     )
-                elif curr_step == 2:
-                    st_res = reel_workflow.run_step_2(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 3:
-                    st_res = reel_workflow.run_step_3(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 4:
-                    st_res = reel_workflow.run_step_4(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 5:
-                    st_res = reel_workflow.run_step_5(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 6:
-                    st_res = reel_workflow.run_step_6(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                    st.session_state.batch_result = st_res["batch_result"]
+                    for step in pipeline:
+                        # Live substep events: update tracker + heading, keep pumping.
+                        if step.get("type") == "substep":
+                            _ev_stage = _apply_live_substep(step)
+                            _ev_label = _live_stage_heading(
+                                _ev_stage, substep=step.get("substep"),
+                                name=step.get("name", ""))
+                            status_text.markdown(f"**{_ev_label}**")
+                            status_box.update(label=_ev_label)
+                            live_tracker_box.empty()
+                            with live_tracker_box.container():
+                                st.markdown(f"### {_ev_label}")
+                                for _sn in range(1, _ev_stage + 1):
+                                    _render_live_tracker(_sn)
+                            continue
+                        step_num = step.get("step", 1)
+                        st.session_state._last_pipeline_step = step_num
+                        total_steps = step.get("total_steps", 6)
+                        progress_bar.progress(min(1.0, step_num / total_steps))
+                        if step.get("data") is None:
+                            # Stage started: live heading + fresh tracker.
+                            _label = _live_stage_heading(step_num)
+                            _init_live_stage(step_num)
+                            live_tracker_box.empty()
+                            with live_tracker_box.container():
+                                st.markdown(f"### {_label}")
+                                for _sn in range(1, step_num + 1):
+                                    _render_live_tracker(_sn)
+                        else:
+                            # Stage completed.
+                            _label = _live_stage_heading(step_num, phase="complete")
+                            _live_done = (st.session_state.get("_live_substeps") or {}).get(step_num)
+                            if _live_done is not None:
+                                _live_done["done"] = True
+                                _live_done["failed_at"] = None
+                                # Mark any still-running substep as passed (stage
+                                # returned without a fail event).
+                                for _sid, _ent in _live_done["steps"].items():
+                                    if _ent.get("status") == "running":
+                                        _ent["status"] = "pass"
+                                        _ent["detail"] = _ent.get("detail") or "Completed"
+                            live_tracker_box.empty()
+                            with live_tracker_box.container():
+                                st.markdown(f"### {_label}")
+                                for _sn in range(1, step_num + 1):
+                                    _render_live_tracker(_sn)
+                        status_text.markdown(f"**{_label}**")
+                        status_box.update(label=_label)
+                        # Keep every completed stage's input + output visible while later stages run.
+                        # Accumulate new data, then ALWAYS re-render (even on in-progress
+                        # yields with no data) so previous stages stay visible.
+                        _sdata = step.get("data")
+                        if _sdata:
+                            # Defensive copy: never alias the pipeline's mutable
+                            # state dict into session state.
+                            _sdata = dict(_sdata)
+                            _sdata["retry_count"] = step.get("retry_count", 0)
+                            st.session_state._stage_outputs[step_num] = _sdata
+                        if st.session_state._stage_outputs:
+                            stage_output_box.empty()
+                            # CRITICAL: .empty() does NOT unregister widget keys
+                            # within the same script run (verified on Streamlit
+                            # 1.64 — re-rendering the same keyed widgets in a
+                            # loop raises StreamlitDuplicateElementKey). Every
+                            # re-render of the live preview therefore gets a
+                            # unique key prefix. This loses nothing: the script
+                            # is blocked inside the pipeline generator while the
+                            # loop runs, so no widget interaction can occur
+                            # mid-run; after completion the final rerun renders
+                            # the separate "done_" preview.
+                            _live_seq = st.session_state.get("_live_preview_seq", 0) + 1
+                            st.session_state._live_preview_seq = _live_seq
+                            with stage_output_box.container():
+                                _render_cumulative_preview(
+                                    st.session_state._stage_outputs,
+                                    key_prefix=f"live_r{_live_seq}_")
+                        if step.get("completed"):
+                            st.session_state.batch_result = step["data"]["batch_result"]
+                            st.session_state.generation_error = None
+                            st.session_state.selected_script_idx = 0
+                            save_config("selected_script_index", 0)
+                            progress_bar.progress(1.0)
+                            status_box.update(label="Ready — all 6 stages complete", state="complete", expanded=False)
+                            # Collapse stage history on completion: final output goes to the top,
+                            # stage details move into a collapsed expander below.
+                            st.session_state._pipeline_just_completed = True
+                            st.rerun()
+                except Exception as e:
+                    st.session_state.batch_result = None
                     st.session_state.selected_script_idx = 0
-                    save_config("selected_script_index", 0)
-
-                st.session_state.stepwise_state = st_res
-                # Store retry count for the collapsible history display.
-                _rc = st_res.get("stage3_retry_count", 0) if curr_step == 3 else st_res.get("retry_count", 0)
-                st_res["stage_retry_count"] = _rc
-                # Deep-copy: execute_stage_N mutates the state dict in place, so
-                # without a copy every history entry would alias the latest
-                # state and earlier stages' outputs would appear "lost".
-                st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = copy.deepcopy(st_res)
-                st.session_state.stepwise_extra_instruction = ""
-                st.session_state.generation_error = None
-                s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
+                    _f_step = st.session_state.get("_last_pipeline_step", 1)
+                    # Failure heading with the exact failing substep, and mark it
+                    # failed in the live tracker so the partial summary is complete.
+                    _f_live = (st.session_state.get("_live_substeps") or {}).get(_f_step, {})
+                    _f_sub = _f_live.get("failed_at") or _f_live.get("current")
+                    _f_steps = _f_live.get("steps", {})
+                    if _f_sub and _f_sub in _f_steps and _f_steps[_f_sub].get("status") == "running":
+                        _f_steps[_f_sub]["status"] = "fail"
+                        _f_steps[_f_sub]["detail"] = str(e)[:200]
+                        _f_live["failed_at"] = _f_sub
+                    _fail_label = _live_stage_heading(_f_step, substep=_f_sub, phase="failed")
+                    st.session_state.generation_error = {
+                        "message": str(e),
+                        "error_type": type(e).__name__,
+                        "engine_mode": st.session_state.get("chosen_engine_mode", ""),
+                        "partial_output": getattr(e, "partial_output", "") or "",
+                        "step": _f_step,
+                        "failed_substep": _f_sub,
+                    }
+                    status_box.update(label=_fail_label, state="error")
+                    live_tracker_box.empty()
+                    with live_tracker_box.container():
+                        st.markdown(f"### {_fail_label}")
+                        _render_live_tracker(_f_step)
+                        _render_partial_substep_summary()
+                # Issue #195: the run is over — rerun so the Generate
+                # button re-enables at once and the failure renders via
+                # the generation_error block below.
                 st.rerun()
-            except Exception as e:
-                st.session_state.stepwise_run_requested = False
-                st.session_state.generation_error = {
-                    "message": str(e),
-                    "error_type": type(e).__name__,
-                    "engine_mode": step_model,
-                    "partial_output": getattr(e, "partial_output", "") or "",
-                    "step": curr_step,
-                    "attempt_history": getattr(e, "attempt_history", None) or [],
-                    "validation_steps": getattr(e, "validation_steps", None) or [],
-                }
-                s_box.update(label=f"Step {curr_step} Failed", state="error")
+        finally:
+            end_run(st.session_state)
+
+    # Issue #198 / HIG §3: live step progress renders in this slot at the top
+    # of the output column. The (blocking) step executes AFTER the action
+    # buttons below, so they render in their disabled in-flight state first —
+    # the initiating button owns its loading state; no second click mid-run.
+    step_status_slot = st.empty()
 
     step_names = STAGE_NAMES
 
@@ -3844,19 +4973,36 @@ with col_output:
                 c_retry, c_abort = st.columns([1, 1])
                 c_back = None
             with c_retry:
-                if st.button(f"🔄 Retry Step {err_step}", key="retry_stepwise_step", type="primary", use_container_width=True):
-                    st.session_state.generation_error = None
-                    st.session_state.stepwise_run_requested = True
-                    st.rerun()
+                # Issue #198 / HIG §3: Retry initiates a step run — it owns
+                # its loading state (running label shown visibly + disabled
+                # until the step result lands); a duplicate click is refused
+                # loudly.
+                # #199: icon-only control at rest — refresh metaphor +
+                # verb-first help tag.
+                _retry_inflight = inflight_action(st.session_state) == ACTION_RETRY
+                _retry_label = f"Retrying Step {err_step}…" if _retry_inflight else ""
+                _retry_icon = None if _retry_inflight else ":material/refresh:"
+                if st.button(_retry_label, icon=_retry_icon, key="retry_stepwise_step", type="primary", use_container_width=True,
+                             disabled=step_run_inflight(st.session_state),
+                             help=f"Retry step {err_step} with the same settings"):
+                    if not request_step_run(st.session_state, ACTION_RETRY):
+                        st.error("A step-wise run is already in flight — please wait for it to finish.")
+                    else:
+                        st.session_state.generation_error = None
+                        st.rerun()
             if c_back is not None:
                 with c_back:
-                    if st.button(f"⬅️ Back to Step {err_step - 1}", key="back_stepwise_step", use_container_width=True):
+                    # #199: icon-only control — back-arrow metaphor + verb-first help tag.
+                    if st.button("", icon=":material/arrow_back:", key="back_stepwise_step", use_container_width=True,
+                                 help=f"Go back to step {err_step - 1} and continue from there"):
                         st.session_state.generation_error = None
                         st.session_state.stepwise_run_requested = False
                         st.session_state.stepwise_current_step = err_step - 1
                         st.rerun()
             with c_abort:
-                if st.button("❌ Exit Step-Wise", key="cancel_stepwise_err", use_container_width=True):
+                # #199: icon-only control — close metaphor + verb-first help tag.
+                if st.button("", icon=":material/close:", key="cancel_stepwise_err", use_container_width=True,
+                             help="Exit step-wise generation mode"):
                     st.session_state.generation_error = None
                     st.session_state.stepwise_active = False
                     st.rerun()
@@ -3868,10 +5014,14 @@ with col_output:
             if _stage_outs:
                 _render_cumulative_preview(_stage_outs, key_prefix="failhist_")
             st.caption("No script was generated. Resolve the model issue and try again.")
-            if st.button("Try again", key="retry_failed_generation", use_container_width=True):
+            if st.button("Try again", key="retry_failed_generation", use_container_width=True,
+                         help="Retry the failed generation"):
                 st.session_state.generation_error = None
                 st.session_state.batch_result = None
-                st.session_state.run_requested = True
+                # Issue #195: claim the single-flight slot so the Generate
+                # button renders disabled for the whole retry run. Raises
+                # loudly if a run is somehow already in flight.
+                begin_run(st.session_state)
                 st.rerun()
 
     def _stepwise_go_back(target_step: int):
@@ -3943,7 +5093,7 @@ with col_output:
                 has_extra = st.checkbox(
                     "Provide extra instruction for current or next step",
                     key=f"extra_tick_{curr_step}",
-                    help="Tick this box to provide custom instruction or steering prompts for the current step (re-run) or next step."
+                    help="Enable an extra instruction box for this or the next step."
                 )
                 extra_text = ""
                 apply_target = "next"
@@ -3964,10 +5114,18 @@ with col_output:
                         height=75,
                     )
 
+                # Issue #198 / HIG §3: every step-wise action button is disabled
+                # while a step run is in flight — the initiating button shows
+                # a running label and owns its loading state until the step
+                # result lands. No second click, ever.
+                _sw_inflight = step_run_inflight(st.session_state)
+                _sw_action = inflight_action(st.session_state)
+
                 if curr_step > 1:
                     c_back, c_proceed, c_rerun = st.columns([1, 1.3, 1])
                     with c_back:
-                        if st.button(f"⬅️ Back to Step {curr_step - 1}", use_container_width=True, key=f"back_btn_{curr_step}"):
+                        if st.button(f"⬅️ Back to Step {curr_step - 1}", use_container_width=True, key=f"back_btn_{curr_step}",
+                                     disabled=_sw_inflight, help="Go back to the previous step"):
                             _stepwise_go_back(curr_step - 1)
                             st.rerun()
                 else:
@@ -3975,24 +5133,142 @@ with col_output:
                 with c_proceed:
                     if curr_step < 5:
                         proceed_label = f"Proceed to Step {curr_step + 1} ➡️"
+                        proceed_running_label = f"Proceeding to Step {curr_step + 1}…"
                     else:
                         proceed_label = "Integrate & Validate (Step 6) 🏁"
+                        proceed_running_label = "Integrating & validating…"
+                    if _sw_action == ACTION_PROCEED:
+                        proceed_label = proceed_running_label
 
-                    if st.button(proceed_label, type="primary", use_container_width=True, key=f"proceed_btn_{curr_step}"):
-                        st.session_state.stepwise_step_model = chosen_step_engine
-                        # If user typed feedback for next step, pass it
-                        st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and apply_target == "next" and extra_text.strip()) else ""
-                        st.session_state.stepwise_current_step = curr_step + 1
-                        st.session_state.stepwise_run_requested = True
-                        st.rerun()
+                    if st.button(proceed_label, type="primary", use_container_width=True, key=f"proceed_btn_{curr_step}",
+                                 disabled=_sw_inflight, help="Run the next step-wise stage"):
+                        if not request_step_run(st.session_state, ACTION_PROCEED):
+                            # Unreachable while the button is disabled; fail
+                            # loudly rather than queue a duplicate step run.
+                            st.error("A step-wise run is already in flight — please wait for it to finish.")
+                        else:
+                            st.session_state.stepwise_step_model = chosen_step_engine
+                            # If user typed feedback for next step, pass it
+                            st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and apply_target == "next" and extra_text.strip()) else ""
+                            st.session_state.stepwise_current_step = curr_step + 1
+                            st.rerun()
 
                 with c_rerun:
-                    if st.button(f"🔄 Re-run Step {curr_step}", use_container_width=True, key=f"rerun_step_btn_{curr_step}"):
-                        st.session_state.stepwise_step_model = chosen_step_engine
-                        # When user clicks Re-run Step with extra instruction, always feed it as correction feedback
-                        st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and extra_text.strip()) else ""
-                        st.session_state.stepwise_run_requested = True
-                        st.rerun()
+                    # Issue #198 / HIG §3: Re-run owns its loading state too.
+                    _rerun_running = _sw_action == ACTION_RERUN
+                    _rerun_label = f"Re-running Step {curr_step}…" if _rerun_running else f"🔄 Re-run Step {curr_step}"
+                    if st.button(_rerun_label, use_container_width=True, key=f"rerun_step_btn_{curr_step}",
+                                 disabled=_sw_inflight, help="Re-run the current step"):
+                        if not request_step_run(st.session_state, ACTION_RERUN):
+                            st.error("A step-wise run is already in flight — please wait for it to finish.")
+                        else:
+                            st.session_state.stepwise_step_model = chosen_step_engine
+                            # When user clicks Re-run Step with extra instruction, always feed it as correction feedback
+                            st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and extra_text.strip()) else ""
+                            st.rerun()
+
+    # Issue #198: the step-wise run executes AFTER the action buttons above
+    # have rendered. While a run is in flight those buttons render disabled
+    # (the initiating one with a running label), so the live progress in the
+    # slot above is owned by the initiating control — no second click mid-run.
+    if st.session_state.get("stepwise_active") and st.session_state.get("stepwise_run_requested"):
+        st.session_state.stepwise_run_requested = False
+        curr_step = st.session_state.get("stepwise_current_step", 1)
+        step_model = st.session_state.get("stepwise_step_model", st.session_state.chosen_engine_mode)
+        extra_inst = st.session_state.get("stepwise_extra_instruction", "")
+
+        step_titles = {
+            1: "Stage 1: Wire Fact Validation",
+            2: "Stage 2: Character Finalisation",
+            3: "Stage 3: Dialogue Writing & Calibration",
+            4: "Stage 4: Scene Finalisation",
+            5: "Stage 5: Storyboards & AI Video Prompts",
+            6: "Stage 6: Integration & Final Validation",
+        }
+
+        with step_status_slot.status(f"Executing {step_titles.get(curr_step, f'Step {curr_step}')} with {ENGINE_NAMES_REV.get(step_model, step_model)}…", expanded=True) as s_box:
+            try:
+                if curr_step == 1:
+                    st_res = reel_workflow.run_step_1(
+                        news_input=st.session_state.run_topic,
+                        scenario=st.session_state.run_scenario,
+                        batch_size=st.session_state.chosen_batch_count,
+                        target_seconds=st.session_state.chosen_duration,
+                        engine_mode=step_model,
+                        max_retries=st.session_state.chosen_max_retries,
+                        preferred_angle=get_effective_angle(),
+                        character_count=st.session_state.chosen_character_count,
+                        scene_style=st.session_state.chosen_scene_style,
+                        preferred_tone=st.session_state.chosen_tone,
+                        sample_story=st.session_state.get("run_sample_story", ""),
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 2:
+                    st_res = reel_workflow.run_step_2(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 3:
+                    st_res = reel_workflow.run_step_3(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 4:
+                    st_res = reel_workflow.run_step_4(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 5:
+                    st_res = reel_workflow.run_step_5(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 6:
+                    st_res = reel_workflow.run_step_6(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                    st.session_state.batch_result = st_res["batch_result"]
+                    st.session_state.selected_script_idx = 0
+                    save_config("selected_script_index", 0)
+
+                st.session_state.stepwise_state = st_res
+                # Store retry count for the collapsible history display.
+                _rc = st_res.get("stage3_retry_count", 0) if curr_step == 3 else st_res.get("retry_count", 0)
+                st_res["stage_retry_count"] = _rc
+                # Deep-copy: execute_stage_N mutates the state dict in place, so
+                # without a copy every history entry would alias the latest
+                # state and earlier stages' outputs would appear "lost".
+                st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = copy.deepcopy(st_res)
+                st.session_state.stepwise_extra_instruction = ""
+                st.session_state.generation_error = None
+                s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
+            except Exception as e:
+                st.session_state.generation_error = {
+                    "message": str(e),
+                    "error_type": type(e).__name__,
+                    "engine_mode": step_model,
+                    "partial_output": getattr(e, "partial_output", "") or "",
+                    "step": curr_step,
+                    "attempt_history": getattr(e, "attempt_history", None) or [],
+                    "validation_steps": getattr(e, "validation_steps", None) or [],
+                }
+                s_box.update(label=f"Step {curr_step} Failed", state="error")
+            finally:
+                # Issue #198 / HIG §3: release the in-flight marker the moment
+                # the step result lands — success or loud failure — so the
+                # action buttons re-enable exactly then. Idempotent; a failed
+                # step can never leave the buttons permanently disabled.
+                complete_step_run(st.session_state)
+            # Success: show the fresh step output. Failure: the error view
+            # renders above this block, so rerun to display it (the failure is
+            # recorded in generation_error — fail loudly, never swallowed).
+            st.rerun()
 
     if st.session_state.get("batch_result"):
         res = st.session_state.batch_result
@@ -4002,7 +5278,8 @@ with col_output:
             b_cols = st.columns(5)
             for _bi in range(5):
                 with b_cols[_bi]:
-                    if st.button(f"⬅️ Step {_bi + 1}", key=f"back_done_{_bi + 1}", use_container_width=True):
+                    if st.button(f"⬅️ Step {_bi + 1}", key=f"back_done_{_bi + 1}", use_container_width=True,
+                                 help="Return to this step and re-run the later stages"):
                         _stepwise_go_back(_bi + 1)
                         st.rerun()
             with st.expander("🪜 Review Step-by-Step Outputs (Steps 1 to 6)"):
@@ -4041,8 +5318,12 @@ with col_output:
 
         if not getattr(res, "compliance_passed", True) and getattr(res, "retry_prompt_recommendation", None):
             st.warning(res.retry_prompt_recommendation)
-            if st.button("🔄 Retry Generation with Recommended Settings", key="retry_compliance_btn", type="primary", use_container_width=True):
-                st.session_state.run_requested = True
+            # #199: icon-only control — refresh metaphor + verb-first help tag.
+            if st.button("", icon=":material/refresh:", key="retry_compliance_btn", type="primary", use_container_width=True,
+                         help="Retry generation with the recommended settings"):
+                # Issue #195: claim the single-flight slot so the Generate
+                # button renders disabled for the whole retry run.
+                begin_run(st.session_state)
         # Validation & Retry Details on final output stage
         _tot_retries = getattr(res, "total_retries", 0)
         _aud_rep = getattr(res, "audit_report", None)
@@ -4070,12 +5351,10 @@ with col_output:
         _v_warns = [i for i in _v_issues if isinstance(i, dict) and i.get("severity") != "error"]
         if _v_errors:
             with st.container():
-                st.markdown(
-                    "<div class='banner-error'>"
-                    f"<b>❌ Errors ({len(_v_errors)})</b> — detected at Stage 6 (Integration & Validation), "
+                # #199: native alert with Material icon — no emoji in UI chrome.
+                st.error(
+                    f":material/error: **Errors ({len(_v_errors)})** — detected at Stage 6 (Integration & Validation), "
                     "but each issue below names the stage whose output needs fixing."
-                    "</div>",
-                    unsafe_allow_html=True,
                 )
                 for _iss in _v_errors:
                     _iss_stage = _iss.get("stage", "Unknown stage")
@@ -4089,11 +5368,9 @@ with col_output:
                         st.caption(f"Fix: {_iss_fix}")
         if _v_warns:
             with st.container():
-                st.markdown(
-                    "<div class='banner-warning'>"
-                    f"<b>⚠️ Warnings ({len(_v_warns)})</b> — advisory only, the reel is not blocked."
-                    "</div>",
-                    unsafe_allow_html=True,
+                # #199: native alert with Material icon — no emoji in UI chrome.
+                st.warning(
+                    f":material/warning: **Warnings ({len(_v_warns)})** — advisory only, the reel is not blocked."
                 )
                 for _iss in _v_warns:
                     _iss_stage = _iss.get("stage", "Unknown stage")
@@ -4125,7 +5402,7 @@ with col_output:
         st.caption("Your chosen format — 9:16 vertical reel · SCENE DETAIL · CHARACTERS & CLOTHING · sequential beats.")
         col_c1, col_c2 = st.columns([1, 1])
         with col_c1:
-            include_overlays = st.checkbox("Include Text Overlay (Optional)", value=st.session_state.get("include_overlays", True), key="inc_overlays_chk", help="Toggle whether Text Overlay (Optional) lines appear in the screenplay based on user preference.")
+            include_overlays = st.checkbox("Include Text Overlay (Optional)", value=st.session_state.get("include_overlays", True), key="inc_overlays_chk", help="Show text-overlay lines in the screenplay.")
         with col_c2:
             include_sfx = st.checkbox("Include Audio/SFX", value=st.session_state.get("include_sfx", True), key="inc_sfx_chk", help="Toggle whether Audio/SFX cues appear in the screenplay.")
 
@@ -4169,11 +5446,11 @@ with col_output:
 
         d1, d2, d3 = st.columns(3)
         with d1:
-            st.download_button("Screenplay (.md)", data=pro_screenplay, file_name=f"screenplay_{curr_script.target_duration_sec}s.md", mime="text/markdown", use_container_width=True)
+            st.download_button("Screenplay (.md)", data=pro_screenplay, file_name=f"screenplay_{curr_script.target_duration_sec}s.md", mime="text/markdown", use_container_width=True, help="Download the script as a Markdown screenplay")
         with d2:
-            st.download_button("Teleprompter (.txt)", data=teleprompter_text, file_name=f"teleprompter_{curr_script.target_duration_sec}s.txt", mime="text/plain", use_container_width=True)
+            st.download_button("Teleprompter (.txt)", data=teleprompter_text, file_name=f"teleprompter_{curr_script.target_duration_sec}s.txt", mime="text/plain", use_container_width=True, help="Download the teleprompter text file")
         with d3:
-            st.download_button("Full JSON", data=res.model_dump_json(indent=2), file_name=f"reel_{curr_script.target_duration_sec}s.json", mime="application/json", use_container_width=True)
+            st.download_button("Full JSON", data=res.model_dump_json(indent=2), file_name=f"reel_{curr_script.target_duration_sec}s.json", mime="application/json", use_container_width=True, help="Download the full generation result as JSON")
 
         with st.expander("Analysis"):
             st.caption(f"{res.verification.confidence_score}% · {res.verification.verification_summary}")

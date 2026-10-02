@@ -104,6 +104,27 @@ class _FakeSt(types.ModuleType):
     def text_input(self, *args, **kwargs):
         return ""
 
+    def expander(self, label, expanded=False, **kwargs):
+        # #159: the share popover's Telegram setup expander; recorded
+        # like the other containers.
+        self.events.append(("expander", label, expanded))
+        return _Ctx(self, "expander", (label,), kwargs)
+
+    def spinner(self, text=None, **kwargs):
+        # #159: share-progress spinner; a no-op context in tests.
+        return _Ctx(self, "spinner", (text,), kwargs)
+
+    def divider(self, **kwargs):
+        # #78: menu section separator inside the Share popover.
+        self.events.append(("divider", kwargs))
+
+    def selectbox(self, label, options, index=0, key=None, **kwargs):
+        # Toolbar AI engine dropdown: record + return Streamlit's default
+        # (the option at `index`).
+        self.events.append(("selectbox", label, list(options), key))
+        opts = list(options)
+        return opts[index] if opts else None
+
 
 @pytest.fixture()
 def libdir(tmp_path, monkeypatch):
@@ -185,7 +206,7 @@ def test_113_news_load_more_is_last_column(libdir, lui_st):
     labels = ["Alpha", "Beta"]
     expected = ([lui._section_title_weight("News Links")]
                 + lui._chip_col_weights(labels)
-                + [lui._load_more_weight("Load more news")])
+                + [lui._load_more_weight()])
     col_specs = [e[1] for e in fake.events if e[0] == "columns"]
     assert expected in col_specs
 
@@ -193,8 +214,12 @@ def test_113_news_load_more_is_last_column(libdir, lui_st):
                if e[0] == "markdown" and 'data-marker="lib-load-more"' in e[1]]
     assert len(markers) >= 1
 
-    buttons = [(e[1], e[2]) for e in fake.events if e[0] == "button"]
-    assert any(label == "Load more news" for label, _key in buttons)
+    # #202: the news load-more is icon-only — empty text label, material
+    # add icon, help tag as the accessibility label.
+    buttons = [e for e in fake.events if e[0] == "button"]
+    assert any(e[1] == "" and e[3].get("icon") == lui._TB_ICON_ADD
+               and e[3].get("help") for e in buttons), (
+        f"news load-more must be icon-only with a help tag; saw {buttons}")
 
 
 def test_113_images_load_more_is_last_column(libdir, lui_st):
@@ -202,18 +227,21 @@ def test_113_images_load_more_is_last_column(libdir, lui_st):
     sid = _make_story()
     lui._render_story_detail(sid)
 
-    expected = [1] + [lui._load_more_weight("Load more images")]
+    expected = [1] + [lui._load_more_weight()]
     col_specs = [e[1] for e in fake.events if e[0] == "columns"]
     assert expected in col_specs, f"images load-more must be inline; saw {col_specs}"
 
-    buttons = [(e[1], e[2]) for e in fake.events if e[0] == "button"]
-    assert any(label == "Load more images" for label, _key in buttons)
+    # #202: icon-only — empty text label, material add icon, help tag.
+    buttons = [e for e in fake.events if e[0] == "button"]
+    assert any(e[1] == "" and e[3].get("icon") == lui._TB_ICON_ADD
+               and e[3].get("help") for e in buttons), (
+        f"images load-more must be icon-only with a help tag; saw {buttons}")
 
 
 def test_113_load_more_weight_is_pure(lui_st):
+    # #202: icon-only button — fixed compact fallback weight, no label.
     lui, _ = lui_st()
-    assert lui._load_more_weight("Load more news") == len("Load more news") + 2
-    assert lui._load_more_weight("") == 6
+    assert lui._load_more_weight() == 6
 
 
 # ---------------------------------------------------------------------------

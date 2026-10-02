@@ -29,7 +29,11 @@ def test_decompose_master_instruction():
         budget=budget,
     )
 
-    # 1. Must contain all 7 specialized agents
+    # 1. Must contain the specialized agents.
+    # NB: video_quality_gate was deliberately REMOVED (2026-09-24 dead-AI-gate
+    # removal — see test_stage5_gate_removal.py); it must NOT have a
+    # sub-instruction. The decomposition now also covers contextual_selector
+    # and hooks.
     expected_agents = [
         "news_validator",
         "hook_strategist",
@@ -37,11 +41,12 @@ def test_decompose_master_instruction():
         "timing_auditor",
         "scene_director",
         "video_prompt_engineer",
-        "video_quality_gate",
     ]
     for agent_key in expected_agents:
         assert agent_key in sub_instructions, f"Missing sub-instruction for {agent_key}"
         assert len(sub_instructions[agent_key]) > 20, f"Sub-instruction for {agent_key} is too short"
+    assert "video_quality_gate" not in sub_instructions, \
+        "video_quality_gate was removed — it must not get a sub-instruction"
 
     # 2. Dialogue writer sub-instruction MUST specify exact dialogue word count limits
     dw_sub = sub_instructions["dialogue_writer"]

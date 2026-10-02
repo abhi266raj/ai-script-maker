@@ -118,14 +118,16 @@ class TestDeadGateNeverCalled:
         ed.execute_stage_5(
             _base_state(_make_verif()), engine_mode="test",
             on_substep=events.append)
-        subs_52 = [e for e in events if e.get("substep") == "5.2"]
-        assert len(subs_52) >= 2, "5.2 must emit start + complete events"
+        # NB: the deterministic check now lives at substep 5.2.1 (the check);
+        # 5.2 is the gate wrapper. The validator label belongs on the check.
+        subs_521 = [e for e in events if e.get("substep") == "5.2.1"]
+        assert len(subs_521) >= 2, "5.2.1 must emit start + complete events"
         assert any(e.get("phase") == "start"
                    and e.get("name") == "Realism & coherence check"
-                   and e.get("validator") == "code validator" for e in subs_52)
+                   and e.get("validator") == "code validator" for e in subs_521)
         assert any(e.get("phase") == "complete"
                    and e.get("status") == "pass"
-                   and e.get("validator") == "code validator" for e in subs_52)
+                   and e.get("validator") == "code validator" for e in subs_521)
         assert not any("Quality gate" in str(e.get("name", "")) for e in events), (
             "no advisory quality-gate events may remain")
 
@@ -152,8 +154,10 @@ class TestStage5FailLoud:
             raised = True
             assert "Stage 5 failed" in str(exc)
         assert raised, "persistent failure must raise, never ship silently"
-        fail_evts = [e for e in events if e.get("substep") == "5.2"
+        # NB: the fail event with the validator label is the 5.2.1 check;
+        # 5.2 is the gate wrapper.
+        fail_evts = [e for e in events if e.get("substep") == "5.2.1"
                      and e.get("phase") == "complete"
                      and e.get("status") == "fail"]
-        assert len(fail_evts) == 1, "5.2 fail event must be emitted before raising"
+        assert len(fail_evts) == 1, "5.2.1 fail event must be emitted before raising"
         assert fail_evts[0].get("validator") == "code validator"

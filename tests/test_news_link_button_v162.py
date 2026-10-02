@@ -142,8 +142,10 @@ def test_link_button_chip_pill_css():
 
 def test_x_overlay_selectors_cover_link_button_columns():
     clean = _css_source()
-    assert ':has(.lib-chip, [data-testid="stLinkButton"])' in clean, \
-        "the chip × positioning must apply to news-link-button columns too"
+    assert (':has(.lib-chip, [data-testid="stLinkButton"], '
+            '[data-marker="lib-link-invalid"])') in clean, \
+        "the chip × positioning must apply to news-link-button columns " \
+        "(#205: and to invalid-URL marker columns) too"
 
 
 def test_no_global_svg_fill_stroke_forcing():

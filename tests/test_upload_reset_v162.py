@@ -54,6 +54,10 @@ class _FakeSt(types.ModuleType):
     def success(self, msg):
         self.events.append(("success", msg))
 
+    def toast(self, msg, icon=None):
+        # #88: transient status funnels through _notify -> st.toast.
+        self.events.append(("toast", msg, icon))
+
     def error(self, msg):
         self.events.append(("error", msg))
 
@@ -116,8 +120,8 @@ def test_video_upload_stored_once_across_runs(lui, libdir):
     assert _run_popover(lui_mod, fake, sid) is False
     st = lib.load_story(sid)
     assert st["meta"]["video_file"] == sid + ".mp4"
-    assert ("success", f"Video attached: {sid}.mp4") in fake.events
-    assert sum(e[0] == "success" for e in fake.events) == 1
+    assert ("toast", f"Video attached: {sid}.mp4", ":material/check_circle:") in fake.events
+    assert sum(e[0] == "toast" for e in fake.events) == 1
 
 
 def test_image_upload_stored_once_across_runs(lui, libdir):
@@ -130,7 +134,7 @@ def test_image_upload_stored_once_across_runs(lui, libdir):
     assert _run_popover(lui_mod, fake, sid) is False
     st = lib.load_story(sid)
     assert st["meta"]["uploaded_images"] == [sid + "_img1.png", sid + "_img2.jpg"]
-    assert sum(e[0] == "success" for e in fake.events) == 1
+    assert sum(e[0] == "toast" for e in fake.events) == 1
 
 
 def test_video_upload_error_is_loud_and_not_retried(lui, libdir, monkeypatch):

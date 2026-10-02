@@ -85,6 +85,13 @@ class _FakeSt(types.ModuleType):
     def button(self, *args, **kwargs):
         return False
 
+    def selectbox(self, label, options, index=0, key=None, **kwargs):
+        # Toolbar AI engine dropdown: record + return Streamlit's default
+        # (the option at `index`).
+        self.events.append(("selectbox", label, list(options), key))
+        opts = list(options)
+        return opts[index] if opts else None
+
     def video(self, *args, **kwargs):
         self.events.append(("video",))
 
@@ -214,7 +221,7 @@ def test_news_links_title_and_chips_share_one_row(libdir, lui_st):
     # #113: the Load more button rides as the last column of the row.
     expected = ([lui._section_title_weight("News Links")]
                 + lui._chip_col_weights(labels)
-                + [lui._load_more_weight("Load more news")])
+                + [lui._load_more_weight()])
     col_specs = [e[1] for e in fake.events if e[0] == "columns"]
     assert expected in col_specs, (
         f"News Links title+chips+load-more must be one st.columns row; saw {col_specs}")
@@ -260,21 +267,27 @@ def test_no_upload_expander(libdir, lui_st):
     lui._render_story_detail(sid)
 
     expanders = [e for e in fake.events if e[0] == "expander"]
-    assert not expanders, f"upload expander must be gone (#94); saw {expanders}"
+    # #94's intent is the *upload* expander; the Telegram share popover
+    # legitimately adds its own unrelated setup expander (#159).
+    upload_expand = [e for e in expanders if "upload" in e[1].lower()]
+    assert not upload_expand, \
+        f"upload expander must be gone (#94); saw {upload_expand}"
 
 
-def test_upload_row_title_left_button_right(libdir, lui_st):
+def test_upload_trigger_in_toolbar_no_standalone_row(libdir, lui_st):
+    """The standalone one-line Upload row is gone — no inline 'Upload'
+    title. The icon-only upload popover trigger lives in the detail
+    toolbar beside Share/Copy."""
     lui, fake = lui_st()
     sid = _make_story()
     lui._render_story_detail(sid)
 
-    # One-line row: "Upload" inline title + a popover upload button.
     inline = [e[1] for e in fake.events
               if e[0] == "markdown" and "lib-section-inline" in e[1] and ">Upload<" in e[1]]
-    assert len(inline) == 1, "exactly one inline 'Upload' title"
+    assert len(inline) == 0, "standalone 'Upload' title must be gone"
 
     # #114: the popover trigger is icon-only (native material upload
-    # glyph, no "⬆" text/emoji).
+    # glyph, no text/emoji).
     popovers = [e for e in fake.events if e[0] == "popover"]
     assert any(e[2].get("icon") == lui._TB_ICON_UPLOAD for e in popovers), (
         f"upload popover must use the material upload icon; saw {popovers}")
