@@ -4,6 +4,8 @@ The LLM is always mocked (``generate_fn``); no network, no model.
 """
 import importlib.util
 import json
+import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -147,6 +149,14 @@ def test_record_replaces_script_and_appends_history(libdir):
     assert len(history) == 1
     assert history[0]["instruction"] == "make it funnier"
     assert "ज़्यादा मज़ेदार" in history[0]["script"]
+    # #191: the refined script lands as a NEW version — latest on top and
+    # the default — so the versions list displays it immediately instead
+    # of hiding it in a collapsed expander.
+    versions, default_n = lib.get_script_versions(sid)
+    assert [v["n"] for v in versions] == [2, 1]
+    assert default_n == 2
+    assert "ज़्यादा मज़ेदार" in versions[0]["text"]
+    assert "नमस्ते" in versions[1]["text"]  # pre-turn text recoverable
 
 
 def test_history_round_trips_tricky_content(libdir):
@@ -206,3 +216,137 @@ def test_get_history_skips_corrupt_entries(libdir):
         ]})
     history = lib.get_fine_tune_history(sid)
     assert history == [{"instruction": "good turn", "script": "good script"}]
+
+
+# ---------------------------------------------------------------------------
+# UI flow (#191): the two-phase HIG run must surface the refined script
+# ---------------------------------------------------------------------------
+
+class _Rerun(Exception):
+    """Stands in for Streamlit's rerun — restarts the render function."""
+
+
+class _FakeSt:
+    """Minimal fake streamlit with faithful rerun/session-state semantics:
+    widget values persist in session_state under their key (disabled or
+    not); button() returns True once per click(); rerun() restarts."""
+
+    def __init__(self):
+        self.session_state = {}
+        self.errors = []
+        self._clicks = {}
+
+    def click(self, key):
+        self._clicks[key] = self._clicks.get(key, 0) + 1
+
+    def markdown(self, *a, **k):
+        pass
+
+    def caption(self, *a, **k):
+        pass
+
+    def error(self, msg):
+        self.errors.append(msg)
+
+    @contextmanager
+    def expander(self, *a, **k):
+        yield
+
+    @contextmanager
+    def spinner(self, *a, **k):
+        yield
+
+    def text_input(self, label, placeholder="", key=None,
+                   label_visibility="visible", disabled=False):
+        return self.session_state.get(key, "")
+
+    def button(self, label, icon=None, key=None, type=None,
+               disabled=False, help=None):
+        if disabled:
+            return False
+        if self._clicks.get(key, 0) > 0:
+            self._clicks[key] -= 1
+            return True
+        return False
+
+    def rerun(self):
+        raise _Rerun()
+
+
+def _ui_with_fake_st(st):
+    """Import library_ui bound to the fake streamlit; restores sys.modules.
+
+    library_ui does ``import tools.fine_tune`` at module top, and importing
+    the ``tools`` package pulls in news_fetcher (feedparser, not installed
+    here) — so the ``tools`` package is stubbed with fine_tune.py loaded
+    directly by path (same trick as _load_fine_tune above)."""
+    import types as _types
+    saved = dict(sys.modules)
+    try:
+        fake_mod = _types.ModuleType("streamlit")
+        for _name in ("markdown", "caption", "error", "expander", "spinner",
+                      "text_input", "button", "rerun"):
+            setattr(fake_mod, _name, getattr(st, _name))
+        fake_mod.session_state = st.session_state
+        sys.modules["streamlit"] = fake_mod
+        tools_pkg = _types.ModuleType("tools")
+        tools_pkg.__path__ = [str(Path(__file__).resolve().parent.parent
+                                  / "tools")]
+        tools_pkg.fine_tune = sys.modules.get("fine_tune_mod")
+        sys.modules["tools"] = tools_pkg
+        sys.modules.pop("library_ui", None)
+        import library_ui
+        return library_ui
+    finally:
+        sys.modules.clear()
+        sys.modules.update(saved)
+
+
+def test_ui_flow_surfaces_refined_script_when_latest_is_not_default(libdir):
+    """#191: with v1 (default) + v2 (latest, not default), a completed
+    fine-tune run must leave the refined script as the latest version —
+    which is what the versions list expands — not hidden in a collapsed
+    default expander showing old text."""
+    sid = _make_story()
+    lib.create_script_version(sid)  # v2: latest, NOT the default
+    lib.update_script_version_text(sid, 2, "BEAT 9:\nVIKRAM: \"v2 text\"")
+
+    st = _FakeSt()
+    ui = _ui_with_fake_st(st)
+    btn_key = f"lib_ft_apply_{sid}"
+    input_key = f"lib_ft_input_{sid}"
+
+    def fake_llm(current_script, instruction, story_context="",
+                 history=(), tone="", generate_fn=None):
+        assert current_script.strip() == "BEAT 1:\nVIKRAM: \"नमस्ते\""
+        assert instruction == "make it funnier"
+        return "BEAT 1:\nVIKRAM: \"REFINED\""
+
+    # Phase 1: user typed the instruction and clicked the button.
+    st.session_state[input_key] = "make it funnier"
+    st.click(btn_key)
+    story = lib.load_story(sid)
+    with pytest.raises(_Rerun):
+        ui._render_fine_tune_section(sid, story["meta"],
+                                     story["script"].strip(), False)
+    assert st.session_state.get(f"lib_ft_running_{sid}") is True
+
+    # Phase 2: the rerun performs the refinement (button not clicked).
+    _orig_llm = ui.fine_tune.fine_tune_script
+    ui.fine_tune.fine_tune_script = fake_llm
+    try:
+        story2 = lib.load_story(sid)
+        with pytest.raises(_Rerun):
+            ui._render_fine_tune_section(sid, story2["meta"],
+                                         story2["script"].strip(), False)
+    finally:
+        ui.fine_tune.fine_tune_script = _orig_llm
+    assert st.errors == []
+
+    # The refined script is the latest version AND the default — the
+    # versions list expands the latest, so the user sees it immediately.
+    versions, default_n = lib.get_script_versions(sid)
+    assert [v["n"] for v in versions] == [3, 2, 1]
+    assert default_n == 3
+    assert versions[0]["text"] == "BEAT 1:\nVIKRAM: \"REFINED\""
+    assert lib.load_story(sid)["script"] == "BEAT 1:\nVIKRAM: \"REFINED\""
