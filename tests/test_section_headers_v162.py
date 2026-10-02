@@ -214,7 +214,7 @@ def test_news_links_title_and_chips_share_one_row(libdir, lui_st):
     # #113: the Load more button rides as the last column of the row.
     expected = ([lui._section_title_weight("News Links")]
                 + lui._chip_col_weights(labels)
-                + [lui._load_more_weight("Load more news")])
+                + [lui._load_more_weight()])
     col_specs = [e[1] for e in fake.events if e[0] == "columns"]
     assert expected in col_specs, (
         f"News Links title+chips+load-more must be one st.columns row; saw {col_specs}")

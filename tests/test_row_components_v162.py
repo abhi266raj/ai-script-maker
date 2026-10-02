@@ -113,7 +113,7 @@ def test_images_row_renders_single_row(libdir):
         f"images must render exactly one columns() row; "
         f"saw {len(fake.column_specs)}")
     spec = fake.column_specs[0]
-    expected = [1, 1, lui._load_more_weight("Load more images")]
+    expected = [1, 1, lui._load_more_weight()]
     assert spec == expected, (
         f"row spec must be [1, 1, load-more]; saw {spec}, expected {expected}")
 
@@ -123,8 +123,8 @@ def test_images_row_has_load_more_and_remove_overlays(libdir):
     lui._render_images_row("teststory1", ["https://img.example/a.jpg"], ["up1.png"],
                            set())
 
-    assert ("Load more images", "lib_moreimg_teststory1") in fake.buttons, (
-        f"'Load more images' button must render; saw {fake.buttons}")
+    assert ("", "lib_moreimg_teststory1") in fake.buttons, (
+        f"icon-only load-more button must render; saw {fake.buttons}")
     x_buttons = [b for b in fake.buttons if b[0] == "×"]
     assert [b[1] for b in x_buttons] == [
         "lib_ximg_teststory1_0", "lib_xup_teststory1_1"], (
