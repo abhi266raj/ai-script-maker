@@ -168,3 +168,92 @@ def test_canonical_hash_ignores_batch_position_and_title(ui):
     _view(fake, batch1, _Script(1, "same dialogue"), 0, "text a")
     _view(fake, batch2, _Script(2, "same dialogue"), 1, "text b")
     assert len(saved) == 1
+
+
+# ---------------------------------------------------------------------------
+# dedup_id: hash(script identity + title), verified while saving
+# ---------------------------------------------------------------------------
+
+def test_dedup_id_recorded_and_skips_resave(ui):
+    """First save records the dedup id; a new run with the same script
+    and title skips via the dedup id even if the formatted text differs."""
+    fake, saved, _ = ui
+    fake.session_state["run_topic"] = "Same Topic"
+    batch1, batch2 = _Batch(), _Batch()
+    s1 = _Script(1, "same dialogue")
+    s2 = _Script(1, "same dialogue")
+
+    _view(fake, batch1, s1, 0, "formatted one")
+    assert len(saved) == 1
+    did = lui._story_dedup_id(s1, lui._build_autosave_title(s1))
+    assert did in lui._autosaved_content_hashes()
+
+    _view(fake, batch2, s2, 0, "formatted two — toggles flipped")
+    assert len(saved) == 1
+
+
+def test_dedup_id_differs_with_title():
+    """Same script, different version titles -> different dedup ids
+    (v1 vs v2 of one batch stay distinct)."""
+    s = _Script(1, "same dialogue")
+    t1 = lui._story_dedup_id(s, "Headline · v1")
+    t2 = lui._story_dedup_id(s, "Headline · v2")
+    assert t1 != t2
+    assert lui._story_dedup_id(s, "Headline · v1") == t1  # deterministic
+
+
+# ---------------------------------------------------------------------------
+# Load-time verification + removal
+# ---------------------------------------------------------------------------
+
+def _meta(sid, title, dedup_id="", created="2026-10-02T10:00:00"):
+    return {"id": sid, "title": title, "dedup_id": dedup_id,
+            "created_at": created}
+
+
+def test_group_duplicate_stories_by_dedup_id():
+    items = [
+        (_meta("a", "X · v1", dedup_id="D"), "body"),
+        (_meta("b", "X · v1", dedup_id="D"), "body"),
+        (_meta("c", "Y · v1", dedup_id="E"), "other"),
+    ]
+    groups = lui._group_duplicate_stories(items)
+    assert len(groups) == 1
+    assert sorted(m["id"] for m in groups[0]) == ["a", "b"]
+
+
+def test_group_duplicate_stories_fallback_old_stories():
+    """Stories saved before dedup_id existed group by normalized
+    title (version suffix stripped) + body."""
+    items = [
+        (_meta("a", "X · v1"), "same body"),
+        (_meta("b", "X · v1"), "same body"),   # two runs, same title
+        (_meta("c", "X · v2"), "same body"),   # batch dupe, v-suffix differs
+        (_meta("d", "X · v1"), "different body"),
+    ]
+    groups = lui._group_duplicate_stories(items)
+    assert len(groups) == 1
+    assert sorted(m["id"] for m in groups[0]) == ["a", "b", "c"]
+
+
+def test_remove_duplicate_stories_on_load_keeps_oldest(ui, monkeypatch):
+    """End-to-end sweep: dupes removed via lib.delete_story (oldest
+    kept), once per session."""
+    fake, _saved, _tmp = ui
+    metas = [
+        _meta("old", "X · v1", created="2026-10-02T10:00:00"),
+        _meta("new", "X · v1", created="2026-10-02T11:00:00"),
+        _meta("solo", "Y · v1", created="2026-10-02T12:00:00"),
+    ]
+    bodies = {"old": "same body", "new": "same body", "solo": "other body"}
+    deleted = []
+    monkeypatch.setattr(lui.lib, "load_story",
+                        lambda sid: {"script": bodies[sid]})
+    monkeypatch.setattr(lui.lib, "delete_story",
+                        lambda sid: deleted.append(sid) or True)
+
+    assert lui._remove_duplicate_stories_on_load(metas) == 1
+    assert deleted == ["new"]
+    # Once per session — second call is a no-op.
+    assert lui._remove_duplicate_stories_on_load(metas) == 0
+    assert deleted == ["new"]

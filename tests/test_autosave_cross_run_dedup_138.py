@@ -146,8 +146,10 @@ def test_hash_persisted_in_prefs(ui):
     import json
     data = json.loads(prefs_path.read_text(encoding="utf-8"))
     hashes = data.get("autosaved_screenplay_hashes")
-    assert isinstance(hashes, list) and len(hashes) == 1
-    assert hashes[0] == lui._canonical_script_hash(script)
+    # #338: both the canonical script hash and the dedup id are recorded.
+    assert isinstance(hashes, list) and len(hashes) == 2
+    assert lui._canonical_script_hash(script) in hashes
+    assert lui._story_dedup_id(script, lui._build_autosave_title(script)) in hashes
 
 
 # ---------------------------------------------------------------------------

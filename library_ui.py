@@ -2226,6 +2226,35 @@ def _canonical_script_hash(script) -> str:
     return _hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 
+def _build_autosave_title(script=None) -> str:
+    """The final-output title an autosave would store (issue #138: the
+    ``· v{n}`` suffix keeps one batch's versions distinguishable)."""
+    topic = st.session_state.get("run_topic", "") or ""
+    headline = st.session_state.get("selected_headline_title", "") or ""
+    # The story title is the news headline it was built from.
+    title = headline or topic or (getattr(script, "title", "") or "") or "Untitled Story"
+    try:
+        _vnum = int(st.session_state.get("selected_script_idx", 0)) + 1
+    except (TypeError, ValueError):
+        _vnum = 1
+    return f"{title} · v{_vnum}"
+
+
+def _story_dedup_id(script, title: str) -> str:
+    """Save/load identity for a story (issue #338): sha256 of the
+    canonical script hash + the normalized final title.
+
+    The title rides along so the identity names the exact library row
+    (``Headline · v1``); the canonical hash carries the content. Checked
+    while saving AND after loading — a story with the same dedup id is
+    the same story, no matter which run or toggle state produced it.
+    Stored in the story frontmatter (``dedup_id``) so load-time
+    verification never has to recompute it."""
+    norm_title = _re.sub(r"\s+", " ", (title or "").lower()).strip()
+    raw = f"{_canonical_script_hash(script)}|{norm_title}"
+    return _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
 def _autosaved_content_hashes() -> set:
     """Content-hashes of screenplays already saved to the library,
     persisted in prefs.json so dedup works ACROSS runs/sessions."""
@@ -2293,16 +2322,20 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
     content_hash = _canonical_script_hash(script)
+    title = _build_autosave_title(script)
+    dedup_id = _story_dedup_id(script, title)
     known_hashes = _autosaved_content_hashes()
-    if content_hash in known_hashes or _screenplay_content_hash(pro_screenplay) in known_hashes:
+    if (content_hash in known_hashes or dedup_id in known_hashes
+            or _screenplay_content_hash(pro_screenplay) in known_hashes):
         # Already in the Library from an earlier run — skip silently.
         # Recording the session guard too keeps reruns cheap. Stories
         # saved by older builds recorded the formatted-text hash only;
-        # upgrade the record to the canonical hash so a later toggle
-        # change can never re-save them (#338).
+        # upgrade the record to the canonical + dedup ids so a later
+        # toggle change can never re-save them (#338).
         _autosave_completed_guards().add(guard)
-        if content_hash not in known_hashes:
-            _record_autosaved_content_hash(content_hash)
+        for _h in (content_hash, dedup_id):
+            if _h not in known_hashes:
+                _record_autosaved_content_hash(_h)
         return
     try:
         story_id = _save_current_story(batch_result, script, pro_screenplay)
@@ -2313,6 +2346,7 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         return
     _autosave_completed_guards().add(guard)
     _record_autosaved_content_hash(content_hash)
+    _record_autosaved_content_hash(dedup_id)
     st.session_state.pop("lib_save_failed_for", None)
     topic = st.session_state.get("run_topic", "") or ""
     _ok, _why = lib.start_enrichment(story_id, topic)
@@ -2378,17 +2412,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
     tone = st.session_state.get("chosen_tone", "") or ""
     topic = st.session_state.get("run_topic", "") or ""
     headline = st.session_state.get("selected_headline_title", "") or ""
-    # The story title is the news headline it was built from.
-    title = headline or topic or getattr(script, "title", "") or "Untitled Story"
-    # #138 save phase: autosaves from one batch shared the identical
-    # headline title, making duplicate rows indistinguishable in the
-    # Library. Suffix the viewed version so each saved script is
-    # distinguishable (v1 = first script, v2 = second, ...).
-    try:
-        _vnum = int(st.session_state.get("selected_script_idx", 0)) + 1
-    except (TypeError, ValueError):
-        _vnum = 1
-    title = f"{title} · v{_vnum}"
+    title = _build_autosave_title(script)
     if not hashtags:
         # Never save hashtag-less: derive story-specific tags locally
         # (instant, no network) — the background enrichment adds trending
@@ -2404,6 +2428,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
         source_headline=headline,
         news_links=_verified_news_links(batch_result),
         image_urls=st.session_state.get("s1_kept_images") or [],
+        dedup_id=_story_dedup_id(script, title),
     )
 
 
@@ -2418,13 +2443,118 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
         _autosave_completed_guards().add(guard)
         # Cross-run dedup (#138, #338): a manual save counts — a later autosave
         # of the same screenplay must skip. Record the canonical script hash
-        # so toggle changes cannot re-save it.
+        # and the dedup id so toggle changes cannot re-save it.
         _record_autosaved_content_hash(_canonical_script_hash(script))
+        _record_autosaved_content_hash(
+            _story_dedup_id(script, _build_autosave_title(script)))
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
         _ok, _why = lib.start_enrichment(story_id, topic)
         _notify("Saved to Library.", icon=":material/check_circle:")
         st.rerun()
+
+
+# ---------------------------------------------------------------------------
+# Load-time duplicate verification + removal (issue #338).
+#
+# Save-time guards only stop NEW duplicates. Stories duplicated before
+# the guards existed are already on disk — nothing ever re-checks them.
+# So after loading, the Library verifies every story's dedup identity
+# and removes the extras. ``dedup_id`` (written at save time) is exact;
+# the fallback covers older stories: normalized title (version suffix
+# stripped) + normalized script text.
+# ---------------------------------------------------------------------------
+
+def _norm_text(text: str) -> str:
+    return _re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+
+def _fallback_content_key(title: str, script_text: str) -> str:
+    title = _re.sub(r"\s*·\s*v\d+\s*$", "", title or "")
+    raw = f"{_norm_text(title)}|{_norm_text(script_text)}"
+    return _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _load_time_dedup_keys(meta: dict, script_text: str = "") -> set:
+    """All identity keys a stored story answers to (issue #338)."""
+    keys = set()
+    did = (meta.get("dedup_id") or "").strip()
+    if did:
+        keys.add("id:" + did)
+    keys.add("fb:" + _fallback_content_key(meta.get("title") or "", script_text))
+    return keys
+
+
+def _group_duplicate_stories(items) -> list:
+    """Group (meta, script_text) pairs sharing any dedup identity key.
+
+    Union-find over both key namespaces, so a story saved by a new
+    build (dedup_id) still groups with its byte-identical twin from an
+    old build (fallback key). Returns only groups of 2+. Pure function.
+    """
+    parent = {}
+
+    def find(x):
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a, b):
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[ra] = rb
+
+    key_owners = {}
+    for i, (meta, script_text) in enumerate(items):
+        for key in _load_time_dedup_keys(meta, script_text):
+            if key in key_owners:
+                union(i, key_owners[key])
+            key_owners[key] = i
+    groups = {}
+    for i, (meta, _text) in enumerate(items):
+        groups.setdefault(find(i), []).append(meta)
+    return [g for g in groups.values() if len(g) > 1]
+
+
+def _remove_duplicate_stories_on_load(stories) -> int:
+    """Verify-after-load (#338): group loaded stories by dedup identity,
+    keep the oldest of each group, delete the rest. Runs once per
+    session. Returns the number removed. Failures are loud, never
+    silent."""
+    if st.session_state.get("_lib_dedup_sweep_done"):
+        return 0
+    st.session_state["_lib_dedup_sweep_done"] = True
+    items = []
+    for meta in stories:
+        sid = meta.get("id")
+        if not sid:
+            continue
+        script_text = ""
+        try:
+            loaded = lib.load_story(sid)
+            script_text = (loaded or {}).get("script") or ""
+        except Exception:
+            script_text = ""
+        items.append((meta, script_text))
+    removed = 0
+    for group in _group_duplicate_stories(items):
+        ordered = sorted(group, key=lambda m: (m.get("created_at") or "", m.get("id") or ""))
+        keep = ordered[0]
+        # The survivor's dedup id must be known so future autosaves skip.
+        _did = (keep.get("dedup_id") or "").strip()
+        if _did and _did not in _autosaved_content_hashes():
+            _record_autosaved_content_hash(_did)
+        for dupe in ordered[1:]:
+            try:
+                if lib.delete_story(dupe["id"]):
+                    removed += 1
+                else:
+                    st.error(f"Could not remove duplicate story '{dupe.get('title', '')}': file not found.")
+            except Exception as e:
+                st.error(f"Could not remove duplicate story '{dupe.get('title', '')}': {e}")
+    return removed
 
 
 # ---------------------------------------------------------------------------
@@ -2446,6 +2576,15 @@ def render_library_page() -> None:
                     'it auto-saves here on completion.</div>',
                     unsafe_allow_html=True)
         return
+
+    # #338: verify-after-load — remove stories duplicated before the
+    # save-time guards existed, then re-list.
+    _dupes_removed = _remove_duplicate_stories_on_load(stories)
+    if _dupes_removed:
+        _notify(f"Removed {_dupes_removed} duplicate "
+                f"{'story' if _dupes_removed == 1 else 'stories'} from the Library.",
+                icon=":material/delete:")
+        stories = lib.list_stories()
 
     # Header row: collapsible "Stories · N" toggle + Delete-all (#290).
     # The toggle is borderless (macOS HIG: toolbar items have no bezel);
