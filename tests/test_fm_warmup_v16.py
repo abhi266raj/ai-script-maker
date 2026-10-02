@@ -1,8 +1,9 @@
 """Developer on-demand Apple FM warm-up (issue #37).
 
-The "Cold start" button next to the Studio/Library tab bar kicks off the
-#4 availability probe (30s -> 30s -> 60s) in a daemon thread so the first
-real generation skips the cold-start delay.
+The "Warm up local LLM" button next to the Studio/Library tab bar kicks
+off the #4 availability probe (30s -> 30s -> 60s) in a daemon thread so
+the first real generation skips the cold-start delay. Manual-only:
+nothing automatic — warm-up runs solely on button tap.
 
 Covers: mailbox read/write, double-start refusal, stale-state recovery,
 worker terminal states (done only on probe-available, failed with the
@@ -201,13 +202,13 @@ def test_worker_failed_when_probe_raises(libdir, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_button_idle_props():
-    assert _fm_warmup_button_props({}) == ("Cold start", False)
-    assert _fm_warmup_button_props({"state": "done"}) == ("Cold start", False)
-    assert _fm_warmup_button_props({"state": "failed"}) == ("Cold start", False)
+    assert _fm_warmup_button_props({}) == ("Warm up local LLM", False)
+    assert _fm_warmup_button_props({"state": "done"}) == ("Warm up local LLM", False)
+    assert _fm_warmup_button_props({"state": "failed"}) == ("Warm up local LLM", False)
 
 
 def test_button_warming_props_disabled():
     label, disabled = _fm_warmup_button_props({"state": "warming"})
     assert disabled is True
     assert "Warming" in label
-    assert label != "Cold start", "the starter must visibly own its progress"
+    assert label != "Warm up local LLM", "the starter must visibly own its progress"
