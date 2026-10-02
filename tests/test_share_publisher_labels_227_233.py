@@ -14,6 +14,8 @@ where the publisher name belongs):
    never reach any user-facing share text.
 3. News-link chips (#233) rendered the stored ``source`` verbatim; the
    render path must normalize stale labels like the share paths do.
+   (#303 later replaced the chips with panel rows that render the
+   headline only — no source label, no stale-label surface.)
 
 feedparser/httpx/bs4/pydantic/streamlit are absent in this VM, so the test
 stubs those modules (stdlib-only) before importing.
@@ -112,30 +114,29 @@ def test_compose_share_text_empty_source_still_uses_publisher():
 
 
 # ---------------------------------------------------------------------------
-# 3. News-link chips normalize stale labels (#233)
+# 3. News-link render path — #303 replaced the chips with panel rows.
+# The panel renders the headline only (never the stored source label),
+# so no stale aggregator label can surface in the UI. The normalizer
+# itself still serves the share paths.
 # ---------------------------------------------------------------------------
 
-def _render_news_links_row_src():
-    src = (_repo_root / "library_ui.py").read_text(encoding="utf-8")
-    start = src.index("def _render_news_links_row(")
-    end = src.index("\ndef ", start + 10)
-    return src[start:end]
+def test_panel_render_path_has_no_stale_label_surface():
+    """#303: the chip render path is gone — the News Links panel renders
+    the headline as the row label and never touches the stored source,
+    so there is no stale-label surface left in the render path."""
+    import library_ui as lui_mod
+    assert not hasattr(lui_mod, "_render_news_links_row"), (
+        "the chip row must stay removed")
+    assert not hasattr(lui_mod, "_news_chip_label"), (
+        "the source-name chip label must stay removed")
 
 
-def test_chip_render_path_normalizes_stale_labels():
-    """The chip render path must run stored labels through the same
-    offline-safe normalizer the share paths use (#231)."""
-    body = _render_news_links_row_src()
-    assert "refresh_stale_news_link_source" in body
-
-
-def test_chip_label_shows_publisher_after_normalization():
-    """End-to-end label logic: stale label -> normalizer -> chip text."""
+def test_stale_label_normalizer_still_serves_share_paths():
+    """End-to-end label logic: stale label -> normalizer -> publisher
+    name (used by the share/copy paths)."""
     normalized = lib.refresh_stale_news_link_source("DuckDuckGo", TOI_URL)
     assert normalized == "Times of India"
-    assert lui._news_chip_label("Some headline", normalized) == "Times of India"
-    assert "DuckDuckGo" not in lui._news_chip_label("Some headline",
-                                                    normalized)
+    assert "DuckDuckGo" not in normalized
 
 
 def test_normalizer_leaves_honest_labels_alone():
