@@ -165,6 +165,9 @@ rm -rf build/pyi_dist build/pyi_work
     --add-data ".streamlit:_streamlit" \
     --add-data "app.py:." \
     --add-data "workflow.py:." \
+    --add-data "story_library.py:." \
+    --add-data "library_ui.py:." \
+    --add-data "main.py:." \
     --collect-all streamlit \
     --copy-metadata streamlit \
     --hidden-import streamlit \
