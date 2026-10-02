@@ -5014,7 +5014,8 @@ with col_output:
             if _stage_outs:
                 _render_cumulative_preview(_stage_outs, key_prefix="failhist_")
             st.caption("No script was generated. Resolve the model issue and try again.")
-            if st.button("Try again", key="retry_failed_generation", use_container_width=True):
+            if st.button("Try again", key="retry_failed_generation", use_container_width=True,
+                         help="Retry the failed generation"):
                 st.session_state.generation_error = None
                 st.session_state.batch_result = None
                 # Issue #195: claim the single-flight slot so the Generate
@@ -5092,7 +5093,7 @@ with col_output:
                 has_extra = st.checkbox(
                     "Provide extra instruction for current or next step",
                     key=f"extra_tick_{curr_step}",
-                    help="Tick this box to provide custom instruction or steering prompts for the current step (re-run) or next step."
+                    help="Enable an extra instruction box for this or the next step."
                 )
                 extra_text = ""
                 apply_target = "next"
@@ -5124,7 +5125,7 @@ with col_output:
                     c_back, c_proceed, c_rerun = st.columns([1, 1.3, 1])
                     with c_back:
                         if st.button(f"⬅️ Back to Step {curr_step - 1}", use_container_width=True, key=f"back_btn_{curr_step}",
-                                     disabled=_sw_inflight):
+                                     disabled=_sw_inflight, help="Go back to the previous step"):
                             _stepwise_go_back(curr_step - 1)
                             st.rerun()
                 else:
@@ -5140,7 +5141,7 @@ with col_output:
                         proceed_label = proceed_running_label
 
                     if st.button(proceed_label, type="primary", use_container_width=True, key=f"proceed_btn_{curr_step}",
-                                 disabled=_sw_inflight):
+                                 disabled=_sw_inflight, help="Run the next step-wise stage"):
                         if not request_step_run(st.session_state, ACTION_PROCEED):
                             # Unreachable while the button is disabled; fail
                             # loudly rather than queue a duplicate step run.
@@ -5157,7 +5158,7 @@ with col_output:
                     _rerun_running = _sw_action == ACTION_RERUN
                     _rerun_label = f"Re-running Step {curr_step}…" if _rerun_running else f"🔄 Re-run Step {curr_step}"
                     if st.button(_rerun_label, use_container_width=True, key=f"rerun_step_btn_{curr_step}",
-                                 disabled=_sw_inflight):
+                                 disabled=_sw_inflight, help="Re-run the current step"):
                         if not request_step_run(st.session_state, ACTION_RERUN):
                             st.error("A step-wise run is already in flight — please wait for it to finish.")
                         else:
@@ -5277,7 +5278,8 @@ with col_output:
             b_cols = st.columns(5)
             for _bi in range(5):
                 with b_cols[_bi]:
-                    if st.button(f"⬅️ Step {_bi + 1}", key=f"back_done_{_bi + 1}", use_container_width=True):
+                    if st.button(f"⬅️ Step {_bi + 1}", key=f"back_done_{_bi + 1}", use_container_width=True,
+                                 help="Return to this step and re-run the later stages"):
                         _stepwise_go_back(_bi + 1)
                         st.rerun()
             with st.expander("🪜 Review Step-by-Step Outputs (Steps 1 to 6)"):
@@ -5400,7 +5402,7 @@ with col_output:
         st.caption("Your chosen format — 9:16 vertical reel · SCENE DETAIL · CHARACTERS & CLOTHING · sequential beats.")
         col_c1, col_c2 = st.columns([1, 1])
         with col_c1:
-            include_overlays = st.checkbox("Include Text Overlay (Optional)", value=st.session_state.get("include_overlays", True), key="inc_overlays_chk", help="Toggle whether Text Overlay (Optional) lines appear in the screenplay based on user preference.")
+            include_overlays = st.checkbox("Include Text Overlay (Optional)", value=st.session_state.get("include_overlays", True), key="inc_overlays_chk", help="Show text-overlay lines in the screenplay.")
         with col_c2:
             include_sfx = st.checkbox("Include Audio/SFX", value=st.session_state.get("include_sfx", True), key="inc_sfx_chk", help="Toggle whether Audio/SFX cues appear in the screenplay.")
 
@@ -5444,11 +5446,11 @@ with col_output:
 
         d1, d2, d3 = st.columns(3)
         with d1:
-            st.download_button("Screenplay (.md)", data=pro_screenplay, file_name=f"screenplay_{curr_script.target_duration_sec}s.md", mime="text/markdown", use_container_width=True)
+            st.download_button("Screenplay (.md)", data=pro_screenplay, file_name=f"screenplay_{curr_script.target_duration_sec}s.md", mime="text/markdown", use_container_width=True, help="Download the script as a Markdown screenplay")
         with d2:
-            st.download_button("Teleprompter (.txt)", data=teleprompter_text, file_name=f"teleprompter_{curr_script.target_duration_sec}s.txt", mime="text/plain", use_container_width=True)
+            st.download_button("Teleprompter (.txt)", data=teleprompter_text, file_name=f"teleprompter_{curr_script.target_duration_sec}s.txt", mime="text/plain", use_container_width=True, help="Download the teleprompter text file")
         with d3:
-            st.download_button("Full JSON", data=res.model_dump_json(indent=2), file_name=f"reel_{curr_script.target_duration_sec}s.json", mime="application/json", use_container_width=True)
+            st.download_button("Full JSON", data=res.model_dump_json(indent=2), file_name=f"reel_{curr_script.target_duration_sec}s.json", mime="application/json", use_container_width=True, help="Download the full generation result as JSON")
 
         with st.expander("Analysis"):
             st.caption(f"{res.verification.confidence_score}% · {res.verification.verification_summary}")
