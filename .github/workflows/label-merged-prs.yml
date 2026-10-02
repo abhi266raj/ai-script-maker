@@ -1,0 +1,30 @@
+name: Label merged PRs as code completed
+
+# When a PR is squash-merged into develop, tag it with the
+# "code completed" label so merged work is easy to spot.
+# (Issues stay open until the v1.7 release PR to main closes them.)
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [develop]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  label-merged:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add "code completed" label
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "code completed" \
+            --color "0E8A16" \
+            --description "Code merged into develop; awaiting release" \
+            --repo "${{ github.repository }}" 2>/dev/null || true
+          gh pr edit "${{ github.event.pull_request.number }}" \
+            --add-label "code completed" \
+            --repo "${{ github.repository }}"
