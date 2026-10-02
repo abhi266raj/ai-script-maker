@@ -666,9 +666,15 @@ def get_fine_tune_history(story_id: str) -> List[Dict[str, str]]:
 
 def record_fine_tune_turn(story_id: str, instruction: str,
                           refined_script: str) -> None:
-    """Append a fine-tune turn and replace the story's script with the result.
+    """Append a fine-tune turn and save the refined script as a new version.
 
-    The script is written FIRST: a recorded turn always reflects the stored
+    The refined script becomes a NEW script version (#104) — latest on top —
+    and the default, so the versions list shows it immediately (expanded)
+    and the ``## Script`` mirror, Copy / Share / export all use it. The
+    pre-turn text stays recoverable as the previous version; nothing is
+    overwritten in place.
+
+    The version is written FIRST: a recorded turn always reflects the stored
     script — a turn is never recorded without its script landing.
 
     Raises ValueError for blank instruction/script, FileNotFoundError if the
@@ -682,13 +688,18 @@ def record_fine_tune_turn(story_id: str, instruction: str,
     refined_text = (refined_script or "").strip()
     if not refined_text:
         raise ValueError("Refined script must not be empty.")
-    # #104: route the replacement through versioning so the default
-    # version's text and the ## Script mirror stay in sync — a raw
-    # update_story_script here would leave the versions sidecar stale,
-    # and a later version switch would silently clobber the refined text.
-    with _meta_write_lock(story_id):
-        _versions, _default_n, _next_n = _ensure_versions(story_id)
-    update_script_version_text(story_id, _default_n, refined_text)
+    # #104/#191: the refined script becomes a NEW version (latest on top)
+    # and the default. Overwriting the default version's text in place hid
+    # the result whenever the latest version wasn't the default (#191):
+    # the versions list expands the latest version, so the refined text
+    # sat invisible inside a collapsed "Version N · Default" expander
+    # while the expanded latest version still showed the old text.
+    # create_script_version seeds the new version from the current default
+    # text; update + make-default then land the refinement on it and mirror
+    # it to ## Script. Each primitive is fail-loud on its own.
+    new_n = create_script_version(story_id)
+    update_script_version_text(story_id, new_n, refined_text)
+    set_default_script_version(story_id, new_n)
     history = get_fine_tune_history(story_id)
     history.append({"instruction": instruction_text, "script": refined_text})
     del history[:-_FINE_TUNE_HISTORY_MAX_TURNS]

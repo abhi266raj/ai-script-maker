@@ -2889,9 +2889,11 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
     """Render the "Fine tune script" section under the story's script.
 
     The user types a natural-language instruction ("make it funnier"); the
-    LLM surgically refines the current script and the result replaces it.
-    Every turn is recorded in the story's fine-tune history so the
-    conversation carries across turns (and #104's versioning can adopt it).
+    LLM surgically refines the current script and the result is saved as a
+    NEW script version (#104) — latest on top and the default — so it is
+    displayed immediately, expanded, instead of hiding inside a collapsed
+    expander (#191). Every turn is recorded in the story's fine-tune
+    history so the conversation carries across turns.
 
     HIG: the initiating control owns its loading state — the button paints
     "Fine tuning…" with the native spinner and stays disabled until the
@@ -2966,6 +2968,8 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
         else:
             st.session_state.pop(_ft_input_key, None)
             st.rerun()
+
+
 def _render_script_version_body(story_id: str, version: dict, is_default: bool,
                                 busy: bool) -> None:
     """Body of one script-version expander: actions + view/edit (#104).

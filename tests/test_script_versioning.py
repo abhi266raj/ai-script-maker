@@ -208,19 +208,44 @@ def test_delete_story_removes_sidecar(libdir):
 
 # --- #105 × #104 integration ------------------------------------------------
 
-def test_fine_tune_turn_updates_default_version(libdir):
-    # A fine-tune turn refines the DEFAULT version in place, so the sidecar
-    # never goes stale behind the .md mirror (record_fine_tune_turn routes
-    # through versioning).
+def test_fine_tune_turn_creates_new_default_version(libdir):
+    # #191: a fine-tune turn saves the refined script as a NEW version —
+    # latest on top and the default — so the versions list displays it
+    # immediately (it expands the latest). The old in-place overwrite of
+    # the default version's text hid the result inside a collapsed
+    # "Version N · Default" expander whenever the latest version wasn't
+    # the default, while the expanded latest version still showed old text.
     sid = _make_story()
-    lib.create_script_version(sid)
+    lib.create_script_version(sid)  # v2, latest, NOT the default
     lib.record_fine_tune_turn(sid, "make it funnier", "AARAV: much funnier now")
     versions, default_n = lib.get_script_versions(sid)
-    assert default_n == 1
+    assert [v["n"] for v in versions] == [3, 2, 1]  # latest on top
+    assert default_n == 3
     by_n = {v["n"]: v["text"] for v in versions}
-    assert by_n[1] == "AARAV: much funnier now"
+    assert by_n[3] == "AARAV: much funnier now"
+    assert by_n[1] == "AARAV: original script text here"  # untouched
     assert by_n[2] == "AARAV: original script text here"  # untouched
+    # The ## Script mirror (what Copy / Share / export use) follows the
+    # new default.
     assert lib.load_story(sid)["script"] == "AARAV: much funnier now"
+    # The history turn is still recorded.
+    history = lib.get_fine_tune_history(sid)
+    assert len(history) == 1
+    assert history[0]["script"] == "AARAV: much funnier now"
+
+
+def test_fine_tune_turn_when_latest_is_default(libdir):
+    # Single-version story: the turn still creates a new version (v2)
+    # holding the refined text; the pre-turn text stays recoverable as v1.
+    sid = _make_story()
+    lib.record_fine_tune_turn(sid, "tighten it", "AARAV: tightened")
+    versions, default_n = lib.get_script_versions(sid)
+    assert [v["n"] for v in versions] == [2, 1]
+    assert default_n == 2
+    by_n = {v["n"]: v["text"] for v in versions}
+    assert by_n[2] == "AARAV: tightened"
+    assert by_n[1] == "AARAV: original script text here"
+    assert lib.load_story(sid)["script"] == "AARAV: tightened"
 
 
 # --- persistence round-trip -------------------------------------------------
