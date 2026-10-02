@@ -2502,6 +2502,27 @@ def test_delete_all_popover_uses_explicit_verb():
     assert 'title="Delete all stories?"' in seg
 
 
+def test_delete_all_trigger_is_icon_only():
+    """#203: the sidebar Delete-All trigger is icon-only — the trash
+    metaphor via ``trigger_icon`` with an empty text label, a verb-first
+    help tag (≤75 chars) doubling as the a11y label. The text "Delete
+    All" renders nowhere; the destructive verb lives in the dialog only
+    (source-level: render_library_page is too heavy for the fake
+    streamlit harness)."""
+    import pathlib
+    src = (pathlib.Path(__file__).resolve().parent.parent
+           / "library_ui.py").read_text()
+    key_idx = src.index('popover_key="lib_delpop_all"')
+    call_idx = src.rindex("_delete_popover(", 0, key_idx)
+    seg = src[call_idx:]
+    seg = seg[:seg.index(")", seg.index("destructive_label"))]
+    assert 'trigger_icon=_TB_ICON_DELETE' in seg
+    assert 'trigger_label=""' in seg
+    assert 'trigger_help="Delete every saved story"' in seg
+    assert len("Delete every saved story") <= 75
+    assert "Delete All" not in seg
+
+
 def test_story_delete_popover_names_the_story():
     """#58: the story-delete confirmation titles the popover with the
     quoted story name and the explicit verb (source-level: the helper is
