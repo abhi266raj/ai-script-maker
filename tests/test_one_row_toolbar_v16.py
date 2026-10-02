@@ -92,6 +92,9 @@ def _story(monkeypatch, lui, **meta_over):
     monkeypatch.setattr(lui.lib, "get_script_versions",
                         lambda sid: ([{"n": 1, "text": "hello",
                                        "created_at": ""}], 1))
+    # The story is stubbed (no real id on disk) — stub the fine-tune history
+    # too so the detail view doesn't surface a history-load error.
+    monkeypatch.setattr(lui.lib, "get_fine_tune_history", lambda sid: [])
     monkeypatch.setattr(lui, "_copy_button",
                         lambda label, text, key, icon=None: None)
 

@@ -1706,6 +1706,12 @@ class DialogueNarrationAgent(BaseAgent):
             attempt_history = []
             # Outermost call: reset linear step tracking.
             self.last_validation_steps = []
+            # Outermost call: reset enriched speaker profiles. This singleton
+            # persists across runs (Streamlit app + test suite); without a
+            # reset, speakers enriched in a PREVIOUS run leak into the next
+            # run's new-speaker check in chief_editor.execute_stage_3 and
+            # cause false rejections.
+            self._enriched_profiles = {}
         self.last_attempt_history = list(attempt_history)
         self.last_retry_count = _retry_round
         budget = get_duration_budget(duration_sec)

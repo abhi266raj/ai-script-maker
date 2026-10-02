@@ -1,5 +1,6 @@
 """Unit tests for Continuous vs Step-Wise Generation & Per-Step Model Execution."""
 
+import re
 import unittest
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -46,10 +47,115 @@ class TestStepwiseWorkflow(unittest.TestCase):
             "🍏 Local Apple FM (On-Device)"
         )
         _base_response = ("यह एक त्वरित हिंदी रील स्क्रिप्ट है। पूरी जानकारी यहाँ दी गई है।", "🍏 Local Apple FM (On-Device)")
+        # Stage 3 now fails loudly on unparseable model output (no silent
+        # synthetic scenes), and the merged ai_judge_script_quality issues
+        # its own model call expecting TONE_VERDICT/NEWS_VERDICT. The fake
+        # must therefore return parseable dialogue and a passing verdict.
+        # The dialogue must ALSO pass the code validators: no formal/
+        # bureaucratic Hindi tokens (see _FORMAL_HINDI_TOKENS), and short
+        # enough for the timing auditor's word budget.
+        _dialogue_lines = [
+            "अरे यार, सुना तुमने? चाय के दाम फिर बढ़ गए!",
+            "सच में? अब तो घर पर ही चाय बनानी पड़ेगी!",
+        ]
+
+        def _dialogue_response_for(prompt):
+            # Stage 3 refuses invented speakers: the dialogue may only use
+            # finalized Stage 2 characters. Read their names from the
+            # prompt's "Characters in Scene" section (character_count
+            # varies per test, so hardcoding names breaks some tests).
+            names = []
+            m = re.search(r"Characters in Scene[^\n]*\n((?:- [^\n]+\n?)+)", prompt or "")
+            if m:
+                for line in m.group(1).splitlines():
+                    nm = re.match(r"-\s*([A-Za-z][\w ]*?)\s*\(", line.strip())
+                    if nm:
+                        names.append(nm.group(1).strip())
+            names = names or ["Rohan"]
+            # Always emit 2 beats; reuse the single character when only one
+            # was finalized ("Dialogue" style has no speaker-alternation rule).
+            beats = []
+            for i in range(2):
+                beats.append(
+                    f"BEAT {i + 1}:\nCHARACTER: {names[i % len(names)]}"
+                    f"\nDIALOGUE: \"{_dialogue_lines[i % len(_dialogue_lines)]}\""
+                )
+            return ("SCRIPT 1:\n" + "\n".join(beats) + "\n", "🍏 Local Apple FM (On-Device)")
+        _judge_response = (
+            "TONE_VERDICT: YES\nTONE_ISSUE: None\n"
+            "NEWS_VERDICT: YES\nNEWS_REASON: mocked pass",
+            "🍏 Local Apple FM (On-Device)",
+        )
+        # Stage 4 derives TWO scene sets (A and B, 2 scenes each) from the
+        # dialogue and then generates per-scene 9:16 video prompts. Both
+        # parsers fail loudly on unparseable output, so the fake must return
+        # the expected block structure.
+        _scene_options_response = (
+            "SET A:\n"
+            "SCENE 1:\nLocation: Neighborhood tea corner\nAtmosphere: Bustling morning crowd\n"
+            "Lighting: Warm daylight\nProps: Kettle, glasses\nGrounded in beats: 1\n"
+            "SCENE 2:\nLocation: Home kitchen\nAtmosphere: Cozy and familiar\n"
+            "Lighting: Soft indoor light\nProps: Stove, pan\nGrounded in beats: 2\n"
+            "SET B:\n"
+            "SCENE 1:\nLocation: Office pantry\nAtmosphere: Busy workday break\n"
+            "Lighting: Bright fluorescent\nProps: Cups, water cooler\nGrounded in beats: 1\n"
+            "SCENE 2:\nLocation: Park bench\nAtmosphere: Relaxed evening\n"
+            "Lighting: Golden hour\nProps: Bench, trees\nGrounded in beats: 2\n",
+            "🍏 Local Apple FM (On-Device)",
+        )
+        _video_prompts_response = (
+            "SCENE 1:\n"
+            "PROMPT: Close-up of a kettle whistling on a stove, steam rising in warm morning light.\n"
+            "CAMERA: Close-up, shallow depth of field\n"
+            "LIGHTING: Warm daylight\n"
+            "MOTION: Slow push-in\n"
+            "SCENE 2:\n"
+            "PROMPT: Wide shot of a cozy home kitchen, a person pouring chai into glasses.\n"
+            "CAMERA: Wide shot, eye level\n"
+            "LIGHTING: Soft indoor light\n"
+            "MOTION: Gentle pan left\n",
+            "🍏 Local Apple FM (On-Device)",
+        )
+        # Stage 5's scene director needs SCENE blocks with ACTION, CHARACTER
+        # and SFX lines (timestamps are computed by code, dialogue comes from
+        # the finalized Stage 3 output).
+        _scene_director_response = (
+            "SCENE 1:\n"
+            "ACTION: Close-up of a whistling kettle on a stove, steam curling up.\n"
+            "CHARACTER: Rohan\n"
+            "TEXT: Chai prices rise again!\n"
+            "SFX: Kettle whistle\n"
+            "SCENE 2:\n"
+            "ACTION: Wide shot of a cozy kitchen, chai being poured into glasses.\n"
+            "CHARACTER: Rohan\n"
+            "TEXT: Home-brewed to the rescue\n"
+            "SFX: Pouring liquid\n",
+            "🍏 Local Apple FM (On-Device)",
+        )
 
         def _fake_generate(*args, **kwargs):
             prompt = kwargs.get("prompt", args[0] if args else "")
             if isinstance(prompt, str):
+                pl = prompt.lower()
+                # NB: dialogue/judge checks come first — the dialogue prompt
+                # embeds verified-facts context that would otherwise match
+                # the news-verification branch below.
+                if "script quality validator" in pl:
+                    return _judge_response
+                if "scene synthesis strategist" in pl:
+                    return _scene_options_response
+                if "cinematic ai video generation prompt engineer" in pl:
+                    return _video_prompts_response
+                if "visionary video director, visual storyboard artist" in pl:
+                    return _scene_director_response
+                # The step-3 dialogue prompt's role identity varies by angle
+                # ("FUNNY SCREENWRITER" vs "Voiceover Scriptwriter"), but its
+                # mission line is stable: "Your sole job in the pipeline is
+                # writing spoken-word Hindi narration".
+                if ("spoken-word hindi narration" in pl
+                        or "voiceover scriptwriter" in pl
+                        or "refining a finalized hindi reel dialogue draft" in pl):
+                    return _dialogue_response_for(prompt)
                 if "GROUP A" in prompt or "CHARACTER 1" in prompt or "finalise_character_groups" in prompt or "character_group" in prompt.lower():
                     return _groups_response
                 if "ANGLE 1:" in prompt or "craft_hooks" in prompt:
@@ -131,9 +237,16 @@ class TestStepwiseWorkflow(unittest.TestCase):
         self.assertIn("finalized_scenes", state2)
         self.assertIn("story_steps", state2)
         self.assertGreaterEqual(len(state2["available_characters"]), 2)
-        self.assertGreaterEqual(len(state2["available_scenes"]), 2)
+        # NB: available_scenes stays EMPTY after Step 2 by design — scenes are
+        # derived FROM the finalized Stage 3 dialogue in Step 4 (see
+        # chief_editor.execute_stage_2: "finalized_scenes stays EMPTY here by
+        # design"). This assertion used to expect scenes here; it now pins the
+        # current pipeline contract instead.
+        self.assertEqual(len(state2["available_scenes"]), 0)
         self.assertGreaterEqual(len(state2["finalized_characters"]), 1)
-        self.assertGreaterEqual(len(state2["finalized_scenes"]), 1)
+        # Same as available_scenes above: finalized_scenes is derived in
+        # Step 4 from the finalized dialogue, so it is empty after Step 2.
+        self.assertEqual(len(state2["finalized_scenes"]), 0)
         self.assertGreaterEqual(len(state2["story_steps"]), 1)
 
     def test_step_3_dialogue_writing_and_timing_audit(self):
@@ -165,10 +278,15 @@ class TestStepwiseWorkflow(unittest.TestCase):
         self.assertIn("w_cnt", d)
         # Timing auditor must have verified word count
         self.assertLessEqual(d["w_cnt"], d["max_words"])
-        self.assertIn(extra_dialogue_inst, state3["sub_instructions"]["dialogue_writer"])
+        # NB: Stage 3 deliberately does NOT persist the extra instruction into
+        # sub_instructions["dialogue_writer"] — it is passed as feedback to
+        # the refine prompt only, so re-runs never stack stale blocks (see
+        # chief_editor.execute_stage_3). It IS recorded in
+        # extra_instructions_history. This assertion pins that contract.
+        self.assertIn(extra_dialogue_inst, state3["extra_instructions_history"])
 
-    def test_step_4_scene_storyboard_and_video_prompts(self):
-        """Test that Step 4 directs scene beats and synthesizes 9:16 AI video prompts."""
+    def test_step_4_scene_options_derived_from_dialogue(self):
+        """Test that Step 4 derives two distinct scene option sets (A and B) from the finalized dialogue."""
         topic = "Massive solar power plant inaugurated in Rajasthan"
         state1 = reel_workflow.run_step_1(
             news_input=topic,
@@ -188,14 +306,51 @@ class TestStepwiseWorkflow(unittest.TestCase):
         )
 
         self.assertEqual(state4["step"], 4)
-        self.assertIn("scripts", state4)
-        self.assertEqual(len(state4["scripts"]), 1)
-        sc = state4["scripts"][0]
+        # NB: storyboards + 9:16 video prompts moved to Step 5
+        # (execute_stage_5). Step 4's contract is deriving the two scene
+        # option sets FROM the finalized dialogue; the user picks one.
+        for key in ("scene_options_a_per_script", "scene_options_b_per_script",
+                    "derived_scenes_per_script", "selected_scene_set"):
+            self.assertIn(key, state4)
+        self.assertEqual(state4["selected_scene_set"], "A")
+        set_a = state4["scene_options_a_per_script"][0]
+        set_b = state4["scene_options_b_per_script"][0]
+        self.assertGreaterEqual(len(set_a), 1)
+        self.assertGreaterEqual(len(set_b), 1)
+        # The two sets must be genuinely different creative visions.
+        locs_a = {s.location_name for s in set_a}
+        locs_b = {s.location_name for s in set_b}
+        self.assertTrue(locs_a.isdisjoint(locs_b))
+        # Extra instruction is recorded for the re-run loop.
+        self.assertIn(extra_visual_inst, state4["extra_instructions_history"])
+
+    def test_step_5_storyboard_and_video_prompts(self):
+        """Test that Step 5 directs scene beats and synthesizes 9:16 AI video prompts."""
+        topic = "Massive solar power plant inaugurated in Rajasthan"
+        state1 = reel_workflow.run_step_1(
+            news_input=topic,
+            scenario="Positive environmental news",
+            batch_size=1,
+            target_seconds=15,
+            engine_mode="fm_only",
+        )
+        state2 = reel_workflow.run_step_2(state=state1, engine_mode="fm_only")
+        state3 = reel_workflow.run_step_3(state=state2, engine_mode="fm_only")
+        state4 = reel_workflow.run_step_4(state=state3, engine_mode="fm_only")
+        state5 = reel_workflow.run_step_5(state=state4, engine_mode="fm_only")
+
+        self.assertEqual(state5["step"], 5)
+        self.assertIn("scripts", state5)
+        self.assertEqual(len(state5["scripts"]), 1)
+        sc = state5["scripts"][0]
         self.assertGreaterEqual(len(sc.scenes), 1)
         self.assertTrue(all(hasattr(scene, "video_prompt") for scene in sc.scenes))
 
-    def test_step_5_signoff_and_final_batch_result(self):
-        """Test that Step 5 performs compliance audit, packages ReelBatchResult, and signs off."""
+    def test_step_6_signoff_and_final_batch_result(self):
+        """Test that Step 6 performs the integration validation gate, packages ReelBatchResult, and signs off."""
+        # NB: the final packaging (ReelBatchResult + audit report) moved to
+        # Step 6 "Integration & Final Validation" (execute_stage_6); Step 5
+        # now ends at storyboards + video prompts.
         topic = "Varanasi Dev Deepawali celebration attracts worldwide visitors"
         state1 = reel_workflow.run_step_1(
             news_input=topic,
@@ -208,10 +363,13 @@ class TestStepwiseWorkflow(unittest.TestCase):
         state3 = reel_workflow.run_step_3(state=state2, engine_mode="fm_only")
         state4 = reel_workflow.run_step_4(state=state3, engine_mode="fm_only")
         state5 = reel_workflow.run_step_5(state=state4, engine_mode="fm_only")
-
         self.assertEqual(state5["step"], 5)
-        self.assertIn("batch_result", state5)
-        batch_result = state5["batch_result"]
+        self.assertIn("scripts", state5)
+
+        state6 = reel_workflow.run_step_6(state=state5, engine_mode="fm_only")
+        self.assertEqual(state6["step"], 6)
+        self.assertIn("batch_result", state6)
+        batch_result = state6["batch_result"]
         self.assertIsInstance(batch_result, ReelBatchResult)
         self.assertEqual(len(batch_result.scripts), 1)
         self.assertGreaterEqual(batch_result.total_time_seconds, 0)
@@ -239,7 +397,11 @@ class TestStepwiseWorkflow(unittest.TestCase):
         # Step 5 with fallback
         state5 = reel_workflow.run_step_5(state=state4, engine_mode="fm_only")
         self.assertEqual(state5["step"], 5)
-        self.assertIsInstance(state5["batch_result"], ReelBatchResult)
+
+        # Step 6 with fallback (final packaging lives in Step 6)
+        state6 = reel_workflow.run_step_6(state=state5, engine_mode="fm_only")
+        self.assertEqual(state6["step"], 6)
+        self.assertIsInstance(state6["batch_result"], ReelBatchResult)
 
     def test_stepwise_rerun_step_with_refinement(self):
         """Test that re-running a step with updated instructions updates the state properly."""
@@ -300,23 +462,26 @@ class TestStepwiseWorkflow(unittest.TestCase):
         self.assertIn("scene_lines", dialogues)
         self.assertTrue(len(dialogues["scene_lines"]) > 0)
 
-    def test_stage_4_correction_feedback_with_previous_scenes(self):
-        """Test that re-running Stage 4 captures previous scenes for correction."""
+    def test_stage_5_correction_feedback_with_previous_scenes(self):
+        """Test that re-running Stage 5 captures previous storyboard scenes for correction."""
+        # NB: storyboard correction moved to Stage 5 with the scene_director
+        # (execute_stage_5); Stage 4 now only derives scene option sets.
         topic = "New bullet train route announced"
         state1 = reel_workflow.run_step_1(news_input=topic, scenario="High tech", batch_size=1, target_seconds=10, engine_mode="fm_only")
         state2 = reel_workflow.run_step_2(state=state1, engine_mode="fm_only")
         state3 = reel_workflow.run_step_3(state=state2, engine_mode="fm_only")
-        state4_initial = reel_workflow.run_step_4(state=state3, engine_mode="fm_only")
-        self.assertIn("scripts", state4_initial)
+        state4 = reel_workflow.run_step_4(state=state3, engine_mode="fm_only")
+        state5_initial = reel_workflow.run_step_5(state=state4, engine_mode="fm_only")
+        self.assertIn("scripts", state5_initial)
 
-        state4_corrected = reel_workflow.run_step_4(
-            state=state4_initial,
+        state5_corrected = reel_workflow.run_step_5(
+            state=state5_initial,
             engine_mode="fm_only",
             extra_instruction="Change camera angle to low angle tracking shot inside the cabin",
         )
-        self.assertEqual(state4_corrected["step"], 4)
-        self.assertIn("CORRECTION FEEDBACK ON PREVIOUS STORYBOARD SCENES", state4_corrected["sub_instructions"]["scene_director"])
-        self.assertIn("low angle tracking shot", state4_corrected["sub_instructions"]["scene_director"])
+        self.assertEqual(state5_corrected["step"], 5)
+        self.assertIn("CORRECTION FEEDBACK ON PREVIOUS STORYBOARD SCENES", state5_corrected["sub_instructions"]["scene_director"])
+        self.assertIn("low angle tracking shot", state5_corrected["sub_instructions"]["scene_director"])
 
     def test_app_py_syntax_and_compilation(self):
         """Verify that app.py compiles cleanly without SyntaxError or IndentationError."""

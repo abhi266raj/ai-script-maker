@@ -70,8 +70,13 @@ class TestNoScenesBeforeDialogue:
     def test_stage_2_uses_characters_only_mode(self):
         """Stage 2 must invoke hook_strategist in characters-only mode."""
         src = inspect.getsource(chief_editor_coordinator.execute_stage_2)
-        assert "include_scenes=False" in src, \
-            "Stage 2 must call hook_strategist with include_scenes=False"
+        # NB: the old include_scenes=False flag is gone — the characters-only
+        # contract now lives in the API itself: finalise_character_groups
+        # returns character groups, never scenes.
+        assert "finalise_character_groups" in src, \
+            "Stage 2 must call hook_strategist.finalise_character_groups"
+        assert "derive_scene_options" not in src, \
+            "Stage 2 must NOT derive scenes (characters only)"
 
 
 class TestStageOrdering:
@@ -80,8 +85,10 @@ class TestStageOrdering:
         src = inspect.getsource(chief_editor_coordinator.execute_stage_4)
         assert 'state["script_dialogues"]' in src, \
             "Stage 4 must read Stage 3's script_dialogues"
-        assert "derive_scenes_from_dialogue" in src, \
-            "Stage 4 must call hook_strategist.derive_scenes_from_dialogue"
+        # NB: derive_scenes_from_dialogue was renamed to derive_scene_options
+        # (it takes dialogue_beats and returns two scene sets).
+        assert "derive_scene_options" in src, \
+            "Stage 4 must call hook_strategist.derive_scene_options"
         assert 'state["derived_scenes_per_script"]' in src, \
             "Stage 4 must store derived_scenes_per_script"
 
@@ -131,17 +138,22 @@ class TestCreativityMandates:
 
 class TestNewsClarityMandates:
     def test_dialogue_prompt_has_news_clarity_law(self):
+        # NB: the "NEWS CLARITY LAW" heading was rewritten as prose, but the
+        # mandate is intact: WHAT/WHO/WHERE through the story, no vague riddles.
         prompt = _prompt("dialogue_writer/write_dialogue_batch.md")
-        assert "NEWS CLARITY LAW" in prompt, \
-            "Stage 3 prompt must have explicit NEWS CLARITY LAW"
+        assert "WHAT happened" in prompt and "WHO is involved" in prompt, \
+            "Stage 3 prompt must require WHAT/WHO/WHERE clarity"
         # Must ban vague allusions
-        assert "Vague allusions" in prompt or "vague" in prompt.lower(), \
+        assert "vague" in prompt.lower(), \
             "Stage 3 prompt must ban vague news references"
 
     def test_refine_prompt_has_news_clarity(self):
+        # NB: "NEWS CLARITY" heading became "INSERT THE NEWS CREATIVELY".
         prompt = _prompt("dialogue_writer/refine_dialogue_batch.md")
-        assert "NEWS CLARITY" in prompt, \
+        assert "INSERT THE NEWS CREATIVELY" in prompt, \
             "Refine prompt must carry news-clarity requirement"
+        assert "vague" in prompt.lower(), \
+            "Refine prompt must ban vague allusions"
 
     def test_dialogue_prompt_names_what_who_where(self):
         prompt = _prompt("dialogue_writer/write_dialogue_batch.md")

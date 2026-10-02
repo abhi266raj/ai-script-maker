@@ -12,11 +12,20 @@ Verifies:
 """
 import inspect
 import os
+import sys
+
 import pytest
 
-from agents import hook_strategist as hs_mod
-from agents import dialogue_writer as dw_mod
-from agents import chief_editor as ce_mod
+# NB: `from agents import hook_strategist` binds the package __init__'s
+# singleton instance, not the submodule (the instance shadows the module
+# attribute). Grab the real submodules from sys.modules.
+import agents.hook_strategist  # noqa: F401
+import agents.dialogue_writer  # noqa: F401
+import agents.chief_editor  # noqa: F401
+
+hs_mod = sys.modules["agents.hook_strategist"]
+dw_mod = sys.modules["agents.dialogue_writer"]
+ce_mod = sys.modules["agents.chief_editor"]
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -27,8 +36,8 @@ def _prompt_exists(name):
 
 class TestCharacterGroups:
     def test_finalise_character_groups_method_exists(self):
-        assert hasattr(hs_mod.HookStrategist, "finalise_character_groups"), \
-            "HookStrategist missing finalise_character_groups"
+        assert hasattr(hs_mod.CharacterFinaliserAgent, "finalise_character_groups"), \
+            "CharacterFinaliserAgent missing finalise_character_groups"
 
     def test_character_groups_prompt_template_exists(self):
         assert _prompt_exists("hook_strategist/finalise_character_groups.md"), \
@@ -48,7 +57,7 @@ class TestCharacterGroups:
         assert "TWO" in content, "Template must specify exactly two groups"
 
     def test_character_groups_returns_tuple_of_two(self):
-        sig = inspect.signature(hs_mod.HookStrategist.finalise_character_groups)
+        sig = inspect.signature(hs_mod.CharacterFinaliserAgent.finalise_character_groups)
         # Should accept character_count and return a tuple
         assert "character_count" in sig.parameters
 
@@ -67,8 +76,8 @@ class TestCharacterGroups:
 
 class TestSceneOptions:
     def test_derive_scene_options_method_exists(self):
-        assert hasattr(hs_mod.HookStrategist, "derive_scene_options"), \
-            "HookStrategist missing derive_scene_options"
+        assert hasattr(hs_mod.CharacterFinaliserAgent, "derive_scene_options"), \
+            "CharacterFinaliserAgent missing derive_scene_options"
 
     def test_scene_options_prompt_template_exists(self):
         assert _prompt_exists("hook_strategist/derive_scene_options.md"), \
@@ -128,7 +137,15 @@ class TestAIJudges:
         assert "ISSUE" in src, "Tone judge must extract a specific ISSUE from the AI response"
 
     def test_tone_corrective_pass_exists(self):
-        """Failed tone must trigger one corrective regeneration with feedback."""
+        """Failed tone must trigger a corrective regeneration with feedback."""
         src = inspect.getsource(dw_mod.DialogueNarrationAgent.write_dialogues_batch)
-        assert "_tone_fix_done" in src, \
-            "write_dialogues_batch must have a tone corrective pass (_tone_fix_done)"
+        # NB: the old split judges + _tone_fix_done flag were merged into the
+        # single ai_judge_script_quality validator (token saving). Tone failure
+        # is enforced: the judge's tone_issue feeds `feedback` into a corrective
+        # refine retry of the same draft.
+        assert "ai_judge_script_quality" in src, \
+            "write_dialogues_batch must call ai_judge_script_quality"
+        assert "refine_dialogue_batch" in src, \
+            "write_dialogues_batch must have a corrective refine retry path"
+        assert "feedback" in src, \
+            "write_dialogues_batch must feed failure feedback into the retry"

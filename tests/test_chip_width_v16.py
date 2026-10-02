@@ -189,6 +189,8 @@ def test_newslink_row_uses_proportional_weights():
 
 def test_image_row_keeps_equal_columns():
     # Image cards are uniform 180px — equal weights stay correct there.
+    # NB: expressed as [1] * len(_cards) (equal weights) rather than
+    # st.columns(len(_cards)) so a Load more weight can be appended.
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    assert "_icols = st.columns(len(_cards))" in src
+    assert "_icols = st.columns([1] * len(_cards)" in src

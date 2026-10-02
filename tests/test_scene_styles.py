@@ -203,7 +203,11 @@ def test_structural_correction_receives_exact_failed_draft_once():
     set to the exact failed raw_output and ONLY the structure feedback
     (news/tone/language never ran, so they contribute nothing)."""
     from unittest.mock import patch
-    from agents import dialogue_writer as dw_mod
+    import sys
+    import agents.dialogue_writer  # noqa: F401
+    # NB: `from agents import dialogue_writer` binds the singleton *instance*
+    # (agents/__init__ shadows the submodule name); resolve the real module.
+    dw_mod = sys.modules["agents.dialogue_writer"]
 
     # Interview violation: Guest asks a question (only Host may ask).
     failed_raw = (
@@ -230,8 +234,8 @@ def test_structural_correction_receives_exact_failed_draft_once():
     # would fail on the stubbed model output, so patch them to pass.
     with patch.object(dw_mod.DialogueNarrationAgent, "write_dialogues_batch", spy), \
          patch.object(agent, "execute", side_effect=[failed_raw, fixed_raw]), \
-         patch.object(dw_mod, "ai_judge_news_coverage", return_value=(True, "mocked pass")), \
-         patch.object(dw_mod, "ai_judge_tone_compliance", return_value=(True, "")), \
+         patch.object(dw_mod, "ai_judge_script_quality",
+                      return_value=(True, "", True, "mocked pass")), \
          patch.object(dw_mod, "find_formal_hindi", return_value=[]):
         result = agent.write_dialogues_batch(
             news_input="talk show episode", items=[{"angle": "Test", "hook": "Welcome to the show", "cta": "Test CTA"}],
@@ -254,7 +258,11 @@ def test_hindi_correction_receives_exact_draft_and_flagged_tokens():
     """Fail-fast: the language retry carries the exact failed draft and names
     ONLY the flagged formal tokens; it must run only once (no blind substitution)."""
     from unittest.mock import patch
-    from agents import dialogue_writer as dw_mod
+    import sys
+    import agents.dialogue_writer  # noqa: F401
+    # NB: `from agents import dialogue_writer` binds the singleton *instance*
+    # (agents/__init__ shadows the submodule name); resolve the real module.
+    dw_mod = sys.modules["agents.dialogue_writer"]
 
     failed_raw = (
         "SCRIPT 1:\n"
@@ -277,8 +285,8 @@ def test_hindi_correction_receives_exact_draft_and_flagged_tokens():
     # first; the AI judges would fail on the stubbed model output, so patch them.
     with patch.object(dw_mod.DialogueNarrationAgent, "write_dialogues_batch", spy), \
          patch.object(agent, "execute", side_effect=[failed_raw, fixed_raw]), \
-         patch.object(dw_mod, "ai_judge_news_coverage", return_value=(True, "mocked pass")), \
-         patch.object(dw_mod, "ai_judge_tone_compliance", return_value=(True, "")):
+         patch.object(dw_mod, "ai_judge_script_quality",
+                      return_value=(True, "", True, "mocked pass")):
         result = agent.write_dialogues_batch(
             news_input="rights issue approval", items=[{"angle": "Test", "hook": "राइट्स इश्यू को मंजूरी", "cta": "Test CTA"}],
             tone="Neutral", duration_sec=20,

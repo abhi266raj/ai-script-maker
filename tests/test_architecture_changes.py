@@ -479,6 +479,27 @@ class FakeNarration:
 
 
 class TestFactsPiping:
+    # Module globals on agents.chief_editor that these tests replace with
+    # fakes. They must be restored afterwards — otherwise the fakes leak
+    # into every later test module (e.g. the stepwise workflow tests) and
+    # break them with confusing unpack errors.
+    _PATCHED_GLOBALS = (
+        "hook_strategist",
+        "dialogue_writer",
+        "timing_auditor",
+        "scene_director",
+        "video_prompt_engineer",
+        "video_quality_gate",
+        "get_character_personas",
+    )
+
+    def setup_method(self):
+        self._orig_globals = {k: getattr(ce_mod, k) for k in self._PATCHED_GLOBALS}
+
+    def teardown_method(self):
+        for k, v in self._orig_globals.items():
+            setattr(ce_mod, k, v)
+
     def test_stage2_passes_verification_with_facts(self):
         ed = make_chief()
         verif = make_verification()
