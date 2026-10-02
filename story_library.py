@@ -2727,6 +2727,33 @@ _STALE_AGGREGATOR_SOURCES = frozenset(
 )
 
 
+def refresh_stale_news_link_source(source: str, url: str) -> str:
+    """Normalize a stored news-link source label to the publisher name (#231).
+
+    The label-refresh half of repair_news_link_urls (#153), without any
+    network I/O: when ``source`` is a stale fetch-time engine/aggregator
+    name ("Bing News"/"DuckDuckGo"/"News Wire"/"Live Wire") it is replaced
+    by the publisher name derived from ``url`` via publisher_name_from_url.
+    Any other label is returned unchanged, and the original label is kept
+    when no publisher name can be derived from the URL.
+
+    Pure and offline-safe — the Telegram share path (#231) calls this as
+    its first step so every user-facing render shows normalized labels
+    even when no refresh or repair ran between story creation and sharing.
+    A broken tools import propagates loudly (fail-loud); an unparseable
+    URL simply keeps its stored label (fail-open — the share never breaks
+    because of the network).
+    """
+    source = (source or "").strip()
+    if source not in _STALE_AGGREGATOR_SOURCES:
+        return source
+    url = (url or "").strip()
+    if not url:
+        return source
+    from tools.news_fetcher import publisher_name_from_url
+    return publisher_name_from_url(url) or source
+
+
 def _fetch_more_images(topic: str, existing_norm_urls: Set[str],
                        batch: int = _LOAD_MORE_BATCH
                        ) -> List[Tuple[str, Optional[str]]]:
