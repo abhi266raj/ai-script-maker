@@ -4,3 +4,9 @@ gatherUsageStats = false
 [server]
 fileWatcherType = "watchdog"
 runOnSave = true
+# #280 — the app places no practical limit on upload size (generated videos
+# can be hundreds of MB). Streamlit's 200MB default would wrongly reject
+# them, so raise the cap to an effectively-unlimited value; the widget's
+# native "{size} per file" caption is hidden via CSS (app.py) because the
+# value is not a real constraint.
+maxUploadSize = 10240

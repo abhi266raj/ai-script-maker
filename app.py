@@ -751,10 +751,13 @@ st.markdown(
         background: var(--hover) !important;
         border-color: var(--orange) !important;
     }
-    [data-testid="stFileUploaderDropzoneInstructions"],
-    [data-testid="stFileUploaderDropzoneInstructions"] p,
-    [data-testid="stFileUploaderDropzoneInstructions"] span {
-        color: var(--muted) !important;
+    /* #280 — the app places no practical limit on upload size (see
+       maxUploadSize in .streamlit/config.toml), so Streamlit's native
+       "{size} per file" caption is noise, not information. Hide the
+       instructions line; the dropzone, its label, and the Browse button
+       stay fully visible and themed. */
+    [data-testid="stFileUploaderDropzoneInstructions"] {
+        display: none !important;
     }
 
     .block-container {
