@@ -115,7 +115,7 @@ def test_doc_title_css_left_aligned_multiline_and_theme_safe():
     body = typo[0]
     assert "text-align: left" in body
     assert "text-align: center" not in body
-    assert "font-size: 30px" in body
+    assert "font-size: 28px" in body  # Khabarwaani spec: smaller title
     assert "overflow-wrap: anywhere" in body  # multiline, never clipped
     assert "fill:" not in body and "stroke:" not in body  # never forced paint
 
@@ -172,8 +172,10 @@ def test_title_edit_button_borderless_quiet_css():
     assert "border: none !important;" in joined, \
         "title edit button must be borderless (no boxed widget)"
     assert "background: transparent !important;" in joined
-    assert "color: inherit !important;" in joined, \
-        "title edit icon must follow the theme, not a hard-coded color"
+    assert "color: var(--ink-2) !important;" in joined, \
+        "title edit icon must be ink-2 (theme token, not hard-coded)"
+    assert "color: var(--ink) !important;" in joined, \
+        "title edit icon must go ink on hover"
     assert "fill:" not in joined and "stroke:" not in joined, \
         "never force SVG paint"
 

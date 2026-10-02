@@ -131,8 +131,8 @@ def test_chip_x_token_field_look_preserved():
 
 def test_chip_theme_colors_preserved():
     _, css = _load_lui()
-    assert "--lib-chip-bg: #F0E7D5;" in css, "#45 light chip fill"
-    assert "--lib-chip-bg: #4A4034;" in css, "#45 dark chip fill"
+    assert "--lib-chip-bg: var(--sunken);" in css, "light chip fill"
+    assert "--lib-chip-bg: var(--accent-tint);" in css, "dark chip fill"
 
 
 # ---------------------------------------------------------------------------

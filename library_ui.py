@@ -93,24 +93,25 @@ def inject_library_css() -> None:
         --lib-dialogue-bg: #FFF8E7;
         --lib-dialogue-border: #E8B93C;
         --lib-dialogue-text: #5A3E00;
-        --lib-script-bg: #EFF4FF;
-        --lib-script-border: #6B8DD6;
-        --lib-script-text: #1E3A6E;
-        /* Chips: warm pill, hairline edge for definition (HIG: flat,
-           bordered pills, no shadow). Text contrast ≥ 7:1 both themes. */
-        --lib-chip-bg: #F0E7D5;
-        --lib-chip-text: #5A4227;
-        --lib-chip-border: rgba(90, 66, 39, 0.28);
+        /* Full-script view: warm sunken box, ink text — never blue-grey. */
+        --lib-script-bg: var(--sunken);
+        --lib-script-border: var(--line);
+        --lib-script-text: var(--ink);
+        /* Chips: warm pill — sunken bg, ink text, line border. */
+        --lib-chip-bg: var(--sunken);
+        --lib-chip-text: var(--ink);
+        --lib-chip-border: var(--line);
         /* #205: compact inline marker for malformed news-link URLs —
            warm amber warning pill; theme-paired below (light/dark
            variants behind one semantic token, HIG §4). */
         --lib-warn-bg: #FAEBCB;
         --lib-warn-text: #7A4E00;
         --lib-warn-border: rgba(122, 78, 0, 0.35);
-        /* IDE-style token colors for the full script view */
-        --lib-spk: #1D4ED8;
-        --lib-said: #047857;
-        --lib-key: #0E7490;
+        /* Warm syntax colors for the full script view (accent/ink/ink-2
+           — never blue). */
+        --lib-spk: var(--accent);
+        --lib-said: var(--ink);
+        --lib-key: var(--ink-2);
     }
     :root[data-theme="dark"],
     html[data-theme="dark"],
@@ -129,22 +130,22 @@ def inject_library_css() -> None:
         --lib-dialogue-bg: #3A2E14;
         --lib-dialogue-border: #C99A2E;
         --lib-dialogue-text: #F5DFA0;
-        --lib-script-bg: #1E2A44;
-        --lib-script-border: #5B7BC0;
-        --lib-script-text: #C9D9F5;
-        /* Chips (dark): lifted warm surface replaces the muddy flat
-           fill; hairline edge keeps the pill defined on dark trays. */
-        --lib-chip-bg: #4A4034;
-        --lib-chip-text: #F2E4C2;
-        --lib-chip-border: rgba(242, 228, 194, 0.22);
+        /* Full-script view (dark): warm sunken box, ink text. */
+        --lib-script-bg: var(--sunken);
+        --lib-script-border: var(--line);
+        --lib-script-text: var(--ink);
+        /* Chips (dark): warm accent-tint fill, ink text, line border. */
+        --lib-chip-bg: var(--accent-tint);
+        --lib-chip-text: var(--ink);
+        --lib-chip-border: var(--line);
         /* #205: warning pill (dark variant of the same semantic token). */
         --lib-warn-bg: #45331B;
         --lib-warn-text: #F2D08A;
         --lib-warn-border: rgba(242, 208, 138, 0.30);
-        /* IDE-style token colors for the full script view */
-        --lib-spk: #93C5FD;
-        --lib-said: #6EE7B7;
-        --lib-key: #67E8F9;
+        /* Warm syntax colors for the full script view (dark). */
+        --lib-spk: var(--accent);
+        --lib-said: var(--ink);
+        --lib-key: var(--ink-2);
     }
     /* ONE alignment system for the detail action buttons and the three
        horizontal rows (hashtags / images / news links). Theme-neutral
@@ -615,8 +616,8 @@ def inject_library_css() -> None:
        no custom anchor CSS needed. */
     /* macOS HIG: deference — toolbar rows use a hairline, not a heavy box */
     .lib-hairline {
-        border-bottom: 1px solid rgba(128, 128, 128, 0.25);
-        margin: 4px 0 12px 0;
+        border-bottom: 1px solid var(--line);
+        margin: 12px 0;
     }
     /* #208: explicit named spacer between the story radio list and the
        Delete-All trigger. Replaces a stray st.markdown("") — an empty
@@ -743,7 +744,7 @@ def inject_library_css() -> None:
        from centered to left-aligned). */
     .lib-doc-title {
         text-align: left;
-        font-size: 30px;
+        font-size: 28px;
         font-weight: 700;
         line-height: 1.25;
         /* #162: symmetric vertical margins — the old 6px/2px asymmetry
@@ -763,11 +764,9 @@ def inject_library_css() -> None:
         display: none !important;
     }
     /* #120: the title edit button is a quiet icon action hugging the
-       title — NOT a bordered box. Borderless, transparent, theme-safe
-       icon color (inherits, like the other toolbar icons); subtle on
-       hover. The marker div sits directly before the button's element
-       container, same proven pattern as the chip × buttons. If the
-       selector ever misses it degrades to a normal small button. */
+       title — NOT a bordered box. Borderless, transparent, ink-2 icon
+       beside the title; ink on hover. If the selector ever misses it
+       degrades to a normal small button. */
     /* #162: the lib-title-edit marker div is display:none, but its
        stElementContainer wrapper still occupies one inter-element gap
        in the edit button column's vertical block (the #24/#53/#68
@@ -782,15 +781,18 @@ def inject_library_css() -> None:
         background: transparent !important;
         border: none !important;
         box-shadow: none !important;
-        color: inherit !important;
-        opacity: 0.55 !important;
+        /* Streamlit material icons paint with currentColor, so the
+           button's own color is enough — never force glyph paint. */
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
         padding: 6px 8px !important;
         min-height: 0 !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-title-edit"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover:not(:disabled) {
-        opacity: 1 !important;
-        background: rgba(128, 128, 128, 0.18) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        background: var(--hover) !important;
         border: none !important;
         box-shadow: none !important;
     }
@@ -837,10 +839,16 @@ def _inject_story_list_css() -> None:
         padding: 7px 10px !important;
         margin: 0 !important;
         font-size: 13.5px !important;
+        border-left: 3px solid transparent !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
+        + div[data-testid="stElementContainer"] [data-testid="stRadio"] label:hover {
+        background: var(--hover) !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
         + div[data-testid="stElementContainer"] [data-testid="stRadio"] label:has(input:checked) {
-        background: rgba(0, 122, 255, 0.15) !important;
+        background: var(--accent-tint) !important;
+        border-left: 3px solid var(--accent) !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-story-list"])
         + div[data-testid="stElementContainer"] [data-testid="stRadio"] label:has(input:checked) p {
@@ -870,21 +878,29 @@ def _inject_story_list_css() -> None:
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"]) {
         display: none !important;
     }
-    /* Destructive actions (#87): solid macOS system red fill with white
-       text — like Apple's destructive alert buttons. Legible on both
-       themes. Graceful — plain button if unmatched. */
+    /* Destructive actions: QUIET by default — danger-colored text/icon
+       on a transparent background, no shadow. Red appears ONLY on hover
+       (danger-tint fill + danger border). The two big crimson buttons
+       were the loudest thing on screen; now they whisper until armed. */
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
-        background-color: var(--bad) !important;
-        color: var(--on-primary) !important;
-        border-color: var(--bad) !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        /* Button text/icons paint with currentColor — the button's own
+           color is enough; never force glyph paint. */
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
+        border: 1px solid transparent !important;
+        box-shadow: none !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
-        background-color: var(--bad) !important;
-        color: var(--on-primary) !important;
-        border-color: var(--bad) !important;
-        filter: brightness(0.9) !important;
+        background: var(--danger-tint) !important;
+        background-color: var(--danger-tint) !important;
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
+        border: 1px solid var(--danger) !important;
+        box-shadow: none !important;
     }
     /* v1.6 (#58): destructive popover triggers are NEUTRAL — they read as
        plain buttons like their neighbours (see the approved screenshot).
@@ -939,7 +955,9 @@ def _md_escape(text: str) -> str:
 
 
 def _danger_button(label: str, key: str, **kwargs) -> bool:
-    """Mac-style destructive button: solid system-red fill, white text (#87).
+    """Quiet destructive button: danger-colored text/icon on a transparent
+    background, no shadow; red (danger-tint fill + danger border) appears
+    ONLY on hover.
 
     The marker div sits directly before the button so the CSS can target
     exactly this button. If the selector ever misses, it degrades to a
@@ -3388,7 +3406,7 @@ def _render_script_version_body(story_id: str, version: dict, is_default: bool,
         with _vb1:
             # HIG, phase 1: the initiating control owns the loading state.
             if st.button("Saving…" if _saving else "Save",
-                         key=f"lib_script_vsave_{story_id}_{_n}", type="primary",
+                         key=f"lib_script_vsave_{story_id}_{_n}",
                          disabled=_saving or busy):
                 st.session_state[_save_key] = True
                 st.rerun()
@@ -3550,7 +3568,7 @@ def _render_story_detail(story_id: str) -> None:
         ec1, ec2, ec3, ec4, _esp, ec5 = st.columns(
             _TITLE_EDIT_TOOLBAR_WEIGHTS, vertical_alignment="center")
         with ec1:
-            if st.button("Save", key=f"lib_title_save_{story_id}", type="primary"):
+            if st.button("Save", key=f"lib_title_save_{story_id}"):  # rule 1: one primary per screen (fine-tune keeps it)
                 _new = (st.session_state.get(f"lib_title_{story_id}") or "").strip()
                 if _new:
                     lib.update_story_fields(story_id, title=_new)

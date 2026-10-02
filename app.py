@@ -424,100 +424,130 @@ st.markdown(
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;600;700&display=swap');
 
     /* ================================================================
-       APPLE PALETTE — SINGLE SOURCE OF TRUTH
+       KHABARWAANI ADMIN THEME — SINGLE SOURCE OF TRUTH
        ----------------------------------------------------------------
-       HOW TO CHANGE THEME COLORS: edit ONLY the --apple-* / --brand-*
-       / --status-* values in the :root block below. Every semantic token
-       (--primary, --secondary, --tertiary, --quaternary, --bg-*,
-       --text-*, ...) references these via var(). The three appearance
-       blocks (light / dark) contain NO hex literals — only var()
-       references (plus color-mix() derivations and the --scheme
-       keyword). Component CSS must reference semantic tokens, never
-       hard-coded hex.
+       User-supplied palette (verbatim). HOW TO CHANGE THEME COLORS:
+       edit ONLY the --pal-* values in the :root block below. Every
+       semantic token (--accent, --paper, --ink, --danger, ...) references
+       these via var(). The three appearance blocks (light /
+       dark@​media / dark[data-theme]) contain NO hex literals — only
+       var() references (plus the --scheme keyword). Component CSS must
+       reference semantic tokens, never hard-coded hex.
 
-       --apple-* VALUES: Apple's 2025 unified system colors (HIG → Color
-       → Specifications), sampled from Apple's published swatches:
-         Orange  #FF8D28 / #FF9230   ·  IC Orange #C55300 / #FFA056
-         Gray    #8E8E93 / #8E8E93   ·  IC Gray   #6C6C70 / #AEAEB2
-         Gray2   #AEAEB2 / #636366    ·  Gray3     #C7C7CC / #48484A
-       (IC = Increased Contrast variant, also published by Apple.)
+       Full spec (tokens, style, balance, rules): docs/COLOR_PALETTE.md
 
-       4 ROLES (Apple's label hierarchy: primary / secondary /
-       tertiary / quaternary):
-         --primary    → Apple Orange   (brand/action; warm feel kept)
-         --secondary  → Apple IC Gray  (≥4.5:1 text on bg — strict)
-         --tertiary   → Apple Gray     (≥3:1 — Apple's own tertiary)
-         --quaternary → Apple Gray2    (faintest; decorative-only — never
-                                       for essential text, mirroring
-                                       Apple's 18% quaternaryLabel)
-       --primary-strong (#C55300, Apple's IC Orange, both modes) is the
-       darkest Apple orange that keeps white button text at ≥4.5:1 — it
-       backs primary buttons/badges and small orange text. The vivid
-       --primary is reserved for non-text emphasis (focus rings,
-       borders, icons). Enforced by tests/test_apple_palette_contrast.py.
+       4 ROLES (label hierarchy, HIG §4):
+         --primary    → --accent  (brand/action)
+         --secondary  → --ink-2   (≥4.5:1 text on bg — strict)
+         --tertiary   → --ink-3   (hints/disabled — non-essential text)
+         --quaternary → warm gray (faintest; decorative-only — never
+                                   for essential text)
+       --on-accent is #FFFFFF on light, #1C1B19 on dark. Info states use
+       grey/ink ONLY — never blue.
+       Contrast tiers (enforced by tests/test_theme_palette_contrast.py):
+         TIER 1 ≥4.5:1 — ink/ink-2 on paper/card/sunken, danger on paper,
+           ink on all tints, on-accent on accent (dark).
+         TIER 2 ≥3:1 (WCAG large-text/UI floor, user's explicit spec
+           values, measured not faked) — white on accent (light primary
+           buttons, 3.37:1), success/warning solids on paper/tints.
        ================================================================ */
     :root {
-        /* Apple system palette — light / dark variants. */
-        --apple-orange-light: #FF8D28;      --apple-orange-dark: #FF9230;
-        --apple-orange-ic-light: #C55300;   --apple-orange-ic-dark: #FFA056;
-        --apple-gray-light: #8E8E93;        --apple-gray-dark: #8E8E93;
-        --apple-gray-ic-light: #6C6C70;     --apple-gray-ic-dark: #AEAEB2;
-        --apple-gray2-light: #AEAEB2;       --apple-gray2-dark: #636366;
-        --apple-gray3-light: #C7C7CC;       --apple-gray3-dark: #48484A;
-        /* Brand canvas (warm paper / warm earth) + ink. */
-        --brand-bg1-light: #FAF7F0;    --brand-bg1-dark: #2C261F;
-        --brand-bg2-light: #FFFCF6;    --brand-bg2-dark: #3A3229;
-        --brand-bg3-light: #F5EFE6;    --brand-bg3-dark: #342C24;
-        --brand-hover-light: #EFE6D8;  --brand-hover-dark: #4A4036;
-        --brand-line-light: #E4D9C8;   --brand-line-dark: #5A4E42;
-        --brand-ink-light: #1F1A14;    --brand-ink-dark: #FAF7F0;
-        /* Status pairs (#219): each passes 4.5:1 with a dark variant. */
-        --status-ok-light: #1c7c3a;         --status-ok-dark: #2e7d46;
-        --status-ok-text-light: #1c7c3a;    --status-ok-text-dark: #4fae63;
-        --status-bad-light: #c41e3a;        --status-bad-dark: #c9303f;
-        --status-bad-text-light: #cf1322;   --status-bad-text-dark: #f0787f;
-        /* Text on primary surfaces (buttons, badges). */
-        --on-primary: #FFFFFF;
+        /* Layers */
+        --pal-paper-light: #F5F3EE;      --pal-paper-dark: #1C1B19;
+        --pal-card-light: #FFFFFF;       --pal-card-dark: #262522;
+        --pal-sunken-light: #EFECE4;     --pal-sunken-dark: #2E2D29;
+        --pal-popover-light: #FFFFFF;    --pal-popover-dark: #2E2D29;
+        --pal-hover-light: #F0EDE5;      --pal-hover-dark: #34332E;
+        --pal-scrim-light: rgba(31, 30, 27, .40);
+        --pal-scrim-dark: rgba(0, 0, 0, .60);
+        /* Lines */
+        --pal-line-light: #E3DFD5;       --pal-line-dark: #3A3833;
+        --pal-line-strong-light: #CFCABD; --pal-line-strong-dark: #4A4740;
+        /* Text */
+        --pal-ink-light: #1F1E1B;        --pal-ink-dark: #F1EEE6;
+        --pal-ink2-light: #6B675F;       --pal-ink2-dark: #A39E92;
+        --pal-ink3-light: #9A958A;       --pal-ink3-dark: #77726A;
+        --pal-on-accent-light: #FFFFFF;  --pal-on-accent-dark: #1C1B19;
+        /* Brand */
+        --pal-accent-light: #E0692A;     --pal-accent-dark: #EA7A3D;
+        --pal-accent-hover-light: #C9581D; --pal-accent-hover-dark: #F28C54;
+        --pal-accent-tint-light: #F8E6DA; --pal-accent-tint-dark: #3A2A20;
+        /* Status */
+        --pal-danger-light: #B3382C;    --pal-danger-dark: #E5604F;
+        --pal-danger-tint-light: #F7E4E1; --pal-danger-tint-dark: #3A2220;
+        --pal-success-light: #3F7D58;    --pal-success-dark: #5DAE7F;
+        --pal-success-tint-light: #E3F0E8; --pal-success-tint-dark: #1F2E25;
+        --pal-warning-light: #A8741A;    --pal-warning-dark: #D9A441;
+        --pal-warning-tint-light: #F7ECD6; --pal-warning-tint-dark: #33291A;
+        /* Decorative tier (warm gray; never essential text) */
+        --pal-quaternary-light: #C4BFAF; --pal-quaternary-dark: #57534A;
+        /* Shape */
+        --radius: 10px;
+        --radius-lg: 12px;
+        --pal-shadow-sm-light: 0 1px 2px rgba(31, 30, 27, .06);
+        --pal-shadow-sm-dark: none;
+        --pal-shadow-pop-light: 0 8px 24px rgba(31, 30, 27, .12);
+        --pal-shadow-pop-dark: 0 8px 24px rgba(0, 0, 0, .40);
     }
 
-    /* Light: 60% Paper canvas, 30% Card & typography, 10% Apple orange.
+    /* Light: warm paper canvas, white cards, orange accent.
        Semantic mapping only — every value is a var() reference. */
     :root,
     [data-theme="light"] {
-        --bg-primary: var(--brand-bg1-light);
-        --bg-secondary: var(--brand-bg2-light);
-        --bg-tertiary: var(--brand-bg3-light);
-        --bg-hover: var(--brand-hover-light);
-        --border-primary: var(--brand-line-light);
-        --text-primary: var(--brand-ink-light);
+        --paper: var(--pal-paper-light);
+        --card: var(--pal-card-light);
+        --sunken: var(--pal-sunken-light);
+        --popover: var(--pal-popover-light);
+        --hover: var(--pal-hover-light);
+        --scrim: var(--pal-scrim-light);
+        --line: var(--pal-line-light);
+        --line-strong: var(--pal-line-strong-light);
+        --ink: var(--pal-ink-light);
+        --ink-2: var(--pal-ink2-light);
+        --ink-3: var(--pal-ink3-light);
+        --on-accent: var(--pal-on-accent-light);
+        --accent: var(--pal-accent-light);
+        --accent-hover: var(--pal-accent-hover-light);
+        --accent-tint: var(--pal-accent-tint-light);
+        --danger: var(--pal-danger-light);
+        --danger-tint: var(--pal-danger-tint-light);
+        --success: var(--pal-success-light);
+        --success-tint: var(--pal-success-tint-light);
+        --warning: var(--pal-warning-light);
+        --warning-tint: var(--pal-warning-tint-light);
+        --shadow-sm: var(--pal-shadow-sm-light);
+        --shadow-pop: var(--pal-shadow-pop-light);
+        /* 4 roles */
+        --primary: var(--accent);
+        --secondary: var(--ink-2);
+        --tertiary: var(--ink-3);
+        --quaternary: var(--pal-quaternary-light);
+        /* Compat aliases for existing component CSS */
+        --bg-primary: var(--paper);
+        --bg-secondary: var(--card);
+        --bg-tertiary: var(--sunken);
+        --bg-hover: var(--hover);
+        --border-primary: var(--line);
+        --text-primary: var(--ink);
         --text-secondary: var(--secondary);
         --text-tertiary: var(--tertiary);
         --text-quaternary: var(--quaternary);
-        --primary: var(--apple-orange-light);
-        --primary-hover: var(--apple-orange-ic-light);
-        --primary-strong: var(--apple-orange-ic-light);
-        --primary-subtle: color-mix(in srgb, var(--apple-orange-light) 12%, white);
-        --secondary: var(--apple-gray-ic-light);
-        --tertiary: var(--apple-gray-light);
-        --quaternary: var(--apple-gray2-light);
-
-        /* Direct token aliases */
-        --paper: var(--bg-primary);
-        --card: var(--bg-secondary);
-        --field: var(--bg-tertiary);
-        --hover: var(--bg-hover);
-        --line: var(--border-primary);
-        --ink: var(--text-primary);
-        --ink-deep: var(--text-primary);
-        --muted: var(--text-secondary);
-        --orange: var(--primary);
-        --orange-press: var(--primary-hover);
+        --field: var(--sunken);
+        --muted: var(--ink-2);
+        --ink-deep: var(--ink);
+        --orange: var(--accent);
+        --orange-press: var(--accent-hover);
+        --primary-hover: var(--accent-hover);
+        --primary-strong: var(--accent);
+        --primary-subtle: var(--accent-tint);
+        --on-primary: var(--on-accent);
+        --ok: var(--success);
+        --ok-text: var(--success);
+        --bad: var(--danger);
+        --bad-text: var(--danger);
+        --warn: var(--warning);
+        --warn-text: var(--warning);
         --scheme: light;
-        /* Status tokens (#219): semantic, with a dark variant each. */
-        --ok: var(--status-ok-light);
-        --bad: var(--status-bad-light);
-        --ok-text: var(--status-ok-text-light);
-        --bad-text: var(--status-bad-text-light);
     }
 
 
@@ -525,39 +555,58 @@ st.markdown(
         :root:not([data-theme="light"]),
         html:not([data-theme="light"]),
         body:not([data-theme="light"]) {
-            --bg-primary: var(--brand-bg1-dark);
-            --bg-secondary: var(--brand-bg2-dark);
-            --bg-tertiary: var(--brand-bg3-dark);
-            --bg-hover: var(--brand-hover-dark);
-            --border-primary: var(--brand-line-dark);
-            --text-primary: var(--brand-ink-dark);
+            --paper: var(--pal-paper-dark);
+            --card: var(--pal-card-dark);
+            --sunken: var(--pal-sunken-dark);
+            --popover: var(--pal-popover-dark);
+            --hover: var(--pal-hover-dark);
+            --scrim: var(--pal-scrim-dark);
+            --line: var(--pal-line-dark);
+            --line-strong: var(--pal-line-strong-dark);
+            --ink: var(--pal-ink-dark);
+            --ink-2: var(--pal-ink2-dark);
+            --ink-3: var(--pal-ink3-dark);
+            --on-accent: var(--pal-on-accent-dark);
+            --accent: var(--pal-accent-dark);
+            --accent-hover: var(--pal-accent-hover-dark);
+            --accent-tint: var(--pal-accent-tint-dark);
+            --danger: var(--pal-danger-dark);
+            --danger-tint: var(--pal-danger-tint-dark);
+            --success: var(--pal-success-dark);
+            --success-tint: var(--pal-success-tint-dark);
+            --warning: var(--pal-warning-dark);
+            --warning-tint: var(--pal-warning-tint-dark);
+            --shadow-sm: var(--pal-shadow-sm-dark);
+            --shadow-pop: var(--pal-shadow-pop-dark);
+            --primary: var(--accent);
+            --secondary: var(--ink-2);
+            --tertiary: var(--ink-3);
+            --quaternary: var(--pal-quaternary-dark);
+            --bg-primary: var(--paper);
+            --bg-secondary: var(--card);
+            --bg-tertiary: var(--sunken);
+            --bg-hover: var(--hover);
+            --border-primary: var(--line);
+            --text-primary: var(--ink);
             --text-secondary: var(--secondary);
             --text-tertiary: var(--tertiary);
             --text-quaternary: var(--quaternary);
-            --primary: var(--apple-orange-dark);
-            --primary-hover: var(--apple-orange-ic-dark);
-            --primary-strong: var(--apple-orange-ic-light);
-            --primary-subtle: color-mix(in srgb, var(--apple-orange-dark) 12%, black);
-            --secondary: var(--apple-gray-ic-dark);
-            --tertiary: var(--apple-gray-dark);
-            --quaternary: var(--apple-gray2-dark);
-
-            --paper: var(--bg-primary);
-            --card: var(--bg-secondary);
-            --field: var(--bg-tertiary);
-            --hover: var(--bg-hover);
-            --line: var(--border-primary);
-            --ink: var(--text-primary);
-            --ink-deep: var(--text-primary);
-            --muted: var(--text-secondary);
-            --orange: var(--primary);
-            --orange-press: var(--primary-hover);
+            --field: var(--sunken);
+            --muted: var(--ink-2);
+            --ink-deep: var(--ink);
+            --orange: var(--accent);
+            --orange-press: var(--accent-hover);
+            --primary-hover: var(--accent-hover);
+            --primary-strong: var(--accent);
+            --primary-subtle: var(--accent-tint);
+            --on-primary: var(--on-accent);
+            --ok: var(--success);
+            --ok-text: var(--success);
+            --bad: var(--danger);
+            --bad-text: var(--danger);
+            --warn: var(--warning);
+            --warn-text: var(--warning);
             --scheme: dark;
-            /* Status tokens (#219): semantic, with a dark variant each. */
-            --ok: var(--status-ok-dark);
-            --bad: var(--status-bad-dark);
-            --ok-text: var(--status-ok-text-dark);
-            --bad-text: var(--status-bad-text-dark);
         }
     }
 
@@ -566,73 +615,101 @@ st.markdown(
     html[data-theme="dark"],
     body[data-theme="dark"],
     [data-theme="dark"] {
-            --bg-primary: var(--brand-bg1-dark);
-            --bg-secondary: var(--brand-bg2-dark);
-            --bg-tertiary: var(--brand-bg3-dark);
-            --bg-hover: var(--brand-hover-dark);
-            --border-primary: var(--brand-line-dark);
-            --text-primary: var(--brand-ink-dark);
+            --paper: var(--pal-paper-dark);
+            --card: var(--pal-card-dark);
+            --sunken: var(--pal-sunken-dark);
+            --popover: var(--pal-popover-dark);
+            --hover: var(--pal-hover-dark);
+            --scrim: var(--pal-scrim-dark);
+            --line: var(--pal-line-dark);
+            --line-strong: var(--pal-line-strong-dark);
+            --ink: var(--pal-ink-dark);
+            --ink-2: var(--pal-ink2-dark);
+            --ink-3: var(--pal-ink3-dark);
+            --on-accent: var(--pal-on-accent-dark);
+            --accent: var(--pal-accent-dark);
+            --accent-hover: var(--pal-accent-hover-dark);
+            --accent-tint: var(--pal-accent-tint-dark);
+            --danger: var(--pal-danger-dark);
+            --danger-tint: var(--pal-danger-tint-dark);
+            --success: var(--pal-success-dark);
+            --success-tint: var(--pal-success-tint-dark);
+            --warning: var(--pal-warning-dark);
+            --warning-tint: var(--pal-warning-tint-dark);
+            --shadow-sm: var(--pal-shadow-sm-dark);
+            --shadow-pop: var(--pal-shadow-pop-dark);
+            --primary: var(--accent);
+            --secondary: var(--ink-2);
+            --tertiary: var(--ink-3);
+            --quaternary: var(--pal-quaternary-dark);
+            --bg-primary: var(--paper);
+            --bg-secondary: var(--card);
+            --bg-tertiary: var(--sunken);
+            --bg-hover: var(--hover);
+            --border-primary: var(--line);
+            --text-primary: var(--ink);
             --text-secondary: var(--secondary);
             --text-tertiary: var(--tertiary);
             --text-quaternary: var(--quaternary);
-            --primary: var(--apple-orange-dark);
-            --primary-hover: var(--apple-orange-ic-dark);
-            --primary-strong: var(--apple-orange-ic-light);
-            --primary-subtle: color-mix(in srgb, var(--apple-orange-dark) 12%, black);
-            --secondary: var(--apple-gray-ic-dark);
-            --tertiary: var(--apple-gray-dark);
-            --quaternary: var(--apple-gray2-dark);
-
-            --paper: var(--bg-primary);
-            --card: var(--bg-secondary);
-            --field: var(--bg-tertiary);
-            --hover: var(--bg-hover);
-            --line: var(--border-primary);
-            --ink: var(--text-primary);
-            --ink-deep: var(--text-primary);
-            --muted: var(--text-secondary);
-            --orange: var(--primary);
-            --orange-press: var(--primary-hover);
+            --field: var(--sunken);
+            --muted: var(--ink-2);
+            --ink-deep: var(--ink);
+            --orange: var(--accent);
+            --orange-press: var(--accent-hover);
+            --primary-hover: var(--accent-hover);
+            --primary-strong: var(--accent);
+            --primary-subtle: var(--accent-tint);
+            --on-primary: var(--on-accent);
+            --ok: var(--success);
+            --ok-text: var(--success);
+            --bad: var(--danger);
+            --bad-text: var(--danger);
+            --warn: var(--warning);
+            --warn-text: var(--warning);
             --scheme: dark;
-            /* Status tokens (#219): semantic, with a dark variant each. */
-            --ok: var(--status-ok-dark);
-            --bad: var(--status-bad-dark);
-            --ok-text: var(--status-ok-text-dark);
-            --bad-text: var(--status-bad-text-dark);
     }
 
     body[data-theme="dark"],
     [data-theme="dark"] {
-        --bg-primary: #2C261F;
-        --bg-secondary: #3A3229;
-        --bg-tertiary: #342C24;
-        --bg-hover: #4A4036;
-        --border-primary: #5A4E42;
-        --text-primary: #FAF7F0;
-        --text-secondary: #D4C7B6;
-        --text-tertiary: #A89B8B;
-        --primary: #E0692A;
-        --primary-hover: #F08A52;
-        --primary-subtle: #3D291C;
-        --secondary: #D4C7B6;
-        --tertiary: #A89B8B;
-
-        --paper: var(--bg-primary);
-        --card: var(--bg-secondary);
-        --field: var(--bg-tertiary);
-        --hover: var(--bg-hover);
-        --line: var(--border-primary);
-        --ink: var(--text-primary);
-        --ink-deep: var(--text-primary);
-        --muted: var(--text-secondary);
-        --orange: var(--primary);
-        --orange-press: var(--primary-hover);
-        --scheme: dark;
-        /* Status tokens (#219): semantic, with a dark variant each. */
-        --ok: #2e7d46;
-        --bad: #c9303f;
-        --ok-text: #4fae63;
-        --bad-text: #f0787f;
+        --paper: var(--pal-paper-dark);
+        --card: var(--pal-card-dark);
+        --sunken: var(--pal-sunken-dark);
+        --popover: var(--pal-popover-dark);
+        --hover: var(--pal-hover-dark);
+        --scrim: var(--pal-scrim-dark);
+        --line: var(--pal-line-dark);
+        --line-strong: var(--pal-line-strong-dark);
+        --ink: var(--pal-ink-dark);
+        --ink-2: var(--pal-ink2-dark);
+        --ink-3: var(--pal-ink3-dark);
+        --on-accent: var(--pal-on-accent-dark);
+        --accent: var(--pal-accent-dark);
+        --accent-hover: var(--pal-accent-hover-dark);
+        --accent-tint: var(--pal-accent-tint-dark);
+        --danger: var(--pal-danger-dark);
+        --danger-tint: var(--pal-danger-tint-dark);
+        --success: var(--pal-success-dark);
+        --success-tint: var(--pal-success-tint-dark);
+        --warning: var(--pal-warning-dark);
+        --warning-tint: var(--pal-warning-tint-dark);
+        --primary: var(--accent);
+        --secondary: var(--ink-2);
+        --tertiary: var(--ink-3);
+        --quaternary: var(--pal-quaternary-dark);
+        --bg-primary: var(--paper);
+        --bg-secondary: var(--card);
+        --bg-tertiary: var(--sunken);
+        --bg-hover: var(--hover);
+        --border-primary: var(--line);
+        --text-primary: var(--ink);
+        --text-secondary: var(--ink-2);
+        --text-tertiary: var(--ink-3);
+        --shadow-sm: var(--pal-shadow-sm-dark);
+        --shadow-pop: var(--pal-shadow-pop-dark);
+        --ok: var(--success);
+        --bad: var(--danger);
+        --ok-text: var(--success);
+        --bad-text: var(--danger);
     }
 
     :root, html, body,
@@ -748,7 +825,8 @@ st.markdown(
         color: inherit;
     }
 
-    /* Primary buttons */
+    /* Primary buttons — Khabarwaani spec: accent fill, on-accent text,
+       transparent border, 36px system, soft shadow. */
     button[data-testid="stBaseButton-primary"],
     button[data-testid="baseButton-primary"],
     button[kind="primary"],
@@ -757,16 +835,16 @@ st.markdown(
     .stButton > button[data-testid="baseButton-primary"],
     [data-testid="stFormSubmitButton"] button[kind="primary"],
     [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"] {
-        background-color: var(--primary-strong) !important;
-        background: var(--primary-strong) !important;
-        color: var(--on-primary) !important;
-        border: 1px solid var(--primary-strong) !important;
-        border-radius: 10px !important;
+        background-color: var(--accent) !important;
+        background: var(--accent) !important;
+        color: var(--on-accent) !important;
+        border: 1px solid transparent !important;
+        border-radius: var(--radius) !important;
         font-weight: 600 !important;
-        box-shadow: none !important;
-        min-height: 40px !important;
+        box-shadow: var(--shadow-sm) !important;
+        min-height: 36px !important;
         font-size: 0.88rem !important;
-        transition: background 120ms ease, border-color 120ms ease !important;
+        transition: background 150ms ease, border-color 150ms ease !important;
     }
 
     button[data-testid="stBaseButton-primary"]:hover,
@@ -777,11 +855,10 @@ st.markdown(
     .stButton > button[data-testid="baseButton-primary"]:hover,
     [data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
     [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"]:hover {
-        background-color: var(--primary-strong) !important;
-        background: var(--primary-strong) !important;
-        color: var(--on-primary) !important;
-        border-color: var(--primary-strong) !important;
-        filter: brightness(0.9) !important;
+        background-color: var(--accent-hover) !important;
+        background: var(--accent-hover) !important;
+        color: var(--on-accent) !important;
+        border-color: transparent !important;
     }
 
     button[data-testid="stBaseButton-primary"] *,
@@ -790,10 +867,11 @@ st.markdown(
     .stButton > button[kind="primary"] *,
     .stButton > button[data-testid="stBaseButton-primary"] *,
     .stButton > button[data-testid="baseButton-primary"] * {
-        color: var(--on-primary) !important;
+        color: var(--on-accent) !important;
     }
 
-    /* Secondary buttons */
+    /* Secondary buttons — Khabarwaani spec: card fill, 1px line border,
+       36px system, soft shadow; hover lifts border to line-strong. */
     button[data-testid="stBaseButton-secondary"],
     button[data-testid="baseButton-secondary"],
     button[kind="secondary"],
@@ -810,12 +888,12 @@ st.markdown(
         background: var(--card) !important;
         color: var(--ink) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
+        border-radius: var(--radius) !important;
         font-weight: 600 !important;
-        box-shadow: none !important;
-        min-height: 40px !important;
+        box-shadow: var(--shadow-sm) !important;
+        min-height: 36px !important;
         font-size: 0.88rem !important;
-        transition: background 120ms ease, border-color 120ms ease, color 120ms ease !important;
+        transition: background 150ms ease, border-color 150ms ease, color 150ms ease !important;
     }
 
     button[data-testid="stBaseButton-secondary"]:hover,
@@ -833,7 +911,7 @@ st.markdown(
         background-color: var(--hover) !important;
         background: var(--hover) !important;
         color: var(--ink) !important;
-        border-color: var(--line) !important;
+        border-color: var(--line-strong) !important;
     }
 
     button[data-testid="stBaseButton-secondary"]:active,
@@ -853,6 +931,20 @@ st.markdown(
         color: var(--ink) !important;
     }
 
+    /* Disabled buttons: ink-3 text on sunken — quiet, never red. */
+    .stButton > button:disabled,
+    div[data-testid="stButton"] button:disabled,
+    button[data-testid="stBaseButton-primary"]:disabled,
+    button[data-testid="stBaseButton-secondary"]:disabled {
+        color: var(--ink-3) !important;
+        background-color: var(--sunken) !important;
+        background: var(--sunken) !important;
+        border-color: var(--line) !important;
+        box-shadow: none !important;
+        opacity: 1 !important;
+    }
+
+    /* Focus-visible: 2px accent ring, 2px offset (Khabarwaani spec). */
     button[data-testid="stBaseButton-secondary"]:focus,
     button[data-testid="stBaseButton-secondary"]:focus-visible,
     .stButton > button:focus,
@@ -861,8 +953,9 @@ st.markdown(
     [data-testid="stPopover"] button:focus-visible,
     [data-testid="stPopoverButton"]:focus,
     [data-testid="stPopoverButton"]:focus-visible {
-        outline: none !important;
-        box-shadow: 0 0 0 2px var(--orange) !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: var(--shadow-sm) !important;
     }
 
     button[data-testid="stBaseButton-secondary"] *,
@@ -879,13 +972,15 @@ st.markdown(
         -webkit-text-fill-color: var(--ink) !important;
     }
 
-    /* Form controls: input, textarea, select */
+    /* Form controls: input, textarea, select.
+       Single border only: the border lives on the trigger/field itself —
+       the outer [data-baseweb="select"] wrapper must NOT carry a border
+       (it rendered a double border: outer ring + inner field). */
     textarea, input, select,
     [data-baseweb="input"],
     [data-baseweb="input"] input,
     [data-baseweb="textarea"],
     [data-baseweb="textarea"] textarea,
-    [data-baseweb="select"],
     [data-baseweb="select"] > div,
     [data-baseweb="select"] span,
     [data-baseweb="base-input"],
@@ -901,28 +996,52 @@ st.markdown(
         color: var(--ink) !important;
         caret-color: var(--ink) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
+        border-radius: var(--radius) !important;
+    }
+    /* The select wrapper itself: no border, no background — the inner
+       trigger div above is the single bordered field. */
+    [data-baseweb="select"] {
+        background: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
     }
 
     textarea::placeholder, input::placeholder,
     [data-baseweb="input"] input::placeholder,
     [data-baseweb="textarea"] textarea::placeholder,
     ::placeholder {
-        color: var(--muted) !important;
-        opacity: 0.8 !important;
+        color: var(--ink-3) !important;
+        opacity: 1 !important;
     }
 
-    /* Selectbox closed trigger container */
+    /* Focus: accent border + 3px accent-tint ring (Khabarwaani spec). */
+    textarea:focus-visible, input:focus-visible, select:focus-visible,
+    [data-baseweb="input"]:focus-within,
+    [data-baseweb="textarea"]:focus-within,
+    [data-testid="stTextInput"] input:focus,
+    [data-testid="stTextArea"] textarea:focus,
+    [data-testid="stNumberInput"] input:focus {
+        outline: none !important;
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+
+    /* Selectbox closed trigger container — the single bordered field. */
     [data-baseweb="select"] > div,
     [data-testid="stSelectbox"] div[class*="e1fp86qc0"],
     [data-testid="stSelectbox"] div[data-baseweb="select"] > div {
         background-color: var(--field) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
+        border-radius: var(--radius) !important;
         min-height: 40px !important;
         height: 40px !important;
         box-sizing: border-box !important;
         overflow: hidden !important;
+    }
+    [data-testid="stSelectbox"]:focus-within div[class*="e1fp86qc0"],
+    [data-testid="stSelectbox"]:focus-within div[data-baseweb="select"] > div {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
     }
     [data-baseweb="select"],
     [data-baseweb="select"] *,
@@ -1119,6 +1238,45 @@ st.markdown(
     [data-testid="stCheckbox"] [data-baseweb="checkbox"] span {
         border-color: var(--line) !important;
     }
+    /* Toggle/switch: off = line-strong, ON = accent. NEVER red (red reads
+       as error/"off"). Streamlit ships no custom theme here, so its
+       default red would show without this override. */
+    [data-testid="stToggle"] [role="switch"] {
+        background-color: var(--line-strong) !important;
+    }
+    [data-testid="stToggle"] [role="switch"][aria-checked="true"] {
+        background-color: var(--accent) !important;
+    }
+    [data-testid="stToggle"] [role="switch"][aria-checked="true"] > div {
+        background-color: var(--on-accent) !important;
+    }
+    /* Checkbox: checked box + check = accent, never red. */
+    [data-testid="stCheckbox"] label:has(input:checked) [data-baseweb="checkbox"] > div:first-child {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stCheckbox"] label:has(input:checked) [data-baseweb="checkbox"] svg {
+        color: var(--on-accent) !important;
+    }
+
+    /* Dividers: one consistent 1px line style, consistent height. */
+    hr,
+    [data-testid="stDivider"] hr,
+    [data-testid="stHorizontalBlock"] hr {
+        border: none !important;
+        border-top: 1px solid var(--line) !important;
+        margin: 12px 0 !important;
+        height: 0 !important;
+    }
+    /* Toolbar vertical separators: 1px wide, 20px tall. */
+    .toolbar .sep,
+    [data-toolbar-sep="1"] {
+        width: 1px !important;
+        height: 20px !important;
+        background: var(--line) !important;
+        margin: 0 4px !important;
+        flex: none !important;
+    }
 
     code, pre, [data-testid="stCode"], [data-testid="stCode"] pre, pre code {
         background: var(--field) !important;
@@ -1126,21 +1284,40 @@ st.markdown(
         border-color: var(--line) !important;
     }
 
+    /* Alerts, toasts, dialogs, popovers, menus, tooltips: popover
+       surface, 1px line border, large radius, pop shadow. */
     [data-testid="stAlert"],
     [data-testid="stNotification"],
     [data-testid="stDialog"] > div,
     [data-testid="stStatusWidget"],
     [data-testid="stToast"],
     div[class*="stToast"],
-    div[data-testid="stAlert"] > div {
-        background-color: var(--card) !important;
-        background: var(--card) !important;
+    div[data-testid="stAlert"] > div,
+    [data-testid="stPopoverBody"],
+    div[role="tooltip"] {
+        background-color: var(--popover) !important;
+        background: var(--popover) !important;
         color: var(--ink) !important;
         -webkit-text-fill-color: var(--ink) !important;
         border: 1px solid var(--line) !important;
-        border-radius: 10px !important;
-        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22) !important;
+        border-radius: var(--radius-lg) !important;
+        box-shadow: var(--shadow-pop) !important;
     }
+    /* Modal overlay: scrim. */
+    [data-testid="stDialog"] {
+        background: var(--scrim) !important;
+    }
+    /* Menu-item hover: hover wash. */
+    [data-testid="stPopoverBody"] [role="menuitem"]:hover,
+    [data-testid="stPopoverBody"] [role="option"]:hover,
+    [data-baseweb="menu"] [role="menuitem"]:hover {
+        background: var(--hover) !important;
+    }
+    /* Status badges: tint background, solid text. */
+    .badge-success { background: var(--success-tint) !important; color: var(--success) !important; }
+    .badge-warning { background: var(--warning-tint) !important; color: var(--warning) !important; }
+    .badge-danger { background: var(--danger-tint) !important; color: var(--danger) !important; }
+    .hint { color: var(--ink-2) !important; }
     [data-testid="stAlert"] *,
     [data-testid="stNotification"] *,
     [data-testid="stToast"] *,
