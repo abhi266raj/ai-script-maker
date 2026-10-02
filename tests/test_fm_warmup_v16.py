@@ -1,8 +1,9 @@
 """Developer on-demand Apple FM warm-up (issue #37).
 
-The "Cold start" button next to the Studio/Library tab bar kicks off the
-#4 availability probe (30s -> 30s -> 60s) in a daemon thread so the first
-real generation skips the cold-start delay.
+The "Cold start" button next to the Studio/Library tab bar kicks
+off the #4 availability probe (30s -> 30s -> 60s) in a daemon thread so
+the first real generation skips the cold-start delay. Manual-only:
+nothing automatic — warm-up runs solely on button tap.
 
 Covers: mailbox read/write, double-start refusal, stale-state recovery,
 worker terminal states (done only on probe-available, failed with the
@@ -72,7 +73,7 @@ def test_read_non_dict_mailbox_is_idle(libdir):
 def test_start_writes_warming_state(libdir, monkeypatch):
     gate = threading.Event()
 
-    def fake_worker():
+    def fake_worker(*a):
         gate.wait(timeout=10)
 
     monkeypatch.setattr(lib, "_fm_warmup_worker", fake_worker)
@@ -87,7 +88,7 @@ def test_start_writes_warming_state(libdir, monkeypatch):
 def test_double_start_refused_while_warming(libdir, monkeypatch):
     gate = threading.Event()
 
-    def fake_worker():
+    def fake_worker(*a):
         gate.wait(timeout=10)
 
     monkeypatch.setattr(lib, "_fm_warmup_worker", fake_worker)

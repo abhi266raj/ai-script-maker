@@ -458,8 +458,6 @@ def test_more_news_worker_writes_honest_outcome(libdir, monkeypatch):
 
 def _load_more_kwargs(kind="more_images", **kw):
     d = dict(story_id="sid1", kind=kind,
-             label=("Load more images" if kind == "more_images"
-                    else "Load more news"),
              button_key=("lib_moreimg_sid1" if kind == "more_images"
                          else "lib_morenews_sid1"),
              help_text="Fetch up to 5 more",
@@ -469,12 +467,31 @@ def _load_more_kwargs(kind="more_images", **kw):
 
 
 def test_load_more_button_idle_state():
+    # #202: icon-only — empty text label, material add icon when idle.
     lui, fake = _ui_with_fake_st()
     lui._render_load_more_button(**_load_more_kwargs())
-    assert fake.buttons == [("Load more images", "lib_moreimg_sid1")]
-    assert fake.button_kwargs[0].get("icon") is None
+    assert fake.buttons == [("", "lib_moreimg_sid1")]
+    assert fake.button_kwargs[0]["label"] == ""
+    assert fake.button_kwargs[0]["icon"] == ":material/add:"
     assert fake.button_kwargs[0]["disabled"] is False
     assert "lib-spin-more-images" not in "".join(fake.markup)
+
+
+def test_load_more_button_icon_only_help_tag():
+    """#202: icon-only buttons need an accessibility label — the help tag
+    (HIG §2: verb-first, sentence case, <=75 chars). Both kinds."""
+    for kind, help_text in (("more_images", "Fetch up to 5 more images"),
+                            ("more_news", "Fetch up to 5 more news links")):
+        lui, fake = _ui_with_fake_st()
+        lui._render_load_more_button(
+            **_load_more_kwargs(kind=kind, help_text=help_text))
+        kw = fake.button_kwargs[0]
+        assert kw["label"] == "", f"kind={kind}: no text label"
+        assert kw["icon"] == ":material/add:", f"kind={kind}"
+        tip = kw["help"]
+        assert tip, f"kind={kind}: help tag is the accessibility label"
+        assert len(tip) <= 75, f"kind={kind}: {tip!r}"
+        assert tip[0].isupper() and not tip[0].isspace(), f"kind={kind}"
 
 
 def test_load_more_button_running_shows_spinner_and_disables():
@@ -482,7 +499,7 @@ def test_load_more_button_running_shows_spinner_and_disables():
     lui, fake = _ui_with_fake_st()
     lui._render_load_more_button(
         **_load_more_kwargs(busy_kinds={"more_images"}))
-    assert fake.buttons == [("Load more images", "lib_moreimg_sid1")]
+    assert fake.buttons == [("", "lib_moreimg_sid1")]
     kw = fake.button_kwargs[0]
     assert kw["icon"] == "spinner"
     assert kw["disabled"] is True
@@ -511,7 +528,7 @@ def test_load_more_news_button_markers():
     lui, fake = _ui_with_fake_st()
     lui._render_load_more_button(
         **_load_more_kwargs(kind="more_news", busy_kinds={"more_news"}))
-    assert fake.buttons == [("Load more news", "lib_morenews_sid1")]
+    assert fake.buttons == [("", "lib_morenews_sid1")]
     assert fake.button_kwargs[0]["icon"] == "spinner"
     assert fake.button_kwargs[0]["disabled"] is True
     assert "lib-spin-more-news" not in "".join(fake.markup)

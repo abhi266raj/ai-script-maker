@@ -110,8 +110,11 @@ _LOAD_MORE_BATCH = 5
 _AI_HASHTAG_TIMEOUT_S = 45
 
 # Fail-loud message when hashtag discovery is asked for with AI off.
-_AI_DISABLED_MSG = ("AI processing is disabled — enable AI processing in "
-                    "Library settings to find trending hashtags.")
+# The old "Enable AI processing" toggle is gone: the user picks an engine
+# (or None) in the AI engine dropdown in the story toolbar.
+_AI_DISABLED_MSG = ("AI processing is disabled — pick an AI engine "
+                    "(not None) in the story toolbar's AI engine dropdown "
+                    "to find trending hashtags.")
 
 
 def library_root() -> Path:
@@ -168,6 +171,10 @@ LIBRARY_ENGINE_OPTIONS = {
 }
 LIBRARY_ENGINE_MODES = frozenset(LIBRARY_ENGINE_OPTIONS.values())
 DEFAULT_LIBRARY_AI_ENGINE = "Local First Then Antigravity"
+# The "Enable AI processing" toggle is gone: the AI engine dropdown in the
+# story-detail toolbar offers this label, and selecting it disables AI
+# processing (the engine resolves to None).
+LIBRARY_AI_ENGINE_NONE_LABEL = "None"
 
 
 def new_story_id() -> str:
@@ -612,6 +619,102 @@ def update_story_script(story_id: str, script_md: str) -> None:
         encoding="utf-8")
 
 
+# ---------------------------------------------------------------------------
+# Fine-tune history (#105)
+# ---------------------------------------------------------------------------
+# Every "Fine tune script" turn is recorded here so the conversation carries
+# across turns (the LLM sees all prior instructions + refined scripts) and so
+# script versioning (#104) can later adopt the history as versions.
+#
+# Stored as ``fine_tune_history`` frontmatter: a list of JSON strings, one
+# per turn, ``{"instruction": ..., "script": ...}`` — JSON-per-entry keeps
+# the hand-rolled frontmatter format honest (the same pattern as
+# ``refresh_outcome_pending``; JSON encoding protects newlines/quotes
+# through _yaml_escape/_unquote). Capped at _FINE_TUNE_HISTORY_MAX_TURNS
+# turns so frontmatter can't grow without bound.
+_FINE_TUNE_HISTORY_KEY = "fine_tune_history"
+_FINE_TUNE_HISTORY_MAX_TURNS = 20
+
+
+def get_fine_tune_history(story_id: str) -> List[Dict[str, str]]:
+    """Return the story's fine-tune turns, oldest first.
+
+    Each turn is ``{"instruction": str, "script": str}``. Malformed entries
+    are skipped (a corrupt entry must not brick the story view); the writer
+    (``record_fine_tune_turn``) validates strictly instead.
+
+    Raises FileNotFoundError if the story does not exist.
+    """
+    _check_id(story_id)
+    path = story_path(story_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Story not found: {story_id}")
+    meta, _body = _parse_frontmatter(path.read_text(encoding="utf-8"))
+    turns: List[Dict[str, str]] = []
+    for entry in meta.get(_FINE_TUNE_HISTORY_KEY) or []:
+        if not isinstance(entry, str):
+            continue
+        try:
+            turn = json.loads(entry)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(turn, dict):
+            continue
+        instruction = turn.get("instruction")
+        script = turn.get("script")
+        if not isinstance(instruction, str) or not isinstance(script, str):
+            continue
+        if not instruction.strip() or not script.strip():
+            continue
+        turns.append({"instruction": instruction.strip(),
+                      "script": script.strip()})
+    return turns
+
+
+def record_fine_tune_turn(story_id: str, instruction: str,
+                          refined_script: str) -> None:
+    """Append a fine-tune turn and save the refined script as a new version.
+
+    The refined script becomes a NEW script version (#104) — latest on top —
+    and the default, so the versions list shows it immediately (expanded)
+    and the ``## Script`` mirror, Copy / Share / export all use it. The
+    pre-turn text stays recoverable as the previous version; nothing is
+    overwritten in place.
+
+    The version is written FIRST: a recorded turn always reflects the stored
+    script — a turn is never recorded without its script landing.
+
+    Raises ValueError for blank instruction/script, FileNotFoundError if the
+    story does not exist. Any write error propagates — the caller must
+    surface it (fail loud), never pretend the refinement landed.
+    """
+    _check_id(story_id)
+    instruction_text = (instruction or "").strip()
+    if not instruction_text:
+        raise ValueError("Fine-tune instruction must not be empty.")
+    refined_text = (refined_script or "").strip()
+    if not refined_text:
+        raise ValueError("Refined script must not be empty.")
+    # #104/#191: the refined script becomes a NEW version (latest on top)
+    # and the default. Overwriting the default version's text in place hid
+    # the result whenever the latest version wasn't the default (#191):
+    # the versions list expands the latest version, so the refined text
+    # sat invisible inside a collapsed "Version N · Default" expander
+    # while the expanded latest version still showed the old text.
+    # create_script_version seeds the new version from the current default
+    # text; update + make-default then land the refinement on it and mirror
+    # it to ## Script. Each primitive is fail-loud on its own.
+    new_n = create_script_version(story_id)
+    update_script_version_text(story_id, new_n, refined_text)
+    set_default_script_version(story_id, new_n)
+    history = get_fine_tune_history(story_id)
+    history.append({"instruction": instruction_text, "script": refined_text})
+    del history[:-_FINE_TUNE_HISTORY_MAX_TURNS]
+    entries = [json.dumps(turn, ensure_ascii=False) for turn in history]
+    if not update_story_fields(story_id, **{_FINE_TUNE_HISTORY_KEY: entries}):
+        raise FileNotFoundError(f"Story not found: {story_id}")
+
+
 def delete_story(story_id: str) -> bool:
     """Delete a story and its media files. Returns True if anything was removed."""
     _check_id(story_id)
@@ -634,6 +737,250 @@ def delete_story(story_id: str) -> bool:
         except OSError:
             pass
     return removed
+
+
+# ---------------------------------------------------------------------------
+# Script versioning (#104)
+# ---------------------------------------------------------------------------
+# Each story keeps multiple script versions. Versions live in a sidecar
+# ``<story-id>.versions.json`` next to the story file; the ``## Script``
+# section of ``<story-id>.md`` ALWAYS mirrors the *default* version's text,
+# so every existing reader (the native macOS app, Copy / Share / export)
+# keeps working unchanged — the default version IS the story's script.
+#
+# Sidecar schema::
+#
+#     {"default": 1, "next_n": 2,
+#      "versions": [{"n": 1, "text": "...", "created_at": "..."}, ...]}
+#
+# ``next_n`` is a monotonic counter: deleted version numbers are never
+# reused, so "Version 3" always means the same text.
+#
+# Migration: stories saved before versioning have no sidecar; the first
+# version access seeds v1 from the current ``## Script`` text and persists
+# it, so nothing is ever lost. Corrupt sidecar JSON raises loudly — it is
+# never silently rebuilt or dropped.
+#
+# Invariants (enforced by every mutator below):
+#   * v1 (the original) can never be deleted.
+#   * Exactly one version is the default at all times.
+#   * Deleting the default version falls back to v1 as the default.
+#   * The ``## Script`` section always equals the default version's text.
+
+_VERSIONS_SUFFIX = ".versions.json"
+
+
+def _versions_path(story_id: str) -> Path:
+    return stories_dir() / f"{_check_id(story_id)}{_VERSIONS_SUFFIX}"
+
+
+def _validate_versions_doc(doc: Any, story_id: str) -> tuple[List[Dict[str, Any]], int, int]:
+    """Validate a parsed sidecar doc → (versions ascending by n, default_n, next_n).
+
+    Raises ValueError with a loud, actionable message on any corruption —
+    the caller must surface it, never silently rebuild the history.
+    """
+    if not isinstance(doc, dict):
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            f"top-level JSON must be an object, got {type(doc).__name__}.")
+    versions = doc.get("versions")
+    default_n = doc.get("default")
+    next_n = doc.get("next_n")
+    if not isinstance(versions, list) or not versions:
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            "'versions' must be a non-empty list.")
+    seen: Set[int] = set()
+    clean: List[Dict[str, Any]] = []
+    for i, v in enumerate(versions):
+        if not isinstance(v, dict):
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"version entry #{i} is not an object.")
+        n = v.get("n")
+        text = v.get("text")
+        if not isinstance(n, int) or isinstance(n, bool) or n < 1:
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"version entry #{i} has invalid 'n': {n!r}.")
+        if n in seen:
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"duplicate version number {n}.")
+        if not isinstance(text, str):
+            raise ValueError(
+                f"Corrupt script versions for story {story_id}: "
+                f"version {n} has non-string 'text'.")
+        seen.add(n)
+        clean.append({"n": n, "text": text,
+                      "created_at": str(v.get("created_at") or "")})
+    if (not isinstance(default_n, int) or isinstance(default_n, bool)
+            or default_n not in seen):
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            f"'default' ({default_n!r}) does not match any version.")
+    if (not isinstance(next_n, int) or isinstance(next_n, bool)
+            or next_n <= max(seen)):
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: "
+            f"'next_n' ({next_n!r}) must exceed every existing version number.")
+    clean.sort(key=lambda v: v["n"])
+    return clean, default_n, next_n
+
+
+def _read_versions_doc(story_id: str) -> Optional[Dict[str, Any]]:
+    """Read the raw sidecar JSON, or None when the story has no sidecar yet.
+
+    Raises FileNotFoundError for an unknown story, ValueError on corrupt JSON.
+    """
+    path = story_path(story_id)
+    if not path.exists():
+        raise FileNotFoundError(f"Story not found: {story_id}")
+    vpath = _versions_path(story_id)
+    if not vpath.exists():
+        return None
+    try:
+        return json.loads(vpath.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
+        raise ValueError(
+            f"Corrupt script versions for story {story_id}: {e}. "
+            f"Delete {vpath.name} only if you are sure the history is expendable.") from e
+
+
+def _write_versions_doc(story_id: str, versions: List[Dict[str, Any]],
+                        default_n: int, next_n: int) -> None:
+    """Persist the sidecar. Caller must hold _meta_write_lock(story_id)."""
+    doc = {"default": default_n, "next_n": next_n,
+           "versions": [{"n": v["n"], "text": v["text"],
+                         "created_at": v.get("created_at", "")}
+                        for v in sorted(versions, key=lambda v: v["n"])]}
+    _versions_path(story_id).write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _ensure_versions(story_id: str) -> tuple[List[Dict[str, Any]], int, int]:
+    """Return (versions ascending, default_n, next_n), migrating legacy stories.
+
+    Stories saved before versioning get v1 seeded from the current
+    ``## Script`` text and persisted — the original is never lost.
+    Caller must hold _meta_write_lock(story_id).
+    """
+    doc = _read_versions_doc(story_id)
+    if doc is not None:
+        return _validate_versions_doc(doc, story_id)
+    # Legacy story: seed v1 from the current script section.
+    _meta, body = _parse_frontmatter(story_path(story_id).read_text(encoding="utf-8"))
+    _dialogue, script = _split_sections(body)
+    created = _meta.get("created_at") or datetime.datetime.now().isoformat(timespec="seconds")
+    versions = [{"n": 1, "text": script.strip(), "created_at": str(created)}]
+    _write_versions_doc(story_id, versions, 1, 2)
+    return versions, 1, 2
+
+
+def _version_text(versions: List[Dict[str, Any]], n: int) -> str:
+    for v in versions:
+        if v["n"] == n:
+            return v["text"]
+    raise ValueError(f"Story has no script version {n}.")
+
+
+def get_script_versions(story_id: str) -> tuple[List[Dict[str, Any]], int]:
+    """Return (versions latest-first, default_n) for a story (#104).
+
+    Each version is ``{"n": int, "text": str, "created_at": str}``.
+    Migrates legacy stories on first access. Raises FileNotFoundError for
+    an unknown story and ValueError on corrupt version data — both loud,
+    never silent.
+    """
+    _check_id(story_id)
+    with _meta_write_lock(story_id):
+        versions, default_n, _ = _ensure_versions(story_id)
+    versions = [dict(v) for v in reversed(versions)]
+    return versions, default_n
+
+
+def create_script_version(story_id: str) -> int:
+    """Create a new version seeded from the current default text (#104).
+
+    The new version is NOT made the default — the default only changes via
+    an explicit ``set_default_script_version``. Returns the new version
+    number (monotonic: deleted numbers are never reused).
+    """
+    _check_id(story_id)
+    with _meta_write_lock(story_id):
+        versions, default_n, next_n = _ensure_versions(story_id)
+        new_n = next_n
+        versions.append({
+            "n": new_n,
+            "text": _version_text(versions, default_n),
+            "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
+        })
+        _write_versions_doc(story_id, versions, default_n, next_n + 1)
+    return new_n
+
+
+def update_script_version_text(story_id: str, n: int, text: str) -> None:
+    """Replace a version's text (#104, per-version edit).
+
+    When the edited version is the default, the story's ``## Script``
+    section is rewritten too, so Copy / Share / export keep using it.
+    Raises ValueError for blank text or an unknown version number.
+    """
+    _check_id(story_id)
+    if not (text or "").strip():
+        raise ValueError("Script version text must not be empty.")
+    with _meta_write_lock(story_id):
+        versions, default_n, next_n = _ensure_versions(story_id)
+        found = False
+        for v in versions:
+            if v["n"] == n:
+                v["text"] = text.strip()
+                found = True
+        if not found:
+            raise ValueError(f"Story has no script version {n}.")
+        _write_versions_doc(story_id, versions, default_n, next_n)
+        if n == default_n:
+            # Keep the .md mirror in sync: the default version IS the story's script.
+            update_story_script(story_id, text.strip())
+
+
+def delete_script_version(story_id: str, n: int) -> None:
+    """Delete a version (#104).
+
+    v1 (the original) is protected and can never be deleted. Deleting the
+    default version falls the default back to v1 and rewrites the story's
+    ``## Script`` section with v1's text. Raises ValueError otherwise.
+    """
+    _check_id(story_id)
+    if n == 1:
+        raise ValueError("The original version (v1) cannot be deleted.")
+    with _meta_write_lock(story_id):
+        versions, default_n, next_n = _ensure_versions(story_id)
+        remaining = [v for v in versions if v["n"] != n]
+        if len(remaining) == len(versions):
+            raise ValueError(f"Story has no script version {n}.")
+        new_default = default_n
+        if n == default_n:
+            new_default = 1  # Delete-default fallback: the original becomes default.
+        _write_versions_doc(story_id, remaining, new_default, next_n)
+        if n == default_n:
+            update_story_script(story_id, _version_text(remaining, 1))
+
+
+def set_default_script_version(story_id: str, n: int) -> None:
+    """Make version ``n`` the default (#104): exactly one default at a time.
+
+    The story's ``## Script`` section is rewritten with the version's text,
+    so Copy / Share / export immediately use it. Raises ValueError for an
+    unknown version number.
+    """
+    _check_id(story_id)
+    with _meta_write_lock(story_id):
+        versions, _old_default, next_n = _ensure_versions(story_id)
+        text = _version_text(versions, n)  # raises ValueError when unknown
+        _write_versions_doc(story_id, versions, n, next_n)
+        update_story_script(story_id, text)
 
 
 def delete_all_stories() -> int:
@@ -2028,10 +2375,11 @@ def refresh_hashtags(story_id: str, topic: str = "",
     added. Never touches the story content, screenplay, verified links,
     or images.
 
-    Raises RuntimeError when no AI engine is configured (the "Enable AI
-    processing" toggle is off): discovering *trending* hashtags without
-    the AI is impossible, so this fails loudly instead of silently
-    serving deterministic fallback tags. Nothing is changed in that case.
+    Raises RuntimeError when no AI engine is configured (the "None" option
+    is selected in the toolbar's AI engine dropdown): discovering
+    *trending* hashtags without the AI is impossible, so this fails
+    loudly instead of silently serving deterministic fallback tags.
+    Nothing is changed in that case.
     """
     story = load_story(story_id)
     if not story:
@@ -2334,6 +2682,9 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
     publisher, not the aggregator. Unresolvable redirect URLs
     (known aggregator hosts) are dropped loudly; other unresolvable
     URLs are kept (fail-open — likely direct links blocking bots).
+    #230: a stale aggregator label is refreshed from the URL's domain
+    whether or not resolution succeeds — fail-open applies to the
+    URL, not the label.
 
     Runs in background threads (called from refresh paths), never on
     the render path. Returns (changed, note).
@@ -2356,25 +2707,35 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
             dropped += 1
             continue
         final = news_fetcher.resolve_final_url(url)
+        # #230: a stale aggregator label is refreshed from the URL's
+        # domain whether or not resolution succeeds — the publisher is
+        # fully determined by the domain, no network call needed.
+        # Fail-open applies to the URL, not the label.
+        old_source = (lk.get("source") or "").strip()
+        new_source = old_source
+        if old_source in _STALE_AGGREGATOR_SOURCES:
+            new_source = publisher_name_from_url(final or url) or old_source
         if final:
             url_changed = final != url
-            old_source = (lk.get("source") or "").strip()
-            new_source = old_source
-            if url_changed or old_source in _STALE_AGGREGATOR_SOURCES:
-                new_source = publisher_name_from_url(final) or old_source
+            if url_changed:
+                new_source = publisher_name_from_url(final) or new_source
             if url_changed:
                 repaired += 1
             if new_source != old_source:
                 sources_refreshed += 1
             kept.append(dict(lk, url=final, source=new_source))
             continue
-        # Unresolvable: drop loudly only known redirect hosts (#143).
+        # Unresolvable: drop loudly only known redirect hosts (#143);
+        # otherwise fail-open on the URL but keep the refreshed label (#230).
         try:
             host = urllib.parse.urlparse(url).netloc.lower()
         except Exception:
             host = ""
         if host in news_fetcher._AGGREGATOR_REDIRECT_HOSTS:
             dropped += 1
+        elif new_source != old_source:
+            sources_refreshed += 1
+            kept.append(dict(lk, source=new_source))
         else:
             kept.append(lk)
     if repaired or dropped or sources_refreshed:
@@ -2392,10 +2753,38 @@ def repair_news_link_urls(story_id: str) -> Tuple[bool, str]:
 
 # Fetch-time source labels that name the aggregator/search engine rather
 # than the publisher (#153). When a stored link carries one of these,
-# the source is refreshed from the (resolved) URL's domain.
+# the source is refreshed from the URL's domain — even when redirect
+# resolution fails (#230).
 _STALE_AGGREGATOR_SOURCES = frozenset(
     {"Bing News", "DuckDuckGo", "News Wire", "Live Wire"}
 )
+
+
+def refresh_stale_news_link_source(source: str, url: str) -> str:
+    """Normalize a stored news-link source label to the publisher name (#231).
+
+    The label-refresh half of repair_news_link_urls (#153), without any
+    network I/O: when ``source`` is a stale fetch-time engine/aggregator
+    name ("Bing News"/"DuckDuckGo"/"News Wire"/"Live Wire") it is replaced
+    by the publisher name derived from ``url`` via publisher_name_from_url.
+    Any other label is returned unchanged, and the original label is kept
+    when no publisher name can be derived from the URL.
+
+    Pure and offline-safe — the Telegram share path (#231) calls this as
+    its first step so every user-facing render shows normalized labels
+    even when no refresh or repair ran between story creation and sharing.
+    A broken tools import propagates loudly (fail-loud); an unparseable
+    URL simply keeps its stored label (fail-open — the share never breaks
+    because of the network).
+    """
+    source = (source or "").strip()
+    if source not in _STALE_AGGREGATOR_SOURCES:
+        return source
+    url = (url or "").strip()
+    if not url:
+        return source
+    from tools.news_fetcher import publisher_name_from_url
+    return publisher_name_from_url(url) or source
 
 
 def _fetch_more_images(topic: str, existing_norm_urls: Set[str],
@@ -2589,9 +2978,9 @@ def start_refresh(story_id: str, kind: str,
     ``kind`` is "hashtags", "images", "news", "more_images", "more_news" or
     "reset". ``ai_engine`` (an engine mode string or None) enables
     AI-assisted hashtag suggestions for the hashtags and reset kinds —
-    None means the "Enable AI processing" toggle is off, in which case
-    the worker fails loudly with a clear message instead of silently
-    falling back. The "news" kind re-fetches news links (sources) for the
+    None means the "None" option is selected in the toolbar's AI engine
+    dropdown, in which case the worker fails loudly with a clear message
+    instead of silently falling back. The "news" kind re-fetches news links (sources) for the
     story's topic and merges new ones in (never wipes). The "more_images"
     / "more_news" kinds (#91) fetch ONE more batch (up to 5) of genuinely
     new images / news links past the #83/#82 caps — the cap is bypassed
@@ -2656,7 +3045,16 @@ def start_refresh(story_id: str, kind: str,
         t.start()
         return True, ""
     except Exception as e:
-        return False, f"Could not start refresh: {type(e).__name__}: {e}"
+        reason = f"Could not start refresh: {type(e).__name__}: {e}"
+        # Fail loudly AND leave no stuck marker: the story was flagged
+        # busy above before the thread failed to start — without a
+        # terminal state its buttons (incl. every script-version action,
+        # #193) would stay disabled until the next app restart.
+        try:
+            _finish_refresh(story_id, kind, "failed", reason)
+        except Exception:
+            traceback.print_exc()
+        return False, reason
 
 
 # ---------------------------------------------------------------------------
@@ -2766,8 +3164,15 @@ def _probe_fm_bounded(dual_engine, timeout_s: float) -> Dict[str, Any]:
     return box.get("status") or {}
 
 
-def _fm_warmup_worker() -> None:
+def _fm_warmup_worker(started_at=None) -> None:
     """Background worker: run the #4 FM availability probe. Never raises.
+
+    ``started_at`` is the kick-off timestamp written by
+    :func:`start_fm_warmup` — the worker reuses it for the terminal state
+    so the run keeps one stable identity from kick-off to completion
+    (#298: the UI keys its per-session "was this run started here" check
+    on it). Falls back to ``time.time()`` when the worker is invoked
+    directly (tests).
 
     Uses ``dual_engine.check_status(force=True)`` — the exact probe — but
     bounded by FM_WARMUP_TIMEOUT_SECONDS (#122), so a hung probe can never
@@ -2776,7 +3181,7 @@ def _fm_warmup_worker() -> None:
     "failed" with the probe's own message verbatim (same messaging as #4),
     or a timeout message when the probe exceeds its budget.
     """
-    started = time.time()
+    started = started_at if started_at is not None else time.time()
     try:
         from core.dual_engine import dual_engine
         status = _probe_fm_bounded(dual_engine, FM_WARMUP_TIMEOUT_SECONDS)
@@ -2805,16 +3210,15 @@ def _fm_warmup_worker() -> None:
         })
 
 
-def start_fm_warmup(*, auto: bool = False) -> Tuple[bool, str]:
+def start_fm_warmup() -> Tuple[bool, str]:
     """Kick off a background on-device Apple FM warm-up probe. Never raises.
 
     Returns (started, reason): ``reason`` is "" when the worker started,
     otherwise a human-readable explanation of why it could not start
     (e.g. a warm-up is already running).
 
-    ``auto`` marks a launch-time automatic kick-off (#115/#122): it is
-    recorded in the mailbox so the UI can treat it as purely informational
-    (no poll loop) instead of user-initiated work.
+    Manual-only: warm-up is NEVER triggered automatically. It runs solely
+    when the user taps the "Cold start" button.
     """
     try:
         state = read_fm_warmup_state()
@@ -2822,61 +3226,19 @@ def start_fm_warmup(*, auto: bool = False) -> Tuple[bool, str]:
             # The button disables while busy, but a double-kick can still
             # race here — refuse instead of starting a second worker.
             return False, "A warm-up is already running — try again shortly."
+        _started_at = time.time()
         _write_fm_warmup_state({
             "state": "warming",
             "message": "",
             "seconds": 0.0,
-            "started_at": time.time(),
-            "auto": bool(auto),
+            "started_at": _started_at,
         })
         t = threading.Thread(target=_fm_warmup_worker, daemon=True,
-                             name="fm-warmup")
+                             name="fm-warmup", args=(_started_at,))
         t.start()
         return True, ""
     except Exception as e:
         return False, f"Could not start warm-up: {type(e).__name__}: {e}"
-
-
-# ---------------------------------------------------------------------------
-# Automatic cold-start (#115)
-# ---------------------------------------------------------------------------
-
-_auto_cold_start_lock = threading.Lock()
-_auto_cold_start_fired = False
-
-
-def maybe_auto_cold_start() -> None:
-    """Kick off the FM warm-up automatically once per process (#115).
-
-    Cold-start init must run in a background thread without disturbing
-    anything else: the UI renders immediately and stays interactive while
-    the probe warms up the on-device model. This only *fires* the daemon
-    thread via :func:`start_fm_warmup` — it never waits for it, never
-    touches ``st.session_state`` (not thread-safe), and never raises.
-
-    Safe to call on every render: the per-process flag guarantees at most
-    one kick-off, and ``start_fm_warmup`` itself refuses a double-start
-    while a warm-up is already in flight. If the kick-off fails, it stays
-    silent here — the manual "Cold start" button remains available, and
-    the worker itself fails loudly via the mailbox on probe failure.
-    """
-    global _auto_cold_start_fired
-    with _auto_cold_start_lock:
-        if _auto_cold_start_fired:
-            return
-        _auto_cold_start_fired = True
-    try:
-        start_fm_warmup(auto=True)
-    except Exception:
-        # Never break the render for a background kick-off failure.
-        pass
-
-
-def _reset_auto_cold_start_for_tests() -> None:
-    """Reset the per-process auto cold-start flag. Tests only."""
-    global _auto_cold_start_fired
-    with _auto_cold_start_lock:
-        _auto_cold_start_fired = False
 
 
 def _do_reset(story_id: str, topic: str,
@@ -2897,11 +3259,11 @@ def _do_reset(story_id: str, topic: str,
     Returns (changed, note). ``changed`` compares the new rows against
     the old ones — identical re-fetch results report ``no_change``.
 
-    Raises RuntimeError when no AI engine is configured (the "Enable AI
-    processing" toggle is off): discovering trending hashtags without
-    the AI is impossible, so this fails loudly with the same message as
-    Update Hashtags instead of silently serving deterministic tags.
-    Nothing is changed in that case.
+    Raises RuntimeError when no AI engine is configured (the "None" option
+    is selected in the toolbar's AI engine dropdown): discovering
+    trending hashtags without the AI is impossible, so this fails loudly
+    with the same message as Update Hashtags instead of silently serving
+    deterministic tags. Nothing is changed in that case.
     """
     story = load_story(story_id)
     if not story:
@@ -3082,4 +3444,14 @@ def start_enrichment(story_id: str, topic: str) -> Tuple[bool, str]:
         t.start()
         return True, ""
     except Exception as e:
-        return False, f"Could not start enrichment: {type(e).__name__}: {e}"
+        reason = f"Could not start enrichment: {type(e).__name__}: {e}"
+        # Fail loudly AND leave no stuck marker: the story was flagged
+        # busy ("pending") by save_story / _set_refresh_busy above before
+        # the thread failed to start — without a terminal state its
+        # buttons (incl. every script-version action, #193) would stay
+        # disabled until the next app restart.
+        try:
+            _finish_refresh(story_id, "enrich", "failed", reason)
+        except Exception:
+            traceback.print_exc()
+        return False, reason

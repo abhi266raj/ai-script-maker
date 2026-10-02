@@ -1,6 +1,7 @@
 """Live India news: Google News/Trends, Reddit, Mastodon, Bing News, DuckDuckGo (free public APIs)."""
 
 import html
+import logging
 import random
 import re
 import urllib.parse
@@ -11,6 +12,8 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup
 from core.models import NewsArticle
+
+logger = logging.getLogger(__name__)
 
 _HTTP_HEADERS = {
     "User-Agent": "HindiReelStudio/1.0 (news desk; +https://local)",
@@ -80,6 +83,16 @@ def publisher_name_from_url(url: str) -> str:
     if not parts:
         return ""
     return " ".join(p[:1].upper() + p[1:] for p in parts)
+
+
+# Fetch-time source labels that name the aggregator/search engine rather
+# than the publisher (#153, #227). When an article carries one of these,
+# its source is refreshed from the (resolved) URL's domain. Mirrors
+# story_library's _STALE_AGGREGATOR_SOURCES used by
+# repair_news_link_urls — keep the two in sync.
+_STALE_AGGREGATOR_SOURCES = frozenset(
+    {"Bing News", "DuckDuckGo", "News Wire", "Live Wire"}
+)
 
 
 class NewsFetchError(Exception):
@@ -272,15 +285,21 @@ class NewsFetcher:
         articles: List[NewsArticle] = []
         now = datetime.datetime.now(datetime.timezone.utc)
         try:
-            # Fetch with a hard timeout first: feedparser.parse(url) does
-            # its own fetching with NO timeout and can hang a refresh
-            # forever on a stalled connection.
-            with httpx.Client(headers=_HTTP_HEADERS, timeout=self._timeout,
-                             follow_redirects=True) as client:
-                r = client.get(feed_url)
-                if r.status_code != 200:
-                    return []
-                feed = feedparser.parse(r.content)
+            raw = (feed_url or "").strip()
+            if raw.startswith("<"):
+                # Raw RSS/Atom XML (not a URL) — parse directly without fetching.
+                # Keeps the recency-filter logic testable offline.
+                feed = feedparser.parse(raw)
+            else:
+                # Fetch with a hard timeout first: feedparser.parse(url) does
+                # its own fetching with NO timeout and can hang a refresh
+                # forever on a stalled connection.
+                with httpx.Client(headers=_HTTP_HEADERS, timeout=self._timeout,
+                                 follow_redirects=True) as client:
+                    r = client.get(feed_url)
+                    if r.status_code != 200:
+                        return []
+                    feed = feedparser.parse(r.content)
             for entry in feed.entries:
                 title = clean_html(getattr(entry, "title", "Untitled"))
                 link = getattr(entry, "link", "")
@@ -358,13 +377,25 @@ class NewsFetcher:
             title = clean_html(getattr(entry, "title", "Untitled"))
             link = getattr(entry, "link", "")
             published = getattr(entry, "published", "")
-            source = fallback_source
             if " - " in title:
                 parts = title.rsplit(" - ", 1)
                 title = parts[0].strip()
                 source = parts[1].strip()
             elif hasattr(entry, "source") and hasattr(entry.source, "title"):
                 source = entry.source.title
+            else:
+                # #229: derive the label from the item's URL domain — never
+                # the fetch-method wire name ("News Wire" / "Bing News" /
+                # "Live Wire"), which leaked into share text as if it were
+                # the publisher.
+                source = publisher_name_from_url(link)
+                if not source:
+                    # Loud last resort: warn visibly instead of silently
+                    # mislabeling the item with the wire name.
+                    print(f"Warning: #229 could not derive a publisher name "
+                          f"from link {link!r} (feed {feed_url}); falling "
+                          f"back to {fallback_source!r}")
+                    source = fallback_source
             dt = _parse_pub_datetime(published, entry)
             age_h = None
             time_lbl = ""
@@ -593,7 +624,11 @@ class NewsFetcher:
         When the final URL differs, it replaces the original.
         #153: the source is refreshed to the final publisher's name when
         the URL changes — a "Bing News"/"DuckDuckGo" label must not
-        survive on a resolved publisher link.
+        survive on a resolved publisher link. #227: the source is also
+        refreshed when the URL is unchanged but the stored source is a
+        stale aggregator name ("Bing News"/"DuckDuckGo"/"News Wire"/
+        "Live Wire") — DDG unwraps to the final publisher URL at parse
+        time, so without this the "DuckDuckGo" label would survive.
 
         Returns (kept_articles, skipped_count). Articles that cannot be
         resolved are handled loudly:
@@ -615,12 +650,29 @@ class NewsFetcher:
                 host = ""
             final = self.resolve_final_url(link)
             if final:
-                if final != link:
+                url_changed = final != link
+                if url_changed:
                     art.link = final
-                    # #153: the redirect's source ("Bing News",
-                    # "DuckDuckGo", ...) is meaningless on the resolved
-                    # publisher link — show the publisher's name.
-                    art.source = publisher_name_from_url(final) or art.source
+                # #153/#227: the aggregator's source ("Bing News",
+                # "DuckDuckGo", "News Wire", "Live Wire") is meaningless
+                # on the publisher link — refresh the label to the final
+                # publisher's name whenever the URL changed OR the stored
+                # source is a stale aggregator name (mirrors
+                # repair_news_link_urls' condition). #227: DDG already
+                # unwraps to the final publisher URL at parse time, so the
+                # stale "DuckDuckGo" label survives URL resolution —
+                # refresh it from the URL's domain.
+                old_source = (art.source or "").strip()
+                if url_changed or old_source in _STALE_AGGREGATOR_SOURCES:
+                    new_source = publisher_name_from_url(final)
+                    if new_source:
+                        art.source = new_source
+                    else:
+                        # Fail loudly: never silently mislabel; keep the
+                        # old label audibly.
+                        logger.warning(
+                            "could not derive publisher name from final URL "
+                            "%r; keeping source %r", final, art.source)
                 kept.append(art)
             elif host in self._AGGREGATOR_REDIRECT_HOSTS:
                 # Known redirect URL that could not be resolved — useless.

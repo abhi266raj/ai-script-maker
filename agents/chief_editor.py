@@ -1262,7 +1262,12 @@ class ChiefEditorCoordinatorAgent:
         scene_style = state["scene_style"]
         character_count = state["character_count"]
         active_sample_story = state["active_sample_story"]
-        sub_instructions = state["sub_instructions"]
+        # Stage 5 builds its own agents' sub-instructions when it runs (same
+        # pattern as stages 2-4 via ensure_sub_instructions). Without this,
+        # the feedback-block appends below raise KeyError: 'scene_director'
+        # on any re-run with an extra instruction.
+        sub_instructions = self.ensure_sub_instructions(
+            state, "scene_director", "video_prompt_engineer")
         verification = state["verification"]
         max_retries = state["max_retries"]
         budget = state["budget"]

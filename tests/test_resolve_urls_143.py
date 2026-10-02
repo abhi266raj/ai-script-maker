@@ -423,3 +423,123 @@ class TestSourceRefreshOnResolution:
         changed, _ = lib.repair_news_link_urls("x")
         assert changed is False
         assert updated == {}
+
+    def test_repair_refreshes_stale_source_when_resolution_fails(self, monkeypatch):
+        # #230: bot-blocking publisher (Times of India) — resolve_final_url
+        # returns "" but the stale "DuckDuckGo" label must still be
+        # refreshed from the URL's domain. Fail-open keeps the URL as-is.
+        url = "https://timesofindia.indiatimes.com/city/pune/x-123.cms"
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": url, "source": "DuckDuckGo"}],
+            {})  # resolution fails -> ""
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is True
+        lk = updated["news_links"][0]
+        assert lk["url"] == url
+        assert lk["source"] == "Times of India"
+        assert "refreshed 1 source label" in note
+
+    def test_repair_keeps_good_source_when_resolution_fails(self, monkeypatch):
+        # #230: fail-open on the URL — a good label must not be touched.
+        url = "https://timesofindia.indiatimes.com/city/pune/x-123.cms"
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": url, "source": "Times of India"}],
+            {})  # resolution fails -> ""
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is False
+        assert updated == {}
+        assert "already final" in note
+
+    def test_repair_still_drops_dead_redirect_when_resolution_fails(self, monkeypatch):
+        # #230 must not weaken the #143 loud-drop for known redirect hosts.
+        lib, updated = TestRepairNewsLinkUrls()._patch(
+            monkeypatch,
+            [{"title": "T1", "url": "https://news.google.com/rss/articles/DEAD",
+              "source": "DuckDuckGo"}],
+            {})  # resolution fails -> ""
+        changed, note = lib.repair_news_link_urls("x")
+        assert changed is True
+        assert updated["news_links"] == []
+        assert "dropped 1" in note
+
+
+class TestDdgStaleSourceRefresh227:
+    """#227: DDG unwraps to the final publisher URL at parse time, so the
+    URL never changes in _resolve_aggregator_links — the stale
+    "DuckDuckGo" label must still be refreshed to the publisher's name
+    (mirrors repair_news_link_urls' condition)."""
+
+    def test_ddg_label_refreshed_when_url_unchanged(self):
+        # Exact #227 symptom: a Times of India article whose link is
+        # already the final publisher URL was labeled "DuckDuckGo".
+        f = _make_fetcher({
+            "https://timesofindia.indiatimes.com/city/pune/x-123.cms":
+                "https://timesofindia.indiatimes.com/city/pune/x-123.cms",
+        })
+        arts = [NewsArticle(title="T",
+                            link="https://timesofindia.indiatimes.com/city/pune/x-123.cms",
+                            source="DuckDuckGo")]
+        kept, skipped = f._resolve_aggregator_links(arts)
+        assert skipped == 0
+        assert kept[0].link == "https://timesofindia.indiatimes.com/city/pune/x-123.cms"
+        assert kept[0].source == "Times of India"
+
+    def test_bing_label_refreshed_when_url_unchanged(self):
+        f = _make_fetcher({
+            "https://indianexpress.com/article/x-1/":
+                "https://indianexpress.com/article/x-1/",
+        })
+        arts = [NewsArticle(title="T", link="https://indianexpress.com/article/x-1/",
+                            source="Bing News")]
+        kept, _ = f._resolve_aggregator_links(arts)
+        assert kept[0].source == "Indian Express"
+
+    def test_wire_labels_refreshed_when_url_unchanged(self):
+        for stale in ("News Wire", "Live Wire"):
+            f = _make_fetcher({
+                "https://www.mypunepulse.com/traders-call-off-x/":
+                    "https://www.mypunepulse.com/traders-call-off-x/",
+            })
+            arts = [NewsArticle(title="T",
+                                link="https://www.mypunepulse.com/traders-call-off-x/",
+                                source=stale)]
+            kept, _ = f._resolve_aggregator_links(arts)
+            assert kept[0].source == "MyPunePulse", stale
+
+    def test_non_aggregator_label_untouched_when_url_unchanged(self):
+        # A real publisher label must not be clobbered.
+        f = _make_fetcher({
+            "https://indianexpress.com/article/x-1/":
+                "https://indianexpress.com/article/x-1/",
+        })
+        arts = [NewsArticle(title="T", link="https://indianexpress.com/article/x-1/",
+                            source="Indian Express")]
+        kept, _ = f._resolve_aggregator_links(arts)
+        assert kept[0].source == "Indian Express"
+
+    def test_stale_label_refreshed_when_url_also_resolved(self):
+        f = _make_fetcher({
+            "https://www.bing.com/news/article/123":
+                "https://indianexpress.com/article/x-1/",
+        })
+        arts = [NewsArticle(title="T", link="https://www.bing.com/news/article/123",
+                            source="DuckDuckGo")]
+        kept, _ = f._resolve_aggregator_links(arts)
+        assert kept[0].link == "https://indianexpress.com/article/x-1/"
+        assert kept[0].source == "Indian Express"
+
+    def test_stale_label_warns_loudly_when_publisher_undecipherable(self, caplog):
+        # Fail loudly: a final URL with no derivable host keeps the old
+        # label audibly (warning), never silently mislabeled.
+        f = NewsFetcher.__new__(NewsFetcher)
+        f._timeout = 8
+        f.resolve_final_url = lambda url: "https://"
+        arts = [NewsArticle(title="T", link="https://publisher.example.com/a",
+                            source="DuckDuckGo")]
+        with caplog.at_level("WARNING", logger="tools.news_fetcher"):
+            kept, _ = f._resolve_aggregator_links(arts)
+        assert kept[0].source == "DuckDuckGo"
+        assert "could not derive publisher name" in caplog.text
+

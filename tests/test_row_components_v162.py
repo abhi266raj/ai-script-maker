@@ -113,7 +113,7 @@ def test_images_row_renders_single_row(libdir):
         f"images must render exactly one columns() row; "
         f"saw {len(fake.column_specs)}")
     spec = fake.column_specs[0]
-    expected = [1, 1, lui._load_more_weight("Load more images")]
+    expected = [1, 1, lui._load_more_weight()]
     assert spec == expected, (
         f"row spec must be [1, 1, load-more]; saw {spec}, expected {expected}")
 
@@ -123,8 +123,8 @@ def test_images_row_has_load_more_and_remove_overlays(libdir):
     lui._render_images_row("teststory1", ["https://img.example/a.jpg"], ["up1.png"],
                            set())
 
-    assert ("Load more images", "lib_moreimg_teststory1") in fake.buttons, (
-        f"'Load more images' button must render; saw {fake.buttons}")
+    assert ("", "lib_moreimg_teststory1") in fake.buttons, (
+        f"icon-only load-more button must render; saw {fake.buttons}")
     x_buttons = [b for b in fake.buttons if b[0] == "×"]
     assert [b[1] for b in x_buttons] == [
         "lib_ximg_teststory1_0", "lib_xup_teststory1_1"], (
@@ -141,27 +141,31 @@ def test_images_row_fetched_card_has_edit_overlay(libdir):
 
 
 # ---------------------------------------------------------------------------
-# _render_upload_row: title + upload popover in one [11, 1] row
+# _render_upload_popover_trigger: icon-only upload trigger (no row)
 # ---------------------------------------------------------------------------
 
 def test_upload_row_renders_single_row(libdir):
+    """The standalone Upload row is gone — the trigger renders no columns
+    row of its own; it lives in the detail toolbar beside Share/Copy."""
     lui, fake = _ui_with_recording_st()
-    lui._render_upload_row("teststory1")
+    lui._render_upload_popover_trigger("teststory1")
 
-    assert len(fake.column_specs) == 1, (
-        f"upload must render exactly one columns() row; "
-        f"saw {len(fake.column_specs)}")
-    assert fake.column_specs[0] == [11, 1], (
-        f"upload row spec must be [11, 1]; saw {fake.column_specs[0]}")
+    assert fake.column_specs == [], (
+        f"upload trigger must render no columns() row; "
+        f"saw {fake.column_specs}")
+    assert any('data-marker="lib-upload-btn"' in m for m in fake.markup), (
+        "upload trigger marker must render for the marker-scoped CSS")
 
 
 def test_upload_row_renders_title_and_popover(libdir):
+    """No 'Upload' title anymore — the icon-only popover trigger still
+    renders exactly once."""
     lui, fake = _ui_with_recording_st()
-    lui._render_upload_row("teststory1")
+    lui._render_upload_popover_trigger("teststory1")
 
-    assert any("Upload" in m and "lib-section-inline" in m
-               for m in fake.markup), (
-        f"'Upload' inline title must render; saw {fake.markup}")
+    assert not any("lib-section-inline" in m and "Upload" in m
+                   for m in fake.markup), (
+        "standalone 'Upload' title must be gone")
     assert len(fake.popovers) == 1, (
         f"upload popover must render once; saw {len(fake.popovers)}")
 

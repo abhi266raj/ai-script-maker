@@ -26,11 +26,18 @@ Regression tests for the user-reported defects:
 """
 import inspect
 
+import sys
+
 import pytest
 
 from unittest.mock import patch
 
-from agents import dialogue_writer as dw_mod
+import agents.dialogue_writer  # noqa: F401  (populates sys.modules entry)
+# NB: `from agents import dialogue_writer` binds the singleton *instance*
+# (agents/__init__ shadows the submodule name). The tests below need the
+# real module (dw_mod.dialogue_writer -> singleton, dw_mod.<func> -> module
+# functions for patching), so resolve it via sys.modules.
+dw_mod = sys.modules["agents.dialogue_writer"]
 from agents.dialogue_writer import ai_judge_news_coverage
 from core.dual_engine import ModelGenerationError
 

@@ -26,9 +26,10 @@ def _extract_style_blocks(source: str):
 def test_copy_button_detects_theme():
     """_copy_button JS reads data-theme from parent document."""
     src = LIB_UI.read_text(encoding="utf-8")
-    # Find the _copy_button function
-    m = re.search(r"def _copy_button\(.*?\n(?=def |\Z)", src, re.DOTALL)
-    assert m, "_copy_button not found"
+    # Find the _copy_button_html function (#78: the menu-row markup now
+    # lives in the helper; _copy_button just renders it)
+    m = re.search(r"def _copy_button_html\(.*?\n(?=def |\Z)", src, re.DOTALL)
+    assert m, "_copy_button_html not found"
     body = m.group(0)
     # Must detect theme from parent
     assert "data-theme" in body, "copy button must read data-theme"
@@ -40,7 +41,7 @@ def test_copy_button_detects_theme():
 def test_copy_button_no_hardcoded_single_theme():
     """_copy_button must not hardcode only light-mode colors in style attr."""
     src = LIB_UI.read_text(encoding="utf-8")
-    m = re.search(r"def _copy_button\(.*?\n(?=def |\Z)", src, re.DOTALL)
+    m = re.search(r"def _copy_button_html\(.*?\n(?=def |\Z)", src, re.DOTALL)
     body = m.group(0)
     # The button tag's inline style should NOT contain hardcoded colors;
     # colors are applied via JS applyTheme()
