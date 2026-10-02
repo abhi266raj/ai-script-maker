@@ -11,6 +11,7 @@ import re
 import copy
 import json
 import contextlib
+import subprocess
 import streamlit as st
 
 
@@ -62,6 +63,29 @@ def _check_streamlit_pin(installed: str | None, pin: str | None) -> None:
 
 _check_streamlit_pin(getattr(st, "__version__", None),
                      _streamlit_pin_from_requirements())
+
+
+def _running_commit() -> str | None:
+    """Short git commit hash of the running checkout, or None.
+
+    Display-only ground truth (#286): lets anyone looking at the app answer
+    "what code is this actually running?" at a glance, next to the version.
+    Fail-soft by design — a missing .git (packaged app) or missing git
+    binary simply shows no hash; this must never break startup.
+    """
+    try:
+        out = subprocess.run(
+            ["git", "-C", _app_dir, "rev-parse", "--short", "HEAD"],
+            capture_output=True, text=True, timeout=5,
+        )
+        if out.returncode == 0 and out.stdout.strip():
+            return out.stdout.strip()
+    except Exception:
+        pass
+    return None
+
+
+_RUNNING_COMMIT = _running_commit()
 from core.constants import (
     VIBE_DESI_SWAG, VIBE_HERITAGE, VIBE_VIRAL, VIBE_COMEDY, VIBE_BREAKING,
     VIBE_ANALYSIS, VIBE_CINEMATIC, VIBE_EMOTIONAL, VIBE_HEATED,
@@ -2511,11 +2535,12 @@ if _v15_view == "library":
 srv_info = get_server_info()
 col_brand, col_srv = st.columns([7.8, 2.2], vertical_alignment="center")
 with col_brand:
+    _commit_suffix = f" · {_RUNNING_COMMIT}" if _RUNNING_COMMIT else ""
     st.markdown(
         f"""
         <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
             <div>
-                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}</span></div>
+                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}{_commit_suffix}</span></div>
             </div>
         </div>
         """,
