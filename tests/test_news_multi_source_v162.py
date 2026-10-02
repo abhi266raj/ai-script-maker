@@ -100,6 +100,13 @@ def _install_stubs():
     models_mod.NewsArticle = NewsArticle
     sys.modules["core"] = core_pkg
     sys.modules["core.models"] = models_mod
+    # #320: stub the hashtag/news cache too (no-op: tests control caching
+    # via monkeypatch, and the real module isn't needed here).
+    cache_mod = types.ModuleType("core.hashtag_news_cache")
+    cache_mod.get_cached = lambda kind, query: None
+    cache_mod.store_cache = lambda kind, query, items: None
+    cache_mod.cache_age_hours = lambda kind, query: None
+    sys.modules["core.hashtag_news_cache"] = cache_mod
 
 
 # Snapshot before stubbing so we can evict every module the stubs pulled
