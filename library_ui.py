@@ -2411,6 +2411,62 @@ def _telegram_share_parts(meta: dict):
     return caption, "\n".join(link_lines)
 
 
+# ---------------------------------------------------------------------------
+# Telegram share button busy state (#194).
+#
+# HIG §3: the initiating control owns its progress — the "Share via
+# Telegram" button shows Streamlit's native spinner (``icon="spinner"``)
+# and stays disabled for the whole blocking send, exactly like
+# _render_kind_button. No detached ``st.spinner(...)`` below the button,
+# no second click mid-send.
+#
+# Streamlit only repaints on a script rerun, so the click handler sets the
+# busy flag in session state and reruns immediately; the next run renders
+# the spinner+disabled button and performs the blocking send in that same
+# run, then reruns once more to restore the idle button and surface the
+# outcome. The outcome is stashed in session state because a st.error
+# rendered before that final rerun would be wiped by it.
+#
+# These helpers are pure session-state transitions over a dict-like
+# ``store`` (``st.session_state`` in the app, a plain dict in tests) so
+# the state machine is unit-testable without Streamlit.
+# ---------------------------------------------------------------------------
+
+def _tg_share_busy_key(story_id: str) -> str:
+    return f"lib_tg_busy_{story_id}"
+
+
+def _tg_share_outcome_key(story_id: str) -> str:
+    return f"lib_tg_outcome_{story_id}"
+
+
+def _tg_share_is_busy(store, story_id: str) -> bool:
+    """True while a Telegram share send is in flight for this story."""
+    return bool(store.get(_tg_share_busy_key(story_id), False))
+
+
+def _tg_share_begin(store, story_id: str) -> bool:
+    """Mark the share busy. Returns False when a send is already in
+    flight — a stale or double click is ignored, never a second send."""
+    if _tg_share_is_busy(store, story_id):
+        return False
+    store[_tg_share_busy_key(story_id)] = True
+    return True
+
+
+def _tg_share_end(store, story_id: str, *, ok: bool, message: str) -> None:
+    """Clear the busy flag and stash the one-shot outcome for the
+    follow-up run. The flag clears first so the button can never stick
+    disabled, even if stashing raised."""
+    store[_tg_share_busy_key(story_id)] = False
+    store[_tg_share_outcome_key(story_id)] = (ok, message)
+
+
+def _tg_share_take_outcome(store, story_id: str) -> tuple[bool, str] | None:
+    """Pop the stashed outcome ``(ok, message)`` exactly once, else None."""
+    return store.pop(_tg_share_outcome_key(story_id), None)
+
+
 def _share_via_telegram_bot(story_id: str, meta: dict) -> str:
     """Share the story to Telegram via the user's bot. Returns a summary.
 
@@ -2594,22 +2650,51 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
             except _tg.TelegramShareError:
                 _tg_token = ""
             if _tg_token:
-                if st.button(
+                # #194 (HIG §3): the button owns its loading state — it
+                # shows the native spinner and stays disabled for the
+                # whole blocking send (same pattern as _render_kind_button).
+                # No detached st.spinner below the button, no second click.
+                _tg_busy = _tg_share_is_busy(st.session_state, story_id)
+                _tg_clicked = st.button(
                     "Share via Telegram",
-                    icon=_TB_ICON_SEND,
+                    icon=_TB_ICON_SPINNER if _tg_busy else _TB_ICON_SEND,
                     key=f"lib_tg_{story_id}",
                     help="Send the video + caption, then the news links, "
                          "to Telegram via your bot — also broadcast to "
                          "every group the bot is in",
                     use_container_width=True,
-                ):
+                    disabled=_tg_busy,
+                )
+                if _tg_clicked and _tg_share_begin(st.session_state,
+                                                   story_id):
+                    # Busy flag set — rerun NOW so the button re-renders
+                    # spinner+disabled before the blocking send below.
+                    st.rerun()
+                if _tg_busy:
+                    # This run was kicked by the click above: the button is
+                    # already showing its loading state while this blocking
+                    # send runs. The outcome is stashed for the follow-up
+                    # run — a st.error rendered here would be wiped by the
+                    # st.rerun() below.
+                    _tg_ok, _tg_msg = False, "Share interrupted."
                     try:
-                        with st.spinner("Sharing to Telegram…"):
-                            _tg_msg = _share_via_telegram_bot(story_id, meta)
-                    except Exception as e:
-                        st.error(f"Couldn't share via Telegram: {e}")
-                    else:
+                        _tg_msg = _share_via_telegram_bot(story_id, meta)
+                        _tg_ok = True
+                    except Exception as e:  # fail loudly, never swallowed
+                        _tg_ok, _tg_msg = (
+                            False, f"Couldn't share via Telegram: {e}")
+                    finally:
+                        _tg_share_end(st.session_state, story_id,
+                                      ok=_tg_ok, message=_tg_msg)
+                    st.rerun()
+                _tg_outcome = _tg_share_take_outcome(st.session_state,
+                                                     story_id)
+                if _tg_outcome is not None:
+                    _tg_ok, _tg_msg = _tg_outcome
+                    if _tg_ok:
                         _notify(_tg_msg, icon="✅")
+                    else:
+                        st.error(_tg_msg)
             else:
                 # Fail loudly with guided setup — never a dead button.
                 with st.expander("Set up Telegram sharing"):
