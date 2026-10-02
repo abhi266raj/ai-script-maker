@@ -1910,11 +1910,11 @@ def _render_fm_warmup_result() -> None:
     timing, failure carries the probe's own message verbatim (#4
     messaging) — never a fake 'ready' state.
 
-    #204: the success branch now also renders a quiet persistent result
-    line (``st.caption``) on every rerun. The #181 toast is transient —
-    once it auto-dismissed there was zero on-screen evidence the warm-up
-    had succeeded. HIG §7: in-foreground updates stay in the UI,
-    discoverable but not distracting.
+    #289 (reversal of #204): the success branch renders NO persistent
+    line. The #181 toast is the only success signal — it fires exactly
+    once per warm-up completion (marker below) and auto-dismisses, so a
+    successful warm-up leaves no persistent chrome. HIG §7: progress
+    indicators are transient — they disappear when the work completes.
 
     Failure is a deliberate, user-requested exception to #213 (errors
     belong in persistent alerts): the failure surfaces once as an
@@ -1938,11 +1938,8 @@ def _render_fm_warmup_result() -> None:
                     + (f" — {_msg}" if _msg else ""),
                     icon=":material/check_circle:")
             st.session_state[_FM_WARMUP_TOAST_ANNOUNCED_KEY] = _marker
-        # #204: quiet persistent terminal line — renders on every rerun
-        # while the state is terminal, independent of the toast. Never
-        # re-arms or duplicates the toast; no emoji (house rule).
-        st.caption(f"Apple FM warmed up in {_secs:.1f}s"
-                   + (f" — {_msg}" if _msg else ""))
+        # #289: no persistent success line — the toast above is the only
+        # success signal. A successful warm-up leaves no persistent chrome.
     elif _stt == "failed":
         _msg = ((_state.get("message") or "").strip() or "unknown error")
         # User-requested exception to #213: auto-dismissing toast, not a

@@ -1,19 +1,19 @@
-"""Issue #204 — warm-up success leaves a quiet persistent result line.
+"""Issue #289 — warm-up success leaves NO persistent result line.
 
-`_render_fm_warmup_result`'s docstring promised an "honest terminal result
-under the tab bar", but on success it only fired the #181 toast. Once the
-toast auto-dismissed there was zero on-screen evidence the warm-up had
-succeeded. The fix renders a quiet `st.caption` line on every rerun while
-the state is "done", independent of the once-only toast.
+Reversal of #204: `_render_fm_warmup_result` used to render a quiet
+`st.caption` line on every rerun while the state was "done". The user
+reported that persistent line as a bug (#289): a successful warm-up
+must fire only the #181 auto-dismissing toast (exactly once per run)
+and leave no persistent chrome under the tab bar. HIG §7: progress
+indicators are transient — they disappear when the work completes.
 
-Covers: persistent caption on success (timing + probe message), caption
-renders even when the toast was already announced (no re-arm, no
-duplicate toast), empty-message and missing-seconds formatting, the
-failure path fires once as an auto-dismissing toast with the verbatim
-probe message (deliberate user-requested exception to #213; retry via
-the main warm-up button — no persistent error chrome, no caption on
-failure), idle state renders nothing, and the #181 toast contract is
-untouched.
+Covers: no caption on success (first render or reruns), the #181 toast
+still fires exactly once per run with timing + probe message (no
+dangling dash on empty message, missing seconds formats as 0.0s, no
+emoji), the failure path fires once as an auto-dismissing toast with
+the verbatim probe message (deliberate user-requested exception to
+#213; retry via the main warm-up button — no persistent error chrome,
+no caption on failure), and idle/warming states render nothing.
 
 Run: python -m pytest tests/test_warmup_result_line_v162.py -q
 """
@@ -81,24 +81,29 @@ def _done_state(**over):
 
 
 # ---------------------------------------------------------------------------
-# Success: persistent quiet result line
+# Success (#289): toast exactly once, NO persistent chrome
 # ---------------------------------------------------------------------------
 
-def test_done_renders_persistent_caption_with_timing(ui, monkeypatch):
+def test_done_renders_no_persistent_chrome(ui, monkeypatch):
+    """#289: a successful warm-up leaves no persistent result line — the
+    auto-dismissing toast is the only success signal."""
     _mailbox_state(monkeypatch, _done_state())
     lui._render_fm_warmup_result()
 
-    assert len(ui.captions) == 1, ui.captions
-    line = ui.captions[0]
-    assert "12.3s" in line, line
-    assert "Apple Foundation Model ready (On-Device)" in line, line
-    assert "✅" not in line and "❌" not in line, \
-        "result line must be quiet: no emoji (house rule)"
+    assert ui.captions == [], f"no persistent line allowed: {ui.captions}"
+    assert ui.errors == [], ui.errors
+    assert len(ui.toasts) == 1, ui.toasts
+    msg, icon = ui.toasts[0]
+    assert "12.3s" in msg, msg
+    assert "Apple Foundation Model ready (On-Device)" in msg, msg
+    assert icon == ":material/check_circle:", ui.toasts
+    assert "✅" not in msg and "❌" not in msg, \
+        "toast must be quiet: no emoji (house rule)"
 
 
-def test_done_caption_renders_when_toast_already_announced(ui, monkeypatch):
-    """#204's core complaint: the caption must not depend on the toast
-    firing — once #181's once-only toast is spent, the line stays."""
+def test_done_rerun_after_toast_announced_renders_nothing(ui, monkeypatch):
+    """Once #181's once-only toast is spent, reruns render nothing at
+    all — no re-armed toast, no persistent line."""
     state = _done_state()
     marker = (state["started_at"], state["seconds"])
     ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = marker
@@ -107,35 +112,51 @@ def test_done_caption_renders_when_toast_already_announced(ui, monkeypatch):
     lui._render_fm_warmup_result()
 
     assert ui.toasts == [], "toast must not re-fire for the same run"
-    assert len(ui.captions) == 1, ui.captions
-    assert "12.3s" in ui.captions[0]
+    assert ui.captions == [], "no persistent line on reruns"
+    assert ui.errors == []
 
 
-def test_done_caption_still_fires_first_toast(ui, monkeypatch):
-    """The #181 toast is untouched: first render of a new run still toasts
-    exactly once, AND the persistent line renders alongside it."""
+def test_done_toast_fires_exactly_once_across_reruns(ui, monkeypatch):
+    """Two consecutive renders of the same completed run: exactly one
+    toast total, zero captions — the success signal is never dropped and
+    never duplicated."""
     _mailbox_state(monkeypatch, _done_state())
+    lui._render_fm_warmup_result()
     lui._render_fm_warmup_result()
 
     assert len(ui.toasts) == 1, ui.toasts
-    msg, icon = ui.toasts[0]
-    assert icon == ":material/check_circle:", ui.toasts
-    assert "12.3s" in msg, msg
-    assert len(ui.captions) == 1, ui.captions
+    assert ui.captions == [], ui.captions
 
 
-def test_done_empty_message_caption_has_no_dangling_dash(ui, monkeypatch):
+def test_done_new_run_rearms_toast(ui, monkeypatch):
+    """A fresh warm-up run re-arms the toast (marker is the run's own
+    started_at), still with no persistent line."""
+    ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = (
+        1700000000.0, 12.345)
+    _mailbox_state(monkeypatch, _done_state(started_at=1700000001.0,
+                                            seconds=8.7))
+
+    lui._render_fm_warmup_result()
+
+    assert len(ui.toasts) == 1, ui.toasts
+    assert "8.7s" in ui.toasts[0][0], ui.toasts
+    assert ui.captions == [], ui.captions
+
+
+def test_done_empty_message_toast_has_no_dangling_dash(ui, monkeypatch):
     _mailbox_state(monkeypatch, _done_state(message=""))
     lui._render_fm_warmup_result()
 
-    assert ui.captions == ["Apple FM warmed up in 12.3s"], ui.captions
+    assert ui.captions == [], ui.captions
+    assert ui.toasts[0][0] == "Apple FM warmed up in 12.3s", ui.toasts
 
 
 def test_done_missing_seconds_formats_as_zero(ui, monkeypatch):
     _mailbox_state(monkeypatch, _done_state(seconds=None, message=""))
     lui._render_fm_warmup_result()
 
-    assert ui.captions == ["Apple FM warmed up in 0.0s"], ui.captions
+    assert ui.captions == [], ui.captions
+    assert ui.toasts[0][0] == "Apple FM warmed up in 0.0s", ui.toasts
 
 
 # ---------------------------------------------------------------------------
