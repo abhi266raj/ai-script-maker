@@ -3276,24 +3276,28 @@ def _render_upload_popover(story_id: str) -> None:
 # ---------------------------------------------------------------------------
 def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
                               busy: bool) -> None:
-    """Render the "Fine tune script" section under the story's script.
+    """Render the "Fine tune script" panel (#105, #270).
 
-    The user types a natural-language instruction ("make it funnier"); the
-    LLM surgically refines the current script and the result is saved as a
-    NEW script version (#104) — latest on top and the default — so it is
-    displayed immediately, expanded, instead of hiding inside a collapsed
-    expander (#191). Every turn is recorded in the story's fine-tune
-    history so the conversation carries across turns.
+    The caller places this side-by-side with the current script (right
+    column). The user types an instruction and clicks "Fine tune script";
+    the LLM's refined output then appears in this panel — ONLY the LLM
+    output, never auto-merged. An explicit "Add to current script" button
+    saves the refined output as a new script version (#104) and makes it
+    the default/current script. Nothing is merged without that click.
+
+    Enter in the instruction input never submits: there is no form, so
+    Enter only reruns — the refinement starts exclusively on the button.
 
     HIG: the initiating control owns its loading state — the button paints
     "Fine tuning…" with the native spinner and stays disabled until the
-    refinement lands on the rerun. LLM errors surface loudly; a failed turn
-    never pretends the script changed.
+    refinement lands. LLM errors surface loudly; a failed turn never
+    pretends anything changed.
     """
     st.markdown('<div class="lib-section">Fine tune script</div>',
                 unsafe_allow_html=True)
     _ft_running = bool(st.session_state.get(f"lib_ft_running_{story_id}"))
     _ft_input_key = f"lib_ft_input_{story_id}"
+    _ft_output_key = f"lib_ft_output_{story_id}"
 
     try:
         _history = lib.get_fine_tune_history(story_id)
@@ -3314,6 +3318,8 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
         label_visibility="collapsed",
         disabled=_ft_running or busy,
     )
+    # #270: no st.form wraps this input, so pressing Enter only reruns —
+    # the refinement starts ONLY on the button click below.
     if st.button(
         "Fine tuning…" if _ft_running else "Fine tune script",
         icon=_TB_ICON_SPINNER if _ft_running else _TB_ICON_TUNE,
@@ -3350,6 +3356,9 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
             # blocking call. One indicator per operation, never two (the old
             # st.spinner("Fine-tuning the script…") duplicated the button's
             # own state and has been removed).
+            # #270: the refined output is parked in session state below —
+            # never auto-merged; only the explicit "Add to current script"
+            # button records it as a new version.
             _refined = fine_tune.fine_tune_script(
                 current_script=script_md,
                 instruction=_instruction,
@@ -3357,12 +3366,47 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
                 history=_history,
                 tone=(meta.get("tone") or "").strip(),
             )
-            lib.record_fine_tune_turn(story_id, _instruction, _refined)
         except Exception as e:
             st.error(f"Fine tune failed: {e}")
         else:
+            # #270: park ONLY the LLM output in the right panel. Never
+            # auto-merge — it becomes the current script solely via the
+            # explicit "Add to current script" button below.
+            st.session_state[_ft_output_key] = {
+                "instruction": _instruction,
+                "refined": _refined,
+            }
             st.session_state.pop(_ft_input_key, None)
             st.rerun()
+
+    _output = st.session_state.get(_ft_output_key) or {}
+    _refined_out = (_output.get("refined") or "").strip()
+    if _refined_out and not _ft_running:
+        # #270: the panel shows ONLY the LLM's refined output — the old
+        # script stays on the left until the user explicitly adds this.
+        st.markdown('<div class="lib-section">Refined script</div>',
+                    unsafe_allow_html=True)
+        st.caption(f"Instruction: {(_output.get('instruction') or '').strip()}")
+        _render_full_script(_refined_out)
+        if st.button(
+            "Add to current script",
+            icon=_TB_ICON_ADD,
+            key=f"lib_ft_add_{story_id}",
+            disabled=busy,
+            help="Save the refined script as a new version and make it "
+                 "the current script",
+        ):
+            try:
+                lib.record_fine_tune_turn(
+                    story_id,
+                    (_output.get("instruction") or "").strip(),
+                    _refined_out,
+                )
+            except Exception as e:
+                st.error(f"Could not add the refined script: {e}")
+            else:
+                st.session_state.pop(_ft_output_key, None)
+                st.rerun()
 
 
 def _render_script_version_body(story_id: str, version: dict, is_default: bool,
@@ -3543,6 +3587,25 @@ def _render_toolbar_separator() -> None:
     assistive tech."""
     st.markdown('<div class="lib-tb-sep" aria-hidden="true"></div>',
                 unsafe_allow_html=True)
+
+
+def _render_script_and_fine_tune(story_id: str, meta: dict, script_md: str,
+                                 busy_kinds, busy: bool) -> None:
+    """#270: side-by-side — current script versions (left), fine-tune panel
+    (right). The fine-tune panel only renders when there is a stable
+    baseline (a script exists and no version editor is open); otherwise
+    the versions list takes the full width.
+    """
+    _show_ft = bool(script_md.strip()) and not _any_script_version_editing(
+        story_id)
+    if _show_ft:
+        _script_col, _ft_col = st.columns(2, vertical_alignment="top")
+        with _script_col:
+            _render_script_versions(story_id, busy_kinds)
+        with _ft_col:
+            _render_fine_tune_section(story_id, meta, script_md, busy)
+    else:
+        _render_script_versions(story_id, busy_kinds)
 
 
 def _render_story_detail(story_id: str) -> None:
@@ -3768,18 +3831,14 @@ def _render_story_detail(story_id: str) -> None:
     # Whole script — versioned (#104): collapsible per-version list, latest
     # on top, latest expanded. The story's ## Script section always mirrors
     # the default version, so Copy / Share / export keep using it unchanged.
-    _render_script_versions(story_id, _busy_kinds)
+    # #270: the fine-tune panel sits side-by-side (right) with the script
+    # (left) instead of below it; its refined output is only merged via the
+    # explicit "Add to current script" action — never automatically.
+    _render_script_and_fine_tune(story_id, meta, script_md, _busy_kinds, _busy)
     if not story["script"].strip() and story["dialogue"].strip():
         # Old-format files (saved before the blockquote change): two-box rendering.
         st.markdown(f'<div class="lib-dialogue">{_md_to_html(story["dialogue"])}</div>',
                     unsafe_allow_html=True)
-
-    # #105: iterative LLM fine-tuning of the script. Only when a script
-    # exists (and not while a version's manual editor is open) — there must
-    # be a stable baseline to refine. The refined script replaces the
-    # default version's text (#104); the turn history preserves every turn.
-    if script_md.strip() and not _any_script_version_editing(story_id):
-        _render_fine_tune_section(story_id, meta, script_md, _busy)
 
     # Video playback — the attached video only. #94: the "Video" section
     # title is gone; the upload affordance is the one-line row below.
