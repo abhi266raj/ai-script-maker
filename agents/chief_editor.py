@@ -63,6 +63,59 @@ def _emit_substep(on_substep, stage_num, substep, name, phase, **details):
         logger.warning("on_substep callback failed for %s", substep, exc_info=True)
 
 
+def _norm_angle_name(name: str) -> str:
+    n = (name or "").strip().lower()
+    n = re.sub(r"^\d+\.\s*", "", n)
+    return n
+
+
+def build_batch_angles(
+    total_scripts: int, preferred_angle: str
+) -> List[Tuple[str, str]]:
+    """#138 root cause fix: one DISTINCT angle per batch slot.
+
+    Previously every slot was stamped with the same preferred_angle
+    (get_effective_angle() in app.py never returns empty, so the
+    REEL_ANGLES cycling branch was dead code). The batch prompt then
+    carried N identical SCRIPT briefs and the model repeated script 1
+    N times. Detection gates (#147) cannot fix identical inputs.
+
+    The user's preferred (vibe-derived) angle takes slot 1; remaining
+    slots cycle REEL_ANGLES excluding the preferred angle, so every
+    script in a normal-size batch gets a genuinely different editorial
+    angle. Oversized batches (N > pool) wrap around, as before.
+    Fail loudly if the distinct pool ever regresses to duplicates.
+    """
+    total_scripts = max(1, int(total_scripts or 1))
+    pool: List[Tuple[str, str]] = []
+    if preferred_angle and preferred_angle.strip():
+        pool.append(
+            (preferred_angle.strip(), "User-selected editorial angle")
+        )
+    _seen = {_norm_angle_name(preferred_angle)}
+    for _ra in REEL_ANGLES:
+        _n = _norm_angle_name(_ra[0])
+        if _n in _seen:
+            continue
+        _seen.add(_n)
+        pool.append(_ra)
+    if not pool:
+        raise ModelGenerationError(
+            "Stage 2 failed: no editorial angles available to build "
+            f"the {total_scripts}-script batch."
+        )
+    selected = [pool[i % len(pool)] for i in range(total_scripts)]
+    if total_scripts <= len(pool):
+        _norms = [_norm_angle_name(a[0]) for a in selected]
+        if len(set(_norms)) != len(_norms):
+            raise ModelGenerationError(
+                "Stage 2 failed: batch angle pool regressed to duplicate "
+                f"angles for {total_scripts} scripts — every script in a "
+                "batch must carry a distinct angle."
+            )
+    return selected
+
+
 class ChiefEditorCoordinatorAgent:
     """Orchestrates the specialized multi-agent pipeline with autonomous self-healing retries and failure tracking."""
 
@@ -551,13 +604,13 @@ class ChiefEditorCoordinatorAgent:
                     f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 2 (HIGH PRIORITY):\n{extra_instruction.strip()}"
                 )
 
-        selected_angles: List[Tuple[str, str]] = []
-        for i in range(total_scripts):
-            selected_angles.append(
-                (preferred_angle, "User-selected editorial angle")
-                if preferred_angle.strip()
-                else REEL_ANGLES[i % len(REEL_ANGLES)]
-            )
+        # #138: one DISTINCT angle per batch slot — the user's preferred
+        # (vibe-derived) angle takes slot 1, the rest cycle REEL_ANGLES.
+        # Stamping the same angle on every slot starved the batch prompt of
+        # per-script differentiation and the model repeated script 1 N times.
+        selected_angles: List[Tuple[str, str]] = build_batch_angles(
+            total_scripts, preferred_angle
+        )
 
         stage2_failures = 0
         stage2_errors = []
