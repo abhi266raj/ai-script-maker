@@ -71,13 +71,21 @@ open_app() {
     fi
 }
 
-# Fingerprint of the app code: all .py files + prompt templates (*.md under
-# prompts/). Excludes the venv, git metadata and caches.
+# Fingerprint of everything that can change what the server serves or how it
+# behaves: all .py files + prompt templates (*.md under prompts/) +
+# requirements.txt (dependency pins — a pin bump without a restart leaves
+# the server on stale packages, #286) + .streamlit/config.toml (server
+# options such as maxUploadSize/fileWatcherType). Excludes the venv, git
+# metadata and caches.
 code_fingerprint() {
     {
         find "${DIR}" \( -path "${DIR}/.venv" -o -path "${DIR}/.git" -o -name '__pycache__' \) -prune -o \
             -name '*.py' -print0 2>/dev/null | xargs -0 stat -f '%m %N' 2>/dev/null
         find "${DIR}/prompts" -name '*.md' -print0 2>/dev/null | xargs -0 stat -f '%m %N' 2>/dev/null
+        # Non-code inputs that still require a server restart when changed.
+        for _f in "${DIR}/requirements.txt" "${DIR}/.streamlit/config.toml"; do
+            [ -f "${_f}" ] && stat -f '%m %N' "${_f}" 2>/dev/null
+        done
     } | md5 2>/dev/null
 }
 
