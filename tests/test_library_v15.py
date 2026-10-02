@@ -1069,6 +1069,7 @@ class _FakeSt:
         self.captions = []  # caption text, in render order (#95)
         self.toasts = []  # (message, icon) in render order
         self.dividers = []  # st.divider kwargs, in render order (#78)
+        self.spinners = []  # spinner text shown, in render order (#209)
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
@@ -1142,6 +1143,9 @@ class _FakeSt:
 
     def spinner(self, text=None, **k):
         # #159: share-progress spinner; a no-op context manager in tests.
+        # #209: record the text so tests can assert the initiating
+        # control owned a loading state.
+        self.spinners.append(text)
         return _FakeCtx()
 
 
@@ -1489,6 +1493,20 @@ def test_share_popover_whatsapp_browser_fallback_toast(monkeypatch):
     lui._render_share_popover("sid1", "https://example.com/a", {})
     assert fake.toasts == [("Opening WhatsApp in your browser \u2014 "
                             "pick a chat to send.", None)]
+    assert fake.errors == []
+
+
+def test_share_popover_whatsapp_click_shows_loading_spinner(monkeypatch):
+    # #209: the "Send via WhatsApp" click owns its loading state (HIG
+    # §3) — the handoff runs under a spinner, because a hung macOS
+    # `open` blocks up to 15s before the fallback fires.
+    lui, fake = _ui_with_fake_st(clicks=("lib_wa_sid1",))
+    monkeypatch.setattr(lui, "_copy_button", lambda label, text, key, icon=None: None)
+    monkeypatch.setattr(lui, "_whatsapp_app_installed", lambda: True)
+    monkeypatch.setattr(lui, "_open_whatsapp_share", lambda text: "app")
+    lui._render_share_popover("sid1", "https://example.com/a", {})
+    assert fake.spinners == ["Opening WhatsApp…"]
+    assert fake.toasts == [("WhatsApp opened \u2014 pick a chat to send.", None)]
     assert fake.errors == []
 
 
