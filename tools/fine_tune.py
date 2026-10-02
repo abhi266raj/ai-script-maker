@@ -40,12 +40,22 @@ OUTPUT
 - Output bans (a violation fails the output): never print word counts, timings, metadata, emojis, bracketed instructions, or explanations of what you changed. Only the refined script."""
 
 
-def _default_generate(prompt: str, instructions: str) -> str:
-    """Default LLM call: the same dual-engine path script generation uses."""
+def _default_generate(prompt: str, instructions: str, mode: str) -> str:
+    """Default LLM call: the same dual-engine path script generation uses.
+
+    ``mode`` is the user's selected engine mode (#210) — it is required.
+    A falsy mode means AI is disabled ("None" in the toolbar dropdown) and
+    raises loudly: fine-tune must never silently fall back to the default
+    engine and never silently no-op.
+    """
     from core.dual_engine import dual_engine
 
+    if not mode:
+        raise FineTuneError(
+            "AI is disabled — select an engine in the toolbar AI dropdown "
+            "to fine-tune.")
     response, _engine_used = dual_engine.generate(
-        prompt=prompt, instructions=instructions)
+        prompt=prompt, instructions=instructions, mode=mode)
     return response
 
 
@@ -85,6 +95,7 @@ def fine_tune_script(
     history: Sequence[Dict[str, str]] = (),
     tone: str = "",
     generate_fn: Callable[[str, str], str] | None = None,
+    engine_mode: str | None = None,
 ) -> str:
     """Refine ``current_script`` per ``instruction`` via the LLM.
 
@@ -97,12 +108,18 @@ def fine_tune_script(
             system instructions so tone compliance stays non-negotiable.
         generate_fn: ``(prompt, instructions) -> str``; defaults to the
             dual-engine path. Injectable for tests.
+        engine_mode: the user's selected engine mode (#210), threaded to
+            ``dual_engine.generate``. Required on the real LLM path: a
+            falsy mode (AI disabled — "None" in the toolbar dropdown)
+            raises loudly instead of silently falling back to the default
+            engine. Ignored when ``generate_fn`` is injected.
 
     Returns the refined script text.
 
     Raises:
-        FineTuneError: blank script/instruction, LLM failure, or blank LLM
-            output. Never returns the unmodified script as a "result".
+        FineTuneError: blank script/instruction, AI disabled, LLM failure,
+            or blank LLM output. Never returns the unmodified script as a
+            "result".
     """
     script = (current_script or "").strip()
     if not script:
@@ -110,6 +127,10 @@ def fine_tune_script(
     instruction_text = (instruction or "").strip()
     if not instruction_text:
         raise FineTuneError("Describe what to change first — e.g. \"make it funnier\".")
+    if generate_fn is None and not engine_mode:
+        raise FineTuneError(
+            "AI is disabled — select an engine in the toolbar AI dropdown "
+            "to fine-tune.")
 
     instructions = FINE_TUNE_SYSTEM_INSTRUCTIONS.format(
         tone=(tone or "").strip() or "as established in the current draft")
@@ -120,7 +141,7 @@ def fine_tune_script(
         history=history or (),
         tone=tone or "",
     )
-    generate = generate_fn or _default_generate
+    generate = generate_fn or (lambda p, i: _default_generate(p, i, engine_mode))
     try:
         refined = generate(prompt, instructions)
     except Exception as e:

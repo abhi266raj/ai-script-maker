@@ -97,7 +97,7 @@ def test_llm_error_propagates_as_fine_tune_error():
         fine_tune_script("BEAT 1: hello", "make it funnier", generate_fn=_boom)
 
 
-def test_default_generate_uses_dual_engine(monkeypatch):
+def test_default_generate_uses_dual_engine_with_selected_mode(monkeypatch):
     # core/__init__ needs pydantic (absent in minimal envs), so fake the
     # dual_engine module in sys.modules — the lazy import finds it there.
     import sys
@@ -109,14 +109,28 @@ def test_default_generate_uses_dual_engine(monkeypatch):
         def generate(self, prompt="", instructions="", mode="", timeout=None):
             seen["prompt"] = prompt
             seen["instructions"] = instructions
+            seen["mode"] = mode
             return "DUAL ENGINE REFINED", "fake"
 
     fake_de = types.ModuleType("core.dual_engine")
     fake_de.dual_engine = _FakeEngine()
     monkeypatch.setitem(sys.modules, "core.dual_engine", fake_de)
-    out = fine_tune_script("BEAT 1: hello", "make it funnier")
+    # #210: the selected engine mode must reach dual_engine.generate —
+    # never the hard-coded default.
+    out = fine_tune_script("BEAT 1: hello", "make it funnier",
+                           engine_mode="codex_only")
     assert out == "DUAL ENGINE REFINED"
     assert "make it funnier" in seen["prompt"]
+    assert seen["mode"] == "codex_only"
+
+
+def test_default_generate_without_mode_fails_loudly():
+    # #210: no silent fallback to the default engine on the real path.
+    with pytest.raises(FineTuneError, match="AI is disabled"):
+        fine_tune_script("BEAT 1: hello", "make it funnier",
+                         engine_mode=None)
+    with pytest.raises(FineTuneError, match="AI is disabled"):
+        fine_tune_script("BEAT 1: hello", "make it funnier")
 
 
 # ---------------------------------------------------------------------------
@@ -316,7 +330,7 @@ def _drive_two_phases(ui, st, sid, instruction, refined,
     output_key = f"lib_ft_output_{sid}"
 
     def fake_llm(current_script, instruction, story_context="",
-                 history=(), tone="", generate_fn=None):
+                 history=(), tone="", generate_fn=None, engine_mode=None):
         if llm_side_effect is not None:
             raise llm_side_effect
         return refined
