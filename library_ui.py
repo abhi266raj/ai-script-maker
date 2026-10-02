@@ -3328,7 +3328,8 @@ def _render_story_detail(story_id: str) -> None:
     if _editing:
         # Title edit mode: Save/Cancel lead, Share/Copy stay available,
         # Delete stays trailing.
-        ec1, ec2, ec3, ec4, _esp, ec5 = st.columns(_TITLE_EDIT_TOOLBAR_WEIGHTS)
+        ec1, ec2, ec3, ec4, _esp, ec5 = st.columns(
+            _TITLE_EDIT_TOOLBAR_WEIGHTS, vertical_alignment="center")
         with ec1:
             if st.button("Save", key=f"lib_title_save_{story_id}", type="primary"):
                 _new = (st.session_state.get(f"lib_title_{story_id}") or "").strip()
@@ -3347,7 +3348,8 @@ def _render_story_detail(story_id: str) -> None:
         with ec5:
             _story_delete_popover()
     else:
-        tc1, tc2, tc3, tc4, tc5, tc6, _tsp, tc7 = st.columns(_DETAIL_TOOLBAR_WEIGHTS)
+        tc1, tc2, tc3, tc4, tc5, tc6, _tsp, tc7 = st.columns(
+            _DETAIL_TOOLBAR_WEIGHTS, vertical_alignment="center")
         with tc1:
             _render_kind_button(
                 story_id=story_id, kind="hashtags", label=_TB_ICON_TAG,
