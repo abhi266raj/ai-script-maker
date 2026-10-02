@@ -117,7 +117,7 @@ def test_done_caption_still_fires_first_toast(ui, monkeypatch):
 
     assert len(ui.toasts) == 1, ui.toasts
     msg, icon = ui.toasts[0]
-    assert icon == "✅", ui.toasts
+    assert icon == ":material/check_circle:", ui.toasts
     assert "12.3s" in msg, msg
     assert len(ui.captions) == 1, ui.captions
 
