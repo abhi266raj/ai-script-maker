@@ -26,6 +26,12 @@ from core.dual_engine import dual_engine
 from core.metrics import get_duration_budget
 from core.prompt_matrix import build_tailored_instruction
 from core.config import load_config, save_config, reset_to_defaults
+from core.refresh_guard import (  # #196: Refresh button owns its loading state
+    claim_refresh,
+    is_refresh_busy,
+    release_refresh,
+    reset_refresh_claim,
+)
 from tools.news_fetcher import news_fetcher, NewsFetchError
 # v1.5: Saved Stories Library (tab bar + storage + auto-save)
 import story_library  # noqa: F401
@@ -1603,7 +1609,24 @@ with col_settings:
         with story_heading:
             st.markdown('<div class="ios-section-label">Story &amp; Topic</div>', unsafe_allow_html=True)
         with story_refresh:
-            refresh_news = st.button("Refresh", help="Refresh headlines", use_container_width=True, key="refresh_news")
+            # HIG §3 (#196): the Refresh button owns its loading state — it
+            # renders disabled while a fetch it kicked off is in flight, and
+            # the activity indicator appears here, next to the button.
+            _refresh_busy = is_refresh_busy(st.session_state)
+            refresh_news = st.button("Refresh", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
+            refresh_indicator = st.empty()
+        # Claim the click once per fragment run: the first fetch site below
+        # takes the claim; stacked re-clicks (busy or inside the cooldown
+        # window) are ignored — no second fetch, ever.
+        _refresh_claimed = False
+        def _claim_refresh_once():
+            nonlocal _refresh_claimed
+            if _refresh_claimed:
+                return True
+            if claim_refresh(st.session_state):
+                _refresh_claimed = True
+                return True
+            return False
         with st.container(border=True):
             src_lbl, src_dd = st.columns([2.5, 5.5])
             with src_lbl:
@@ -1688,12 +1711,24 @@ with col_settings:
                 st.caption("English hashtags already trending on X and Google. Pick one, or type your own.")
                 _trend_cache = st.session_state.get("trending_hashtags")
                 if not _trend_cache or refresh_news:
-                    with st.spinner("Loading famous English hashtags…"):
+                    if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            st.session_state.trending_hashtags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196): the Refresh button owns this fetch —
+                            # the activity indicator renders next to the button
+                            # (refresh_indicator), never detached below.
+                            # Unlabeled spinner per HIG: don't label a spinning indicator.
+                            with refresh_indicator:
+                                with st.spinner(""):
+                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
+                            # Loud failure: visible warning, and allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
                             st.session_state.trending_hashtags = []
                             st.warning(f"Could not load English hashtags: {_gt_err}")
+                        else:
+                            st.session_state.trending_hashtags = _fetched_tags
+                        finally:
+                            release_refresh(st.session_state)
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("trending_hashtag_dropdown")
@@ -1735,12 +1770,24 @@ with col_settings:
                 st.caption("English hashtags already trending on X and Google. Instagram has no public tag feed, so these are the famous tags people are posting. Type your own if you want.")
                 _trend_cache = st.session_state.get("trending_hashtags")
                 if not _trend_cache or refresh_news:
-                    with st.spinner("Loading famous English hashtags…"):
+                    if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            st.session_state.trending_hashtags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196): the Refresh button owns this fetch —
+                            # the activity indicator renders next to the button
+                            # (refresh_indicator), never detached below.
+                            # Unlabeled spinner per HIG: don't label a spinning indicator.
+                            with refresh_indicator:
+                                with st.spinner(""):
+                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
+                            # Loud failure: visible warning, and allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
                             st.session_state.trending_hashtags = []
                             st.warning(f"Could not load English hashtags: {_gt_err}")
+                        else:
+                            st.session_state.trending_hashtags = _fetched_tags
+                        finally:
+                            release_refresh(st.session_state)
                         _trend_cache = st.session_state.get("trending_hashtags") or []
                         # One go: the default hashtag's headline becomes the loaded news.
                         _prev_pick = st.session_state.get("instagram_hashtag_dropdown")
@@ -1782,80 +1829,94 @@ with col_settings:
                 hl_lbl, hl_dd = st.columns([2.5, 5.5])
                 with hl_dd:
                     _need_headlines = (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat or st.session_state.get("loaded_hashtag") != st.session_state.get("active_hashtag"))
-                    if _need_headlines:
-                        with st.spinner("Loading headlines…"):
-                            _ht = (st.session_state.get("active_hashtag") or "").strip()
-                            if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
-                                # Hashtag mode: every hashtag carries its own headline —
-                                # use it directly, no extra search needed.
-                                # Normalize the hashtag dict entry to a NewsArticle-like object
-                                # (dicts have "headline", articles need "title").
-                                if active_hashtag_article:
-                                    if isinstance(active_hashtag_article, dict):
-                                        from types import SimpleNamespace
-                                        articles = [SimpleNamespace(
-                                            title=active_hashtag_article.get("headline", ""),
-                                            link=active_hashtag_article.get("link", ""),
-                                            source=active_hashtag_article.get("source", ""),
-                                            time_label="",
-                                        )]
+                    if _need_headlines and (not refresh_news or _claim_refresh_once() or not st.session_state.live_news_articles):
+                        articles = []
+                        try:
+                            # HIG §3 (#196): the Refresh button owns this fetch —
+                            # the activity indicator renders next to the button
+                            # (refresh_indicator), never detached below.
+                            # Unlabeled spinner per HIG: don't label a spinning indicator.
+                            with refresh_indicator:
+                                with st.spinner(""):
+                                    _ht = (st.session_state.get("active_hashtag") or "").strip()
+                                    if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
+                                        # Hashtag mode: every hashtag carries its own headline —
+                                        # use it directly, no extra search needed.
+                                        # Normalize the hashtag dict entry to a NewsArticle-like object
+                                        # (dicts have "headline", articles need "title").
+                                        if active_hashtag_article:
+                                            if isinstance(active_hashtag_article, dict):
+                                                from types import SimpleNamespace
+                                                articles = [SimpleNamespace(
+                                                    title=active_hashtag_article.get("headline", ""),
+                                                    link=active_hashtag_article.get("link", ""),
+                                                    source=active_hashtag_article.get("source", ""),
+                                                    time_label="",
+                                                )]
+                                            else:
+                                                articles = [active_hashtag_article]
+                                        else:
+                                            # Custom typed hashtag: search news about the topic.
+                                            _query = _ht.lstrip("#").replace("#", " ")
+                                            articles = news_fetcher.search_news(_query, limit=16)
+                                    elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                                            articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                                    elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                                            articles = news_fetcher.get_india_trending(limit=16)
+                                    elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
+                                            articles = news_fetcher.get_top_indian_politics_news(limit=16)
+                                    elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
+                                            articles = news_fetcher.get_top_indian_culture_news(limit=16)
+                                    elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
+                                            articles = news_fetcher.get_top_india_tech_news(limit=16)
+                                    elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
+                                            articles = news_fetcher.get_top_tech_news(limit=16)
+                                    elif "World" in selected_news_cat:
+                                            articles = news_fetcher.get_top_world_news(limit=16)
+                                    elif "Business" in selected_news_cat:
+                                            articles = news_fetcher.get_top_business_news(limit=16)
                                     else:
-                                        articles = [active_hashtag_article]
+                                            articles = news_fetcher.get_top_india_news(limit=16)
+                        except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
+                            # Loud failure: visible error banner, and allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
+                            st.error(str(_nfe))
+                            articles = []
+                        except Exception:
+                            # Fail loudly (#196): never swallow unexpected errors; allow an immediate retry.
+                            reset_refresh_claim(st.session_state)
+                            raise
+                        finally:
+                            release_refresh(st.session_state)
+                        st.session_state.live_news_articles = articles
+                        st.session_state.loaded_news_cat = selected_news_cat
+                        st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
+                        # Persist headlines to disk so they survive app restarts.
+                        # Selection is restored from disk on next launch.
+                        try:
+                            _to_cache = []
+                            for _a in articles[:16]:
+                                if isinstance(_a, dict):
+                                    _to_cache.append({
+                                        "title": _a.get("title", ""),
+                                        "link": _a.get("link", ""),
+                                        "source": _a.get("source", ""),
+                                        "time_label": _a.get("time_label", ""),
+                                    })
                                 else:
-                                    # Custom typed hashtag: search news about the topic.
-                                    _query = _ht.lstrip("#").replace("#", " ")
-                                    try:
-                                        articles = news_fetcher.search_news(_query, limit=16)
-                                    except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
-                                        st.error(str(_nfe))
-                                        articles = []
-                            elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
-                                    articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
-                            elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                                    articles = news_fetcher.get_india_trending(limit=16)
-                            elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                                    articles = news_fetcher.get_top_indian_politics_news(limit=16)
-                            elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                                    articles = news_fetcher.get_top_indian_culture_news(limit=16)
-                            elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                                    articles = news_fetcher.get_top_india_tech_news(limit=16)
-                            elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                                    articles = news_fetcher.get_top_tech_news(limit=16)
-                            elif "World" in selected_news_cat:
-                                    articles = news_fetcher.get_top_world_news(limit=16)
-                            elif "Business" in selected_news_cat:
-                                    articles = news_fetcher.get_top_business_news(limit=16)
-                            else:
-                                    articles = news_fetcher.get_top_india_news(limit=16)
-                            st.session_state.live_news_articles = articles
-                            st.session_state.loaded_news_cat = selected_news_cat
-                            st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
-                            # Persist headlines to disk so they survive app restarts.
-                            # Selection is restored from disk on next launch.
-                            try:
-                                _to_cache = []
-                                for _a in articles[:16]:
-                                    if isinstance(_a, dict):
-                                        _to_cache.append({
-                                            "title": _a.get("title", ""),
-                                            "link": _a.get("link", ""),
-                                            "source": _a.get("source", ""),
-                                            "time_label": _a.get("time_label", ""),
-                                        })
-                                    else:
-                                        _to_cache.append({
-                                            "title": getattr(_a, "title", ""),
-                                            "link": getattr(_a, "link", ""),
-                                            "source": getattr(_a, "source", ""),
-                                            "time_label": getattr(_a, "time_label", ""),
-                                        })
-                                save_config("cached_headlines", _to_cache)
-                                save_config("cached_headlines_cat", selected_news_cat)
-                                save_config("cached_headlines_hashtag", st.session_state.get("active_hashtag", ""))
-                                import time as _time_mod2
-                                save_config("cached_headlines_ts", _time_mod2.time())
-                            except Exception as _cache_e:
-                                print(f"[headline-cache] save failed (non-fatal): {_cache_e}")
+                                    _to_cache.append({
+                                        "title": getattr(_a, "title", ""),
+                                        "link": getattr(_a, "link", ""),
+                                        "source": getattr(_a, "source", ""),
+                                        "time_label": getattr(_a, "time_label", ""),
+                                    })
+                            save_config("cached_headlines", _to_cache)
+                            save_config("cached_headlines_cat", selected_news_cat)
+                            save_config("cached_headlines_hashtag", st.session_state.get("active_hashtag", ""))
+                            import time as _time_mod2
+                            save_config("cached_headlines_ts", _time_mod2.time())
+                        except Exception as _cache_e:
+                            print(f"[headline-cache] save failed (non-fatal): {_cache_e}")
                 # Headline dropdown from live feed — persists selection and avoids re-fetching unless refreshed
                 arts = st.session_state.live_news_articles[:16]
                 # Articles may be NewsArticle objects OR dicts (trending hashtag source
