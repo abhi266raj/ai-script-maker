@@ -28,8 +28,10 @@ def test_sanitize_keeps_non_tapri_location():
 
 
 def test_sanitize_devanagari_tapri_non_topical():
-    out = sanitize_scene_location("Roadside टपरी", "Metro rail expansion", "", "")
-    assert "टपरी" not in out
+    # NB: fail-loud — with no news-grounded replacement location available,
+    # the guard RAISES instead of inventing a placeholder (hook_strategist.py).
+    with pytest.raises(Exception, match="tapri"):
+        sanitize_scene_location("Roadside टपरी", "Metro rail expansion", "", "")
 
 
 def test_validate_scene_locations_counts_replacements():
@@ -51,31 +53,41 @@ def selector():
     return ContextualSceneCharacterSelectorAgent()
 
 
+# NB: select_scene_and_characters was removed (commit 185aff5) along with the
+# tapri default — the imagination engine is now the entry point.
 def test_friends_do_not_trigger_tapri(selector):
-    r = selector.select_scene_and_characters(news_topic="Two friends discuss WFO mandate", character_count=2, duration_sec=15)
+    r = selector.imagine_from_current_data(news_topic="Two friends discuss WFO mandate", character_count=2, duration_sec=15)
     assert "tapri" not in r["setting"].lower()
 
 
 def test_street_word_does_not_trigger_tapri(selector):
-    r = selector.select_scene_and_characters(news_topic="Street vendors protest new rule", character_count=2, duration_sec=15)
+    r = selector.imagine_from_current_data(news_topic="Street vendors protest new rule", character_count=2, duration_sec=15)
     assert "tapri" not in r["setting"].lower()
 
 
 def test_teacher_does_not_trigger_tapri(selector):
-    r = selector.select_scene_and_characters(news_topic="Teacher strike over pay hike", character_count=2, duration_sec=15)
+    r = selector.imagine_from_current_data(news_topic="Teacher strike over pay hike", character_count=2, duration_sec=15)
     assert "tapri" not in r["setting"].lower()
 
 
-def test_genuine_chai_news_may_use_tapri(selector):
-    r = selector.select_scene_and_characters(news_topic="Chai prices rise across cities", character_count=2, duration_sec=15)
-    assert "tapri" in r["setting"].lower()
+def test_genuine_chai_news_does_not_invent_tapri(selector):
+    # NB: the imagination engine no longer defaults to a tapri even for
+    # chai news (the old tapri default was the bug). The topical-tapri
+    # allowance lives in sanitize_scene_location, which KEEPS a tapri
+    # location when the news/sample is genuinely about a tea stall.
+    r = selector.imagine_from_current_data(news_topic="Chai prices rise across cities", character_count=2, duration_sec=15)
+    assert "tapri" not in r["setting"].lower()
 
 
 # --- Generated master instruction -------------------------------------------
 
+# NB: build_tailored_instruction is fail-loud on unknown tones — use a real one.
+_REAL_TONE = "😂 Relatable Comedy & Sarcasm (देसी ह्यूमर)"
+
+
 def test_instruction_has_no_tapri_example():
     inst = build_tailored_instruction(
-        topic="WFO mandate news", duration_sec=15, tone="x",
+        topic="WFO mandate news", duration_sec=15, tone=_REAL_TONE,
         angle="Funny & Relatable", scene_style="Dialogue", character_count=2,
     )
     assert "friends at a local chai tapri" not in inst
@@ -84,7 +96,7 @@ def test_instruction_has_no_tapri_example():
 
 def test_instruction_has_no_operational_params():
     inst = build_tailored_instruction(
-        topic="WFO mandate news", duration_sec=15, tone="x",
+        topic="WFO mandate news", duration_sec=15, tone=_REAL_TONE,
         angle="Funny & Relatable", scene_style="Dialogue", character_count=2,
     )
     assert "script version" not in inst
