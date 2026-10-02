@@ -1290,14 +1290,19 @@ def _refresh_toast_text(kind: str, status: str, note: str) -> str:
 
 
 def _fire_refresh_toasts(story_id: str, meta: dict) -> None:
-    """Toast each freshly-finished refresh outcome exactly once (#53).
+    """Report each freshly-finished refresh outcome exactly once (#53).
 
     Workers append to ``refresh_outcome_pending`` (persisted in the
     story file, one JSON entry per finished kind). The first render that
-    sees an entry toasts it and drains it from the file — so the toast
-    fires exactly once even across reruns, and entries written while the
-    detail page was closed still surface when it opens. Malformed entries
-    are reported loudly with st.error and dropped (never toasted).
+    sees an entry reports it and drains it from the file — so the outcome
+    surfaces exactly once even across reruns, and entries written while
+    the detail page was closed still surface when it opens. Malformed
+    entries are reported loudly with st.error and dropped (never toasted).
+
+    #213 (HIG §7: an error is an alert, not a notification): ``failed``
+    and ``interrupted`` outcomes render as persistent ``st.error``
+    alerts with the full failure note, never transient toasts. Only
+    success and no-change outcomes go through the toast path.
     """
     pending = meta.get("refresh_outcome_pending") or []
     if not isinstance(pending, list) or not pending:
@@ -1308,9 +1313,13 @@ def _fire_refresh_toasts(story_id: str, meta: dict) -> None:
             st.error(f"Could not read a saved refresh outcome "
                      f"({str(entry)[:80]}); dropped.")
             continue
-        _notify(_refresh_toast_text(outcome["kind"], outcome["status"],
-                                    outcome["note"]),
-                icon=_refresh_outcome_icon(outcome["status"]))
+        text = _refresh_toast_text(outcome["kind"], outcome["status"],
+                                   outcome["note"])
+        if outcome["status"] in ("failed", "interrupted"):
+            # #213: loud failures are persistent inline alerts, not toasts.
+            st.error(text)
+        else:
+            _notify(text, icon=_refresh_outcome_icon(outcome["status"]))
     lib.update_story_fields(story_id, refresh_outcome_pending=[])
 def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     """Tiny ×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).

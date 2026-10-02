@@ -352,19 +352,38 @@ def test_fire_refresh_toasts_fires_once(libdir):
     assert fake.toasts == [("Hashtags updated — added 3 tags", "✅")]
 
 
-def test_fire_refresh_toasts_all_statuses(libdir):
+def test_fire_refresh_toasts_failure_outcomes_alert_not_toast(libdir):
+    """#213 (HIG §7: an error is an alert, not a notification):
+
+    ``failed``/``interrupted`` outcomes render as persistent st.error
+    alerts with the full failure note — never transient toasts. Success
+    and no-change outcomes stay on the toast path.
+    """
     lui, fake = _ui_with_fake_st()
     sid = _story_with_outcome(libdir, [
         {"kind": "images", "status": "no_change", "note": "nothing new"},
         {"kind": "reset", "status": "failed", "note": "network down"},
         {"kind": "enrich", "status": "interrupted", "note": "restarted"},
+        {"kind": "news", "status": "failed", "note": ""},
     ])
     lui._fire_refresh_toasts(sid, lib.load_story(sid)["meta"])
-    assert fake.toasts == [
-        ("Images: nothing new — nothing new", "ℹ️"),
-        ("Reset failed — network down", "⚠️"),
-        ("Enrichment interrupted — restarted", "⚠️"),
+
+    # Success/no-change still toast; failures never do.
+    assert fake.toasts == [("Images: nothing new — nothing new", "ℹ️")]
+
+    # Loud failures go to the persistent inline alert path, note intact.
+    assert fake.errors == [
+        "Reset failed — network down",
+        "Enrichment interrupted — restarted",
+        "News failed",
     ]
+
+    # Drained from the file: a second render reports nothing.
+    meta = lib.load_story(sid)["meta"]
+    assert meta.get("refresh_outcome_pending") == []
+    lui._fire_refresh_toasts(sid, meta)
+    assert fake.toasts == [("Images: nothing new — nothing new", "ℹ️")]
+    assert len(fake.errors) == 3
 
 
 def test_fire_refresh_toasts_malformed_drops_loudly(libdir):
