@@ -2241,14 +2241,17 @@ st.html(
        background is NOT an option either — the app's own CSS paints `.stApp`
        with `var(--paper) !important`, so that read is circular: whichever
        theme wins the first paint would lock itself in.
-       Detection samples the computed `color`/`fill` of Streamlit-native icon
+       Detection samples the computed `color` of Streamlit-native icon
        controls (sidebar toggles, main menu, toolbar, header). Streamlit
        paints those icons with the ACTIVE theme's emotion colors (explicit
        `color` props in the frontend), so the computed value IS the rendered
        theme — unpoisoned by the app's CSS, which must never set
        color / background / fill on these probes (guarded by
-       tests/test_theme_detection_207.py). Relative luminance > 0.5 means
-       light text ⇒ dark theme. The 250 ms re-probe picks up Settings →
+       tests/test_theme_detection_207.py). `fill` is deliberately NOT
+       sampled: its CSS initial value is black, so every probe descendant
+       without an explicit fill computes to rgb(0,0,0) and would fake a
+       'light' detection before the icon is ever reached (#207). Relative
+       luminance > 0.5 means light text ⇒ dark theme. The 250 ms re-probe picks up Settings →
        Theme changes with no OS listener at all, and a late probe success
        always overrides the fallback.
        GRACEFUL DEGRADATION (#258): the probes depend on Streamlit's DOM,
@@ -2306,9 +2309,17 @@ st.html(
             for (var k = 0; k < nodes.length; k++) {
                 var cs = null;
                 try { cs = window.getComputedStyle(nodes[k]); } catch (eS) { continue; }
+                /* #207: sample `color` ONLY — never `fill`. `fill`'s CSS
+                   initial value is black, so every descendant without an
+                   explicit fill (wrappers, buttons, spans) computes to
+                   rgb(0,0,0); sampling it fakes a 'light' detection on the
+                   first node and dark mode can never engage. Streamlit's
+                   probe icons carry the theme color as an explicit `color`
+                   (fadedText60 etc. emotion prop, verified in the 1.64.0
+                   frontend bundle), so `color` alone is the true
+                   rendered-theme signal. */
                 var rawColor = (cs.color && cs.color !== inherited) ? cs.color : null;
-                var rawFill = (cs.fill && cs.fill !== inherited) ? cs.fill : null;
-                var rgb = studioParseRgb(rawColor) || studioParseRgb(rawFill);
+                var rgb = studioParseRgb(rawColor);
                 if (!rgb) continue;
                 return studioLuminance(rgb) > 0.5 ? 'dark' : 'light';
             }
