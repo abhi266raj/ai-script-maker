@@ -905,7 +905,7 @@ def _confirm_delete_story(story_id: str) -> None:
         raise RuntimeError("the story file could not be removed")
     st.session_state.pop("lib_selected_story", None)
     st.session_state.pop("lib_story_radio", None)
-    _notify("Story deleted.", icon="✅")
+    _notify("Story deleted.", icon=":material/check_circle:")
 
 
 def _confirm_delete_all() -> None:
@@ -913,7 +913,7 @@ def _confirm_delete_all() -> None:
     n = lib.delete_all_stories()
     st.session_state.pop("lib_selected_story", None)
     st.session_state.pop("lib_story_radio", None)
-    _notify(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.", icon="✅")
+    _notify(f"Deleted {n} stor{'y' if n == 1 else 'ies'}.", icon=":material/check_circle:")
 
 
 # ---------------------------------------------------------------------------
@@ -1307,9 +1307,16 @@ def _notify(msg: str, icon: str | None = None) -> None:
 
 
 def _refresh_outcome_icon(status: str) -> str:
-    """Toast icon for a finished refresh outcome (#53)."""
-    return {"succeeded": "✅", "no_change": "ℹ️",
-            "failed": "⚠️", "interrupted": "⚠️"}.get(status, "ℹ️")
+    """Toast icon for a finished refresh outcome (#53).
+
+    Material icon shortcodes (#201): Streamlit renders toast icons with
+    Material Symbols, so emoji are never used in notification chrome —
+    matching the app's icon-only Material-icon rule (HIG §2).
+    """
+    return {"succeeded": ":material/check_circle:",
+            "no_change": ":material/info:",
+            "failed": ":material/warning:",
+            "interrupted": ":material/warning:"}.get(status, ":material/info:")
 
 
 def _refresh_toast_text(kind: str, status: str, note: str) -> str:
@@ -1763,7 +1770,7 @@ def _render_fm_warmup_result() -> None:
         if st.session_state.get(_FM_WARMUP_TOAST_ANNOUNCED_KEY) != _marker:
             _notify(f"Apple FM warmed up in {_secs:.1f}s"
                     + (f" — {_msg}" if _msg else ""),
-                    icon="✅")
+                    icon=":material/check_circle:")
             st.session_state[_FM_WARMUP_TOAST_ANNOUNCED_KEY] = _marker
         # #204: quiet persistent terminal line — renders on every rerun
         # while the state is terminal, independent of the toast. Never
@@ -1991,7 +1998,7 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
         _ok, _why = lib.start_enrichment(story_id, topic)
-        _notify("Saved to Library.", icon="✅")
+        _notify("Saved to Library.", icon=":material/check_circle:")
         st.rerun()
 
 
@@ -2774,7 +2781,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                 if _tg_outcome is not None:
                     _tg_ok, _tg_msg = _tg_outcome
                     if _tg_ok:
-                        _notify(_tg_msg, icon="✅")
+                        _notify(_tg_msg, icon=":material/check_circle:")
                     else:
                         st.error(_tg_msg)
             else:
@@ -2810,7 +2817,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                                          "file isn't writable.")
                             else:
                                 _notify("Telegram bot saved — you can share now.",
-                                        icon="✅")
+                                        icon=":material/check_circle:")
                                 st.rerun()
         else:
             st.caption("No news links or hashtags to share yet.")
@@ -3021,7 +3028,7 @@ def _render_upload_popover(story_id: str) -> None:
                 st.error(f"Video upload failed: {e}")
             else:
                 _up_ok = True
-                _notify(f"Video attached: {stored}", icon="✅")
+                _notify(f"Video attached: {stored}", icon=":material/check_circle:")
             _reset_file_uploader(f"lib_video_{story_id}")
             if _up_ok:
                 st.rerun()
@@ -3044,7 +3051,7 @@ def _render_upload_popover(story_id: str) -> None:
                 st.warning(f"Attached {len(up_imgs) - _up_failed} of "
                            f"{len(up_imgs)} image(s).")
             else:
-                _notify(f"Attached {len(up_imgs)} image(s).", icon="✅")
+                _notify(f"Attached {len(up_imgs)} image(s).", icon=":material/check_circle:")
                 st.rerun()
 
 

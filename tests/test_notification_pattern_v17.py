@@ -94,8 +94,8 @@ def test_no_bare_success_or_toast_call_sites():
 
 def test_notify_records_toast_never_success_banner():
     lui, fake = _ui_with_fake_st()
-    lui._notify("Saved to Library.", icon="✅")
-    assert fake.toasts == [("Saved to Library.", "✅")]
+    lui._notify("Saved to Library.", icon=":material/check_circle:")
+    assert fake.toasts == [("Saved to Library.", ":material/check_circle:")]
     assert fake.successes == []
 
 
@@ -121,7 +121,7 @@ def test_warmup_done_toasts_with_timing(monkeypatch):
     lui._render_fm_warmup_result()
     assert fake.toasts == [
         ("Apple FM warmed up in 10.4s — "
-         "Apple Foundation Model ready (On-Device)", "✅")]
+         "Apple Foundation Model ready (On-Device)", ":material/check_circle:")]
     assert fake.successes == []
     assert fake.errors == []
 
@@ -132,7 +132,7 @@ def test_warmup_done_without_message_still_honest(monkeypatch):
         lib, "read_fm_warmup_state",
         lambda: {"state": "done", "seconds": 3.0, "message": ""})
     lui._render_fm_warmup_result()
-    assert fake.toasts == [("Apple FM warmed up in 3.0s", "✅")]
+    assert fake.toasts == [("Apple FM warmed up in 3.0s", ":material/check_circle:")]
     assert fake.successes == []
 
 
