@@ -2494,6 +2494,20 @@ def _short_list_title(title: str, limit: int = _LIST_TITLE_LIMIT) -> str:
 # Library page: master-detail
 # ---------------------------------------------------------------------------
 
+def _story_list_options(stories):
+    """(ids, titles) for the story picker radio (issue #338).
+
+    The radio's OPTIONS are the story ids — never titles. Titles are
+    display labels only (wired via ``format_func``), so two stories with
+    byte-identical titles still select unambiguously: the value Streamlit
+    returns is always the story id, which is what the detail pane loads.
+    """
+    ids = [s.get("id", "") for s in stories]
+    titles = {s.get("id", ""): _short_list_title(s.get("title", "Untitled") or "Untitled")
+              for s in stories}
+    return ids, titles
+
+
 def render_library_page() -> None:
     # macOS HIG: the tab bar already identifies this view — no redundant
     # large title repeating "Library". Deference: content first.
@@ -2552,10 +2566,9 @@ def render_library_page() -> None:
     # Story selection (shared by collapsed and expanded layouts).
     # macOS sidebar: the story list is a single-select list with an
     # accent-tinted selected row (like Mail/Finder). Newest first, so
-    # the latest story is selected on entry.
-    ids = [s.get("id", "") for s in stories]
-    titles = {s.get("id", ""): _short_list_title(s.get("title", "Untitled") or "Untitled")
-              for s in stories}
+    # the latest story is selected on entry. The picker is keyed by
+    # story id (see _story_list_options) — titles are labels only.
+    ids, titles = _story_list_options(stories)
     # #290: the collapsed master view keeps a two-item peek under the
     # header — never header-only. Newest first, same order as the list.
     _visible_ids = ids if not _collapsed else ids[:2]

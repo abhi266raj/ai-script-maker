@@ -73,3 +73,27 @@ def test_script_id_caption_escapes_html():
     html = lui._script_id_caption_html("<script>alert(1)</script>")
     assert "<script>" not in html
     assert "&lt;script&gt;" in html
+
+
+# ---------------------------------------------------------------------------
+# The story picker is keyed by story id — titles are labels only
+# ---------------------------------------------------------------------------
+
+def test_picker_options_are_ids_not_titles():
+    stories = [
+        {"id": "aaa", "title": "Same Title · v1"},
+        {"id": "bbb", "title": "Same Title · v1"},  # identical titles
+        {"id": "ccc", "title": None},
+    ]
+    ids, titles = lui._story_list_options(stories)
+    assert ids == ["aaa", "bbb", "ccc"]
+    assert len(set(ids)) == len(ids), "options must be unique even when titles collide"
+    assert titles["aaa"] == titles["bbb"] == "Same Title · v1"
+    assert titles["ccc"] == "Untitled"
+
+
+def test_picker_label_maps_id_to_title():
+    # format_func(sid) -> display label; the radio's VALUE stays the id.
+    _ids, titles = lui._story_list_options([{"id": "xyz", "title": "A very long headline " * 10 + "· v2"}])
+    label = titles["xyz"]
+    assert label.endswith("· v2") and len(label) <= 38
