@@ -1,11 +1,15 @@
 """Agent 6: Cinematic 9:16 Visual Prompt Engineer Agent."""
 
+import logging
 import re
 from typing import List, Optional
 from agents.base import BaseAgent
 from core.models import VideoScenePrompt, SceneItem
 from core.dual_engine import ModelGenerationError
 from core.prompt_loader import load_prompt, render_prompt
+
+
+logger = logging.getLogger(__name__)
 
 
 def clean_prompt_text(text: str) -> str:
@@ -45,8 +49,15 @@ class AIVideoPromptAgent(BaseAgent):
         verified_facts: Optional[List[str]] = None,
         sub_instruction: Optional[str] = None,
         engine_mode: str = "first_local_then_agy",
+        bypass_no_facts: bool = False,
     ) -> List[VideoScenePrompt]:
-        """Convert each scene into an ultra-detailed 9:16 cinematic video prompt with full dialogue-prop continuity."""
+        """Convert each scene into an ultra-detailed 9:16 cinematic video prompt with full dialogue-prop continuity.
+
+        ``bypass_no_facts`` (#335): the user explicitly chose to continue
+        without Stage 1 verified facts (e.g. they already bypassed the
+        Stage 1 verification gate). The bypass is honored loudly — never a
+        silent fallback.
+        """
         # Visual-only scene descriptions: never quote dialogue verbatim.
         # The video prompter needs the beat's purpose and visible action, not the spoken words.
         scenes_desc = ""
@@ -60,13 +71,26 @@ class AIVideoPromptAgent(BaseAgent):
 
         sub_directive = f"\nChief Editor Directive for AI Video Prompts:\n{sub_instruction}\n" if sub_instruction else ""
         facts_text = "\n".join([f"- {f}" for f in (verified_facts or [])[:4]])
+        # #335: True only when the gate was bypassed — every prompt built
+        # below is then marked "need verification" instead of "verified".
+        _ungrounded = not facts_text.strip() and bypass_no_facts
         # Fail loudly: video prompts must be grounded in Stage 1 verified facts.
         # Generating anyway without facts would produce ungrounded visuals.
         if not facts_text.strip():
-            raise ModelGenerationError(
-                "Stage 5 failed: no verified facts available to ground video prompts. "
-                "Refusing to generate visuals without Stage 1 facts."
-            )
+            if bypass_no_facts:
+                # #335: explicit user bypass — proceed LOUDLY, never silently.
+                # The prompts below are ungrounded by the user's own choice.
+                logger.warning(
+                    "Stage 5 no-facts gate BYPASSED by user for topic %r: "
+                    "generating video prompts WITHOUT Stage 1 verified facts. "
+                    "Visuals are ungrounded.",
+                    news_topic[:200],
+                )
+            else:
+                raise ModelGenerationError(
+                    "Stage 5 failed: no verified facts available to ground video prompts. "
+                    "Refusing to generate visuals without Stage 1 facts."
+                )
 
         prompt = render_prompt(
             "video_prompt_engineer/generate_prompts.md",
@@ -142,6 +166,9 @@ class AIVideoPromptAgent(BaseAgent):
                         aspect_ratio="9:16",
                         motion_level=motion,
                         ai_engine="Google Flow / Veo",
+                        # #335: mark bypassed prompts honestly — the script
+                        # shows "verified" or "need verification" per prompt.
+                        verification_status="need verification" if _ungrounded else "verified",
                     )
                 )
 

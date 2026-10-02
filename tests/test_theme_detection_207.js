@@ -40,7 +40,10 @@ function makeEl(tag) {
     parentNode: null,
     id: "",
     _color: null, // stubbed computed color
-    _fill: null, // stubbed computed fill
+    // A real browser reports the CSS initial value for `fill` (black) on
+    // elements without an explicit fill — NOT null/empty. The fake models
+    // that, so a detector that samples `fill` gets caught faking 'light'.
+    _fill: "rgb(0, 0, 0)", // stubbed computed fill (CSS initial: black)
     getAttribute(name) {
       return Object.prototype.hasOwnProperty.call(this.attributes, name)
         ? this.attributes[name]
@@ -172,16 +175,16 @@ function dataTheme(env) {
 // wrapper span carries `wrapperColor` (defaults to the button's inherited
 // color), and the button itself carries `btnColor` (the app's own
 // data-theme-driven --ink, which must never be read as the theme).
-function makeProbeButton({ iconColor, iconFill, wrapperColor, btnColor }) {
+// Wrapper/button fills are left at the fake's default (rgb(0,0,0), the real
+// CSS initial value): a detector that samples `fill` would fake 'light'
+// here, which is exactly the #207 regression this guards.
+function makeProbeButton({ iconColor, wrapperColor, btnColor }) {
   const btn = makeEl("button");
   btn._color = btnColor || "rgb(31, 26, 20)"; // inherited app --ink (must be ignored)
-  btn._fill = "";
   const wrapper = makeEl("span");
   wrapper._color = wrapperColor || btn._color;
-  wrapper._fill = "";
   const icon = makeEl("span");
   icon._color = iconColor || null;
-  icon._fill = iconFill || "";
   icon.textContent = "keyboard_double_arrow_right";
   wrapper.appendChild(icon);
   btn.appendChild(wrapper);
@@ -234,15 +237,16 @@ check("icon color wins -> light (no lock-in)", dt.html === "light", JSON.stringi
 
 console.log("--- scenario 4: non-sidebar probes are consulted (#258) ---");
 probeStubs = {
-  // no sidebar buttons at all: detection must not depend on the sidebar
+  // no sidebar buttons at all: detection must not depend on the sidebar.
+  // Models the real 1.64.0 toolbar icon: explicit `color` prop
+  // (fadedText60), wrappers with only the CSS initial fill (black).
   stToolbar: (() => {
     const bar = makeEl("div");
     bar._color = "rgb(31, 26, 20)"; // app --ink inherited (must be ignored)
     const btn = makeEl("button");
     btn._color = "rgb(31, 26, 20)";
     const svg = makeEl("svg");
-    svg._color = "rgb(31, 26, 20)"; // inherits, must be skipped
-    svg._fill = "rgb(250, 250, 250)"; // direct theme fill
+    svg._color = "rgb(250, 250, 250)"; // direct theme color (not inherited)
     btn.appendChild(svg);
     bar.appendChild(btn);
     return bar;
@@ -254,14 +258,16 @@ runScript(env);
 dt = dataTheme(env);
 check("toolbar probe -> dark", dt.html === "dark", JSON.stringify(dt));
 
-console.log("--- scenario 5: svg fill fallback on sidebar probe ---");
+console.log("--- scenario 5: initial-black fill never fakes 'light' (#207) ---");
+// Wrappers carry only the CSS initial fill (rgb(0,0,0)) — a detector that
+// samples `fill` would return 'light' here even though Streamlit rendered
+// dark. The icon's explicit theme `color` must win.
 probeStubs = {
   stExpandSidebarButton: (() => {
     const btn = makeEl("button");
     btn._color = "rgb(31, 26, 20)";
     const svg = makeEl("svg");
-    svg._color = "rgb(31, 26, 20)"; // inherits, must be skipped
-    svg._fill = "rgb(250, 250, 250)"; // direct theme fill
+    svg._color = "rgb(250, 250, 250)"; // direct theme color (not inherited)
     btn.appendChild(svg);
     return btn;
   })(),
@@ -269,7 +275,7 @@ probeStubs = {
 env = buildEnv();
 runScript(env);
 dt = dataTheme(env);
-check("fill fallback -> dark", dt.html === "dark", JSON.stringify(dt));
+check("initial-black fill ignored, icon color wins -> dark", dt.html === "dark", JSON.stringify(dt));
 
 console.log("--- scenario 6: no probe -> silent OS fallback after grace (#258) ---");
 probeStubs = {};

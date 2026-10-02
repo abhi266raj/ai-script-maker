@@ -5,8 +5,9 @@ Root cause: news links were raw-HTML ``<a>`` anchors inside
 (react-markdown + rehype) neuters the anchor — clicks do nothing.
 The fix renders each news link as a NATIVE ``st.link_button`` (which
 forces a new browser tab — the same guarantee the #95 WhatsApp comment
-relies on), styled as the chip pill by marker-scoped CSS, with the ×
-overlay untouched.
+relies on). Since #303 the links live in the News Links panel as
+single-line headline rows (ellipsis) with the × remove control; the
+source moved to the tooltip.
 
 These tests drive the real ``_render_story_detail`` with the recording
 fake streamlit from test_one_row_toolbar_v16 (which records
@@ -47,9 +48,11 @@ def test_news_links_render_as_link_buttons(libdir, monkeypatch):
     _story(monkeypatch, lui, news_links=_LINKS)
     lui._render_story_detail("sid1")
 
+    # #303: rows show the headline (single line, ellipsis) and open the
+    # true article URL — the source moved to the tooltip.
     assert fake.link_buttons == [
-        ("Alpha", "https://a.example/story-1"),
-        ("Beta", "https://b.example/story-2"),
+        ("Alpha headline", "https://a.example/story-1"),
+        ("Beta headline", "https://b.example/story-2"),
     ], f"each news link must be a native link_button; saw {fake.link_buttons}"
 
 
@@ -69,19 +72,19 @@ def test_remove_x_overlay_still_rendered_per_link(libdir, monkeypatch):
     lui._render_story_detail("sid1")
 
     x_keys = [k for (label, k) in fake.buttons
-              if label == "×" and (k or "").startswith("lib_xlink_")]
+              if label == "×" and (k or "").startswith("lib_panel_xlink_")]
     assert len(x_keys) == 2, \
         f"each news link keeps its × remove button; saw {fake.buttons!r}"
 
 
 def test_hashtag_chips_untouched(libdir, monkeypatch):
-    """#134 must not change hashtag chips (same overlay pattern)."""
+    """#303 replaced hashtag chips with panel rows (same × pattern)."""
     lui, fake = _ui_with_recording_st()
     _story(monkeypatch, lui, news_links=_LINKS, hashtags=["#DogShowdown"])
     lui._render_story_detail("sid1")
 
-    chips = [m for m in fake.markup if 'class="lib-chip"' in m]
-    assert len(chips) == 1 and "#DogShowdown" in chips[0]
+    rows = [m for m in fake.markup if 'class="lib-panel-row"' in m]
+    assert len(rows) == 1 and "#DogShowdown" in rows[0]
 
 
 # ---------------------------------------------------------------------------
@@ -98,13 +101,13 @@ def test_malformed_url_fails_loudly_no_dead_chip(libdir, monkeypatch):
     ])
     lui._render_story_detail("sid1")
 
-    assert fake.link_buttons == [("G", "https://g.example/ok")], \
+    assert fake.link_buttons == [("Good", "https://g.example/ok")], \
         f"only the valid URL becomes a link button; saw {fake.link_buttons}"
     assert len(fake.errors) == 3, \
         f"each malformed URL must surface st.error; saw {fake.errors!r}"
     # The × remove buttons still render so bad links can be deleted.
     x_keys = [k for (label, k) in fake.buttons
-              if label == "×" and (k or "").startswith("lib_xlink_")]
+              if label == "×" and (k or "").startswith("lib_panel_xlink_")]
     assert len(x_keys) == 4
 
 

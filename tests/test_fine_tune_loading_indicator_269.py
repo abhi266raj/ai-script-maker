@@ -142,7 +142,7 @@ def _run_full_fine_tune(libdir):
     input_key = f"lib_ft_input_{sid}"
 
     def fake_llm(current_script, instruction, story_context="",
-                 history=(), tone="", generate_fn=None):
+                 history=(), tone="", generate_fn=None, engine_mode=None):
         return "BEAT 1:\nVIKRAM: \"REFINED\""
 
     # Phase 1: user typed instruction and clicked the button.

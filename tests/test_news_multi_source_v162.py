@@ -100,6 +100,13 @@ def _install_stubs():
     models_mod.NewsArticle = NewsArticle
     sys.modules["core"] = core_pkg
     sys.modules["core.models"] = models_mod
+    # #320: stub the hashtag/news cache too (no-op: tests control caching
+    # via monkeypatch, and the real module isn't needed here).
+    cache_mod = types.ModuleType("core.hashtag_news_cache")
+    cache_mod.get_cached = lambda kind, query: None
+    cache_mod.store_cache = lambda kind, query, items: None
+    cache_mod.cache_age_hours = lambda kind, query: None
+    sys.modules["core.hashtag_news_cache"] = cache_mod
 
 
 # Snapshot before stubbing so we can evict every module the stubs pulled
@@ -215,6 +222,109 @@ def test_ddg_real_url_unwrap():
 
 
 # ---------------------------------------------------------------------------
+# Yahoo News RSS (#316)
+# ---------------------------------------------------------------------------
+
+_YAHOO_RSS = b'''<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0"><channel><title>Yahoo News</title>
+<item><title>Delhi Metro fare hike - The Hindu</title>
+<link>https://www.thehindu.com/news/delhi-metro-fare</link>
+<description>Fare revision details</description>
+<pubDate>Fri, 02 Oct 2026 10:00:00 GMT</pubDate></item>
+<item><title>Metro rail expansion</title>
+<link>https://indianexpress.com/metro-expansion</link>
+<description>Expansion plans</description></item>
+</channel></rss>'''
+
+
+def test_yahoo_rss_parsed(monkeypatch):
+    _fake_http(monkeypatch, lambda url: _resp(content=_YAHOO_RSS))
+    arts = NewsFetcher()._src_yahoo_news("delhi metro", 8)
+    assert len(arts) == 2
+    assert arts[0].title == "Delhi Metro fare hike"
+    assert arts[0].source == "The Hindu"
+    # No " - " suffix: publisher derived from the URL domain (#229).
+    assert arts[1].source == "Indian Express"
+
+
+def test_yahoo_http_error_raises(monkeypatch):
+    _fake_http(monkeypatch, lambda url: _resp(status=403))
+    try:
+        NewsFetcher()._src_yahoo_news("delhi metro", 8)
+    except RuntimeError as e:
+        assert "HTTP 403" in str(e)
+    else:
+        raise AssertionError("yahoo HTTP error did not raise")
+
+
+# ---------------------------------------------------------------------------
+# GDELT DOC API (#316)
+# ---------------------------------------------------------------------------
+
+_GDELT_JSON = ('{"articles": ['
+               '{"title": "Delhi Metro Update", "url": "https://www.ndtv.com/delhi-metro", '
+               '"domain": "ndtv.com", "seendate": "20261002T100000Z"},'
+               '{"title": "No link here", "url": "", "domain": "x.com"},'
+               '{"title": "", "url": "https://y.com/z", "domain": "y.com"}'
+               ']}')
+
+
+def test_gdelt_json_parsed(monkeypatch):
+    _fake_http(monkeypatch, lambda url: _resp(text=_GDELT_JSON))
+    arts = NewsFetcher()._src_gdelt("delhi metro", 8)
+    assert len(arts) == 1
+    assert arts[0].title == "Delhi Metro Update"
+    assert arts[0].link == "https://www.ndtv.com/delhi-metro"
+    assert arts[0].source == "NDTV"
+
+
+def test_gdelt_empty_articles_returns_empty(monkeypatch):
+    _fake_http(monkeypatch, lambda url: _resp(text='{"articles": []}'))
+    assert NewsFetcher()._src_gdelt("obscure xyz", 8) == []
+
+
+def test_gdelt_bad_json_raises_loudly(monkeypatch):
+    _fake_http(monkeypatch, lambda url: _resp(text="<html>not json</html>"))
+    try:
+        NewsFetcher()._src_gdelt("delhi metro", 8)
+    except RuntimeError as e:
+        assert "unparseable GDELT JSON" in str(e)
+    else:
+        raise AssertionError("gdelt bad JSON did not raise")
+
+
+def test_gdelt_http_error_raises(monkeypatch):
+    _fake_http(monkeypatch, lambda url: _resp(status=429))
+    try:
+        NewsFetcher()._src_gdelt("delhi metro", 8)
+    except RuntimeError as e:
+        assert "HTTP 429" in str(e)
+    else:
+        raise AssertionError("gdelt HTTP error did not raise")
+
+
+def test_five_sources_all_tried_fourth_succeeds(monkeypatch):
+    # #316: the first four sources fail, the fifth (GDELT) succeeds —
+    # proves the chain tries all five instead of stopping early.
+    def handler(url):
+        if "gdeltproject" in url:
+            return _resp(text=_GDELT_JSON)
+        raise ConnectionError("down")
+    _fake_http(monkeypatch, handler)
+    import random
+    arts, report = NewsFetcher().search_news_multi(
+        "delhi metro", 8, rng=random.Random(0))
+    assert len(arts) == 1
+    assert arts[0].source == "NDTV"
+    names = [r["source"] for r in report]
+    assert "google-news-rss" in names
+    assert "bing-news-rss" in names
+    assert "duckduckgo-html" in names
+    assert "yahoo-news-rss" in names
+    assert "gdelt-doc-api" in names
+
+
+# ---------------------------------------------------------------------------
 # Bing RSS
 # ---------------------------------------------------------------------------
 
@@ -262,7 +372,11 @@ def test_chain_uses_ddg_when_rss_empty(monkeypatch):
         return _resp(content=b'<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>')
     _fake_http(monkeypatch, handler)
     arts, report = NewsFetcher().search_news_multi("gurugram metro", 8)
-    assert any(a.source == "DuckDuckGo" for a in arts)
+    # #227: DDG articles carry the publisher name derived from their URL's
+    # domain — never the "DuckDuckGo" engine stamp. (This assertion
+    # previously expected the stale stamp; the stale label was the bug.)
+    assert {a.source for a in arts} == {"Example", "Direct"}
+    assert not any(a.source == "DuckDuckGo" for a in arts)
     assert any(r["source"] == "duckduckgo-html" and r["outcome"] == "ok" for r in report)
 
 
@@ -277,8 +391,10 @@ def test_total_failure_raises_news_fetch_error_with_report(monkeypatch):
         assert "google-news-rss" in msg
         assert "bing-news-rss" in msg
         assert "duckduckgo-html" in msg
+        assert "yahoo-news-rss" in msg
+        assert "gdelt-doc-api" in msg
         assert "network unreachable" in msg
-        assert len(e.report) == 3
+        assert len(e.report) == 5
         assert all(r["outcome"] == "error" for r in e.report)
     else:
         raise AssertionError("total failure did not raise NewsFetchError")
@@ -289,6 +405,8 @@ def test_all_empty_raises_too(monkeypatch):
     def handler(url):
         if "duckduckgo" in url:
             return _resp(text="<html></html>")  # no anchors -> error
+        if "gdeltproject" in url:
+            return _resp(text='{"articles": []}')  # valid JSON, no articles
         return _resp(content=empty_rss)
     _fake_http(monkeypatch, handler)
     try:

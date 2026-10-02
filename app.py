@@ -2241,14 +2241,17 @@ st.html(
        background is NOT an option either — the app's own CSS paints `.stApp`
        with `var(--paper) !important`, so that read is circular: whichever
        theme wins the first paint would lock itself in.
-       Detection samples the computed `color`/`fill` of Streamlit-native icon
+       Detection samples the computed `color` of Streamlit-native icon
        controls (sidebar toggles, main menu, toolbar, header). Streamlit
        paints those icons with the ACTIVE theme's emotion colors (explicit
        `color` props in the frontend), so the computed value IS the rendered
        theme — unpoisoned by the app's CSS, which must never set
        color / background / fill on these probes (guarded by
-       tests/test_theme_detection_207.py). Relative luminance > 0.5 means
-       light text ⇒ dark theme. The 250 ms re-probe picks up Settings →
+       tests/test_theme_detection_207.py). `fill` is deliberately NOT
+       sampled: its CSS initial value is black, so every probe descendant
+       without an explicit fill computes to rgb(0,0,0) and would fake a
+       'light' detection before the icon is ever reached (#207). Relative
+       luminance > 0.5 means light text ⇒ dark theme. The 250 ms re-probe picks up Settings →
        Theme changes with no OS listener at all, and a late probe success
        always overrides the fallback.
        GRACEFUL DEGRADATION (#258): the probes depend on Streamlit's DOM,
@@ -2306,9 +2309,17 @@ st.html(
             for (var k = 0; k < nodes.length; k++) {
                 var cs = null;
                 try { cs = window.getComputedStyle(nodes[k]); } catch (eS) { continue; }
+                /* #207: sample `color` ONLY — never `fill`. `fill`'s CSS
+                   initial value is black, so every descendant without an
+                   explicit fill (wrappers, buttons, spans) computes to
+                   rgb(0,0,0); sampling it fakes a 'light' detection on the
+                   first node and dark mode can never engage. Streamlit's
+                   probe icons carry the theme color as an explicit `color`
+                   (fadedText60 etc. emotion prop, verified in the 1.64.0
+                   frontend bundle), so `color` alone is the true
+                   rendered-theme signal. */
                 var rawColor = (cs.color && cs.color !== inherited) ? cs.color : null;
-                var rawFill = (cs.fill && cs.fill !== inherited) ? cs.fill : null;
-                var rgb = studioParseRgb(rawColor) || studioParseRgb(rawFill);
+                var rgb = studioParseRgb(rawColor);
                 if (!rgb) continue;
                 return studioLuminance(rgb) > 0.5 ? 'dark' : 'light';
             }
@@ -2618,12 +2629,13 @@ with col_settings:
         with story_heading:
             st.markdown('<div class="ios-section-label">Story &amp; Topic</div>', unsafe_allow_html=True)
         with story_refresh:
-            # HIG §3 (#196): the Refresh button owns its loading state — it
-            # renders disabled while a fetch it kicked off is in flight, and
-            # the activity indicator appears here, next to the button.
+            # HIG §3 (#196, #325): the Refresh button owns its loading state —
+            # it swaps to a spinner icon and stays disabled while a fetch it
+            # kicked off is in flight. No detached spinner.
+            # #264: icon-only (house rule) — no text label; the hover help
+            # tag carries the description.
             _refresh_busy = is_refresh_busy(st.session_state)
-            refresh_news = st.button("Refresh", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
-            refresh_indicator = st.empty()
+            refresh_news = st.button("", icon=":material/progress_activity:" if _refresh_busy else ":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
         # Claim the click once per fragment run: the first fetch site below
         # takes the claim; stacked re-clicks (busy or inside the cooldown
         # window) are ignored — no second fetch, ever.
@@ -2715,13 +2727,10 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196): the Refresh button owns this fetch —
-                            # the activity indicator renders next to the button
-                            # (refresh_indicator), never detached below.
-                            # Unlabeled spinner per HIG: don't label a spinning indicator.
-                            with refresh_indicator:
-                                with st.spinner(""):
-                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
+                            # it shows the spinner icon while busy. No detached
+                            # spinner.
+                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2774,13 +2783,10 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196): the Refresh button owns this fetch —
-                            # the activity indicator renders next to the button
-                            # (refresh_indicator), never detached below.
-                            # Unlabeled spinner per HIG: don't label a spinning indicator.
-                            with refresh_indicator:
-                                with st.spinner(""):
-                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
+                            # it shows the spinner icon while busy. No detached
+                            # spinner.
+                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2834,51 +2840,48 @@ with col_settings:
                     if _need_headlines and (not refresh_news or _claim_refresh_once() or not st.session_state.live_news_articles):
                         articles = []
                         try:
-                            # HIG §3 (#196): the Refresh button owns this fetch —
-                            # the activity indicator renders next to the button
-                            # (refresh_indicator), never detached below.
-                            # Unlabeled spinner per HIG: don't label a spinning indicator.
-                            with refresh_indicator:
-                                with st.spinner(""):
-                                    _ht = (st.session_state.get("active_hashtag") or "").strip()
-                                    if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
-                                        # Hashtag mode: every hashtag carries its own headline —
-                                        # use it directly, no extra search needed.
-                                        # Normalize the hashtag dict entry to a NewsArticle-like object
-                                        # (dicts have "headline", articles need "title").
-                                        if active_hashtag_article:
-                                            if isinstance(active_hashtag_article, dict):
-                                                from types import SimpleNamespace
-                                                articles = [SimpleNamespace(
-                                                    title=active_hashtag_article.get("headline", ""),
-                                                    link=active_hashtag_article.get("link", ""),
-                                                    source=active_hashtag_article.get("source", ""),
-                                                    time_label="",
-                                                )]
-                                            else:
-                                                articles = [active_hashtag_article]
-                                        else:
-                                            # Custom typed hashtag: search news about the topic.
-                                            _query = _ht.lstrip("#").replace("#", " ")
-                                            articles = news_fetcher.search_news(_query, limit=16)
-                                    elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
-                                            articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
-                                    elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                                            articles = news_fetcher.get_india_trending(limit=16)
-                                    elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                                            articles = news_fetcher.get_top_indian_politics_news(limit=16)
-                                    elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                                            articles = news_fetcher.get_top_indian_culture_news(limit=16)
-                                    elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                                            articles = news_fetcher.get_top_india_tech_news(limit=16)
-                                    elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                                            articles = news_fetcher.get_top_tech_news(limit=16)
-                                    elif "World" in selected_news_cat:
-                                            articles = news_fetcher.get_top_world_news(limit=16)
-                                    elif "Business" in selected_news_cat:
-                                            articles = news_fetcher.get_top_business_news(limit=16)
+                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
+                            # it shows the spinner icon while busy. No detached
+                            # spinner.
+                            _ht = (st.session_state.get("active_hashtag") or "").strip()
+                            if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
+                                # Hashtag mode: every hashtag carries its own headline —
+                                # use it directly, no extra search needed.
+                                # Normalize the hashtag dict entry to a NewsArticle-like object
+                                # (dicts have "headline", articles need "title").
+                                if active_hashtag_article:
+                                    if isinstance(active_hashtag_article, dict):
+                                        from types import SimpleNamespace
+                                        articles = [SimpleNamespace(
+                                            title=active_hashtag_article.get("headline", ""),
+                                            link=active_hashtag_article.get("link", ""),
+                                            source=active_hashtag_article.get("source", ""),
+                                            time_label="",
+                                        )]
                                     else:
-                                            articles = news_fetcher.get_top_india_news(limit=16)
+                                        articles = [active_hashtag_article]
+                                else:
+                                    # Custom typed hashtag: search news about the topic.
+                                    _query = _ht.lstrip("#").replace("#", " ")
+                                    articles = news_fetcher.search_news(_query, limit=16)
+                            elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                                    articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                            elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                                    articles = news_fetcher.get_india_trending(limit=16)
+                            elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
+                                    articles = news_fetcher.get_top_indian_politics_news(limit=16)
+                            elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
+                                    articles = news_fetcher.get_top_indian_culture_news(limit=16)
+                            elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
+                                    articles = news_fetcher.get_top_india_tech_news(limit=16)
+                            elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
+                                    articles = news_fetcher.get_top_tech_news(limit=16)
+                            elif "World" in selected_news_cat:
+                                    articles = news_fetcher.get_top_world_news(limit=16)
+                            elif "Business" in selected_news_cat:
+                                    articles = news_fetcher.get_top_business_news(limit=16)
+                            else:
+                                    articles = news_fetcher.get_top_india_news(limit=16)
                         except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
                             # Loud failure: visible error banner, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -3810,6 +3813,13 @@ def _render_storyboard_cards(scripts, *, key_prefix=""):
                     # the live streaming loop (st.empty().container()), causing DuplicateWidgetID.
                     st.caption("🎬 AI video prompt (Veo):")
                     st.code(str(_vpa), language="text")
+                    # #335: per-prompt grounding status — "verified" or
+                    # "need verification", never a silent ungrounded prompt.
+                    _vstat = _model_field(_svp, "verification_status", "") or "verified"
+                    if _vstat == "need verification":
+                        st.caption("⚠️ need verification")
+                    else:
+                        st.caption("✓ verified")
     _render_raw_json(scripts, label="Raw JSON — storyboards", key_prefix=key_prefix)
 
 
@@ -4324,6 +4334,13 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                         if sc.video_prompt and getattr(sc.video_prompt, "visual_prompt_ai", ""):
                             st.caption("🎬 Veo 9:16 Cinematic Prompt:")
                             st.code(sc.video_prompt.visual_prompt_ai, language="text")
+                            # #335: per-prompt grounding status — "verified" or
+                            # "need verification", never a silent ungrounded prompt.
+                            _vp_stat = getattr(sc.video_prompt, "verification_status", "") or "verified"
+                            if _vp_stat == "need verification":
+                                st.caption("⚠️ need verification")
+                            else:
+                                st.caption("✓ verified")
                 _render_raw_json(_s5_scripts, label="Raw JSON — storyboards", key_prefix=f"{key_prefix}s5_")
 
             # 5.2 Validation
@@ -4763,6 +4780,10 @@ with col_output:
                         scene_style=st.session_state.chosen_scene_style,
                         preferred_tone=st.session_state.chosen_tone,
                         sample_story=st.session_state.get("run_sample_story", ""),
+                        # #316: one-shot bypass — consumed below so it never sticks.
+                        bypass_verification=st.session_state.pop("bypass_stage1_verification", False),
+                        # #335: one-shot Stage 5 no-facts bypass — same pattern.
+                        bypass_stage5_no_facts=st.session_state.pop("bypass_stage5_no_facts", False),
                     )
                     for step in pipeline:
                         # Live substep events: update tracker + heading, keep pumping.
@@ -4916,6 +4937,66 @@ with col_output:
             _err_step_txt = f" during Step {failure['step']}" if failure.get("step") else ""
             st.caption(f"Error detail: `{failure['error_type']}`{_err_step_txt}")
         st.warning(failure["message"])
+        # #316: Stage 1 verification failure (all 5 news sources failed) —
+        # offer a one-shot bypass that continues without verification.
+        # Detected by step == 1 plus the Stage 1 failure signature.
+        _is_stage1_verify_fail = (
+            _f_step == 1
+            and ("stage 1 verification failed" in _f_msg
+                 or "newsfetcherror" in _f_msg
+                 or "live wire feed returned no articles" in _f_msg)
+        )
+        if _is_stage1_verify_fail:
+            st.info(
+                "All 5 news sources failed (Google, Bing, DuckDuckGo, Yahoo, GDELT). "
+                "You can continue without verification — the script will be built "
+                "from your topic text and every fact will be marked UNVERIFIED."
+            )
+            if st.button(
+                "Continue without verification",
+                key="bypass_stage1_btn",
+                help="Skip verification and generate from your topic. Facts stay unverified.",
+            ):
+                st.session_state.bypass_stage1_verification = True
+                st.session_state.generation_error = None
+                begin_run(st.session_state)
+                st.rerun()
+        # #335: Stage 5 no-facts refusal — offer a bypass instead of a dead end.
+        # Retrying re-runs the same gate with the same (empty) facts, so it can
+        # never succeed. Every fail-loud failure must give a bypass option.
+        _is_stage5_nofacts_fail = (
+            _f_step == 5
+            and "no verified facts available to ground video prompts" in _f_msg
+        )
+        if _is_stage5_nofacts_fail:
+            st.info(
+                "Stage 5 needs verified facts to ground the video prompts, but none "
+                "are available. You can continue anyway — the visuals will be "
+                "generated without fact grounding and marked UNGROUNDED."
+            )
+            if st.button(
+                "Continue without verified facts",
+                key="bypass_stage5_btn",
+                help="Bypass the no-facts gate and generate the video prompts ungrounded.",
+            ):
+                st.session_state.generation_error = None
+                if st.session_state.get("stepwise_active"):
+                    # Stepwise: re-run just this step with the bypass flag on
+                    # the live state — the gate is never re-checked (#334).
+                    _sw_state = st.session_state.get("stepwise_state")
+                    if isinstance(_sw_state, dict):
+                        _sw_state["bypass_stage5_no_facts"] = True
+                    if not request_step_run(st.session_state, ACTION_RETRY):
+                        st.error("A step-wise run is already in flight — please wait for it to finish.")
+                    else:
+                        st.rerun()
+                else:
+                    # Continuous: one-shot bypass, consumed by the run block
+                    # below so it never sticks.
+                    st.session_state.bypass_stage5_no_facts = True
+                    st.session_state.batch_result = None
+                    begin_run(st.session_state)
+                    st.rerun()
         # Generic failure view (all 6 stages, one pattern): if this stage has
         # no live substep events (e.g. stepwise mode), seed the tracker from
         # the recorded step history so the generic renderer displays it.

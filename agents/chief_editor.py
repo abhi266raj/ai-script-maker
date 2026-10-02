@@ -63,6 +63,59 @@ def _emit_substep(on_substep, stage_num, substep, name, phase, **details):
         logger.warning("on_substep callback failed for %s", substep, exc_info=True)
 
 
+def _norm_angle_name(name: str) -> str:
+    n = (name or "").strip().lower()
+    n = re.sub(r"^\d+\.\s*", "", n)
+    return n
+
+
+def build_batch_angles(
+    total_scripts: int, preferred_angle: str
+) -> List[Tuple[str, str]]:
+    """#138 root cause fix: one DISTINCT angle per batch slot.
+
+    Previously every slot was stamped with the same preferred_angle
+    (get_effective_angle() in app.py never returns empty, so the
+    REEL_ANGLES cycling branch was dead code). The batch prompt then
+    carried N identical SCRIPT briefs and the model repeated script 1
+    N times. Detection gates (#147) cannot fix identical inputs.
+
+    The user's preferred (vibe-derived) angle takes slot 1; remaining
+    slots cycle REEL_ANGLES excluding the preferred angle, so every
+    script in a normal-size batch gets a genuinely different editorial
+    angle. Oversized batches (N > pool) wrap around, as before.
+    Fail loudly if the distinct pool ever regresses to duplicates.
+    """
+    total_scripts = max(1, int(total_scripts or 1))
+    pool: List[Tuple[str, str]] = []
+    if preferred_angle and preferred_angle.strip():
+        pool.append(
+            (preferred_angle.strip(), "User-selected editorial angle")
+        )
+    _seen = {_norm_angle_name(preferred_angle)}
+    for _ra in REEL_ANGLES:
+        _n = _norm_angle_name(_ra[0])
+        if _n in _seen:
+            continue
+        _seen.add(_n)
+        pool.append(_ra)
+    if not pool:
+        raise ModelGenerationError(
+            "Stage 2 failed: no editorial angles available to build "
+            f"the {total_scripts}-script batch."
+        )
+    selected = [pool[i % len(pool)] for i in range(total_scripts)]
+    if total_scripts <= len(pool):
+        _norms = [_norm_angle_name(a[0]) for a in selected]
+        if len(set(_norms)) != len(_norms):
+            raise ModelGenerationError(
+                "Stage 2 failed: batch angle pool regressed to duplicate "
+                f"angles for {total_scripts} scripts — every script in a "
+                "batch must carry a distinct angle."
+            )
+    return selected
+
+
 class ChiefEditorCoordinatorAgent:
     """Orchestrates the specialized multi-agent pipeline with autonomous self-healing retries and failure tracking."""
 
@@ -292,6 +345,7 @@ class ChiefEditorCoordinatorAgent:
         sample_story: Optional[str] = None,
         extra_instruction: Optional[str] = None,
         on_substep: Optional[Callable[[Dict[str, Any]], None]] = None,
+        bypass_verification: bool = False,  # #316: user chose to continue after a Stage 1 failure
         **kwargs,
     ) -> Dict[str, Any]:
         """Execute Stage 1: News Validation & Instruction Decomposition."""
@@ -410,17 +464,51 @@ class ChiefEditorCoordinatorAgent:
                 raise
             except Exception as e:
                 # Fail loudly: never substitute "Story confirmed: {headline}" as verified facts.
-                raise ModelGenerationError(
-                    f"Stage 1 verification failed: {type(e).__name__}: {e}. "
-                    f"News input: {news_input[:200]!r}"
-                ) from e
+                if bypass_verification:
+                    # #316: the user explicitly chose to continue without
+                    # verification after a Stage 1 failure. Build an explicit
+                    # UNVERIFIED report — never a fake "verified" one — so
+                    # downstream stages and the UI can see it was bypassed.
+                    logger.warning("Stage 1 verification bypassed by user: %s: %s",
+                                   type(e).__name__, e)
+                    stage1_failures += 1
+                    stage1_errors.append(
+                        f"Verification bypassed after failure ({type(e).__name__}: {str(e)[:80]})")
+                    stage1_resolution = (
+                        "User bypassed verification after all news sources failed; "
+                        "continuing with UNVERIFIED facts.")
+                    verification = NewsVerificationReport(
+                        is_verified=False,
+                        confidence_score=0,
+                        headline=(news_input or "")[:200],
+                        verification_summary=(
+                            "VERIFICATION BYPASSED — live news sources were unreachable "
+                            f"({type(e).__name__}: {e}). The user chose to continue "
+                            "without verification. Treat every fact below as UNVERIFIED."),
+                        verified_facts=[],
+                        flagged_claims=[f"UNVERIFIED (bypassed): {(news_input or '')[:200]}"],
+                        sources=[],
+                    )
+                else:
+                    raise ModelGenerationError(
+                        f"Stage 1 verification failed: {type(e).__name__}: {e}. "
+                        f"News input: {news_input[:200]!r}"
+                    ) from e
             # Cache the successful verification for 24h (never cached on failure
             # because exceptions above propagate before reaching this line).
             store_verification(news_input, verification.model_dump())
 
+        # #316: True when the user bypassed verification after a Stage 1 failure.
+        was_bypassed = bool(
+            verification is not None
+            and "VERIFICATION BYPASSED" in (verification.verification_summary or "")
+        )
+
         _emit_substep(on_substep, 1, "1.1", "Fact verification & dossier", "complete",
-                       status="pass",
-                       detail=(f"Verified with {verification.confidence_score}% confidence"
+                       status="bypassed" if was_bypassed else "pass",
+                       detail=("Verification bypassed by user — facts are UNVERIFIED"
+                               if was_bypassed
+                               else f"Verified with {verification.confidence_score}% confidence"
                                + (f" (cache hit, {cache_age_hours:.1f}h old)" if verification_from_cache else "")),
                        input=f"News: {(news_input or '')[:300]}",
                        output=(verification.verification_summary or "")[:500])
@@ -439,7 +527,8 @@ class ChiefEditorCoordinatorAgent:
                       status="pass" if (_s1_is_v and _s1_conf >= 70) else "fail",
                       detail="Verification gate passed" if (_s1_is_v and _s1_conf >= 70) else "Issues detected")
 
-        if not verification_from_cache and verification.confidence_score < 70 and max_retries > 0:
+        if (not was_bypassed and not verification_from_cache
+                and verification.confidence_score < 70 and max_retries > 0):
             stage1_failures += 1
             stage1_errors.append(f"Initial confidence score low ({verification.confidence_score}%)")
             _emit_substep(on_substep, 1, "1.3", "Confidence retry", "start",
@@ -496,6 +585,9 @@ class ChiefEditorCoordinatorAgent:
             "sub_instructions": sub_instructions,
             "verification": verification,
             "verification_from_cache": verification_from_cache,
+            # #335: True when the user bypassed Stage 1 verification (#316).
+            # Downstream gates must honor it — never re-refuse (#334).
+            "verification_bypassed": was_bypassed,
             "cache_age_hours": round(cache_age_hours, 1),
             "agent_audits": agent_audits,
             "start_time": start_time,
@@ -551,13 +643,13 @@ class ChiefEditorCoordinatorAgent:
                     f"\n\n⭐ USER EXTRA INSTRUCTION FOR STAGE 2 (HIGH PRIORITY):\n{extra_instruction.strip()}"
                 )
 
-        selected_angles: List[Tuple[str, str]] = []
-        for i in range(total_scripts):
-            selected_angles.append(
-                (preferred_angle, "User-selected editorial angle")
-                if preferred_angle.strip()
-                else REEL_ANGLES[i % len(REEL_ANGLES)]
-            )
+        # #138: one DISTINCT angle per batch slot — the user's preferred
+        # (vibe-derived) angle takes slot 1, the rest cycle REEL_ANGLES.
+        # Stamping the same angle on every slot starved the batch prompt of
+        # per-script differentiation and the model repeated script 1 N times.
+        selected_angles: List[Tuple[str, str]] = build_batch_angles(
+            total_scripts, preferred_angle
+        )
 
         stage2_failures = 0
         stage2_errors = []
@@ -1367,6 +1459,12 @@ class ChiefEditorCoordinatorAgent:
                 verified_facts=verification.verified_facts if verification else [],
                 sub_instruction=sub_instructions.get("video_prompt_engineer"),
                 engine_mode=engine_mode,
+                # #335: honor an explicit user bypass — never double-check
+                # a gate the user already overrode (#334).
+                bypass_no_facts=bool(
+                    state.get("verification_bypassed")
+                    or state.get("bypass_stage5_no_facts")
+                ),
             )
 
             for sc, vp in zip(scenes, video_prompts):
@@ -2098,6 +2196,11 @@ class ChiefEditorCoordinatorAgent:
             **kwargs,
         )
 
+        # #335: one-shot Stage 5 bypass from the failure UI (continuous mode).
+        # Carried on pipeline state so execute_stage_5 honors it — the gate
+        # is never re-checked after the user overrides it (#334).
+        state["bypass_stage5_no_facts"] = bool(kwargs.get("bypass_stage5_no_facts", False))
+
         yield {
             "step": 1,
             "total_steps": 6,
@@ -2250,6 +2353,9 @@ class ChiefEditorCoordinatorAgent:
                     "video_prompt_engineer": state.get("sub_instructions", {}).get("video_prompt_engineer", ""),
                 },
                 "scripts": state.get("scripts", []),
+                # #335: bypass markers so the UI loudly flags ungrounded visuals.
+                "verification_bypassed": bool(state.get("verification_bypassed")),
+                "bypass_stage5_no_facts": bool(state.get("bypass_stage5_no_facts")),
             },
         }
 

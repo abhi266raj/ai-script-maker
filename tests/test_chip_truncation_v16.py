@@ -89,30 +89,38 @@ def test_image_card_x_overlay_unchanged():
 
 
 # ---------------------------------------------------------------------------
-# #26 — news-link chip label prefers the source site name
+# #26 — #303 replaced news-link chips with News Links panel rows.
+# The row label is the headline itself (single-line ellipsis), not the
+# source site name; the link opens the true article URL.
 # ---------------------------------------------------------------------------
 
-def test_news_chip_label_prefers_source():
-    _, lui = _capture_library_css()
-    assert lui._news_chip_label("Big Long Headline Here", "The Times of India") \
-        == "The Times of India"
+def test_news_panel_row_label_is_headline():
+    """#303: the news row's link_button label is the headline — the
+    source-name label helper (_news_chip_label) is gone."""
+    from test_one_row_toolbar_v16 import _ui_with_recording_st
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1",
+        links=[{"title": "Big Long Headline Here",
+                "url": "https://timesofindia.example/a/1",
+                "source": "The Times of India"}],
+        busy_kinds=set())
+    assert not hasattr(lui, "_news_chip_label"), (
+        "the source-name label helper must stay removed")
+    assert fake.link_buttons == [
+        ("Big Long Headline Here", "https://timesofindia.example/a/1")]
 
 
-def test_news_chip_label_falls_back_to_title():
-    _, lui = _capture_library_css()
-    assert lui._news_chip_label("Big Long Headline Here", "") \
-        == "Big Long Headline Here"
-    assert lui._news_chip_label("Big Long Headline Here", "   ") \
-        == "Big Long Headline Here"
-
-
-def test_news_chip_label_never_empty():
-    _, lui = _capture_library_css()
-    assert lui._news_chip_label("", "") == "News link"
-    assert lui._news_chip_label(None, None) == "News link"
-    assert lui._news_chip_label("  ", "  ") == "News link"
-
-
-def test_news_chip_label_strips_whitespace():
-    _, lui = _capture_library_css()
-    assert lui._news_chip_label("  Headline  ", "  NDTV  ") == "NDTV"
+def test_news_panel_row_label_falls_back_to_url():
+    """A news link with no usable title falls back to the "News link"
+    placeholder (kept from the old chip label helper) — never an empty
+    label."""
+    from test_one_row_toolbar_v16 import _ui_with_recording_st
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1",
+        links=[{"title": "", "url": "https://example.com/a/9",
+                "source": "The Times of India"}],
+        busy_kinds=set())
+    assert fake.link_buttons == [
+        ("News link", "https://example.com/a/9")]

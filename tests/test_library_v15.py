@@ -186,7 +186,7 @@ def test_ai_hashtag_rejects_unknown_engine(libdir):
 def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: (["#DogShowdown", "#ChubbyDogs"], ""))
+                        lambda story, topic, ai_engine=None, force_refresh=False: (["#DogShowdown", "#ChubbyDogs"], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
                                             ai_engine="codex_only")
     assert changed is True
@@ -199,7 +199,7 @@ def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
 def test_refresh_hashtags_no_change_is_honest(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: (["#DogShowdown"], ""))
+                        lambda story, topic, ai_engine=None, force_refresh=False: (["#DogShowdown"], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
                                             ai_engine="codex_only")
     assert changed is False
@@ -213,7 +213,7 @@ def test_refresh_hashtags_removes_invalid_existing(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown", "#RussiaKillsFour",
                                "#FormatRequirementVertical", "bogus"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: ([], ""))
+                        lambda story, topic, ai_engine=None, force_refresh=False: ([], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
                                             ai_engine="codex_only")
     assert changed is True
@@ -277,7 +277,7 @@ def test_start_refresh_refuses_while_busy_new_format(libdir):
 def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
     sid = _make_story()
 
-    def _boom(sid_, topic, ai_engine=None):
+    def _boom(sid_, topic, ai_engine=None, force_refresh=False):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(lib, "refresh_hashtags", _boom)
@@ -630,13 +630,13 @@ def _fake_trending(monkeypatch, tags=None, boom=False):
     import tools.news_fetcher  # noqa: F401 (real submodule, not the instance)
     nf = sys.modules["tools.news_fetcher"]
     if boom:
-        def _raise(limit=12):
+        def _raise(limit=12, force_refresh=False):
             raise RuntimeError("net down")
         monkeypatch.setattr(nf.news_fetcher, "fetch_famous_english_hashtags",
                             _raise)
     else:
         monkeypatch.setattr(nf.news_fetcher, "fetch_famous_english_hashtags",
-                            lambda limit=12: tags or [])
+                            lambda limit=12, force_refresh=False: tags or [])
 
 
 def test_no_tag_from_raw_script_keywords(libdir, monkeypatch):
@@ -1142,6 +1142,7 @@ class _FakeSt:
         self.dividers = []  # st.divider kwargs, in render order (#78)
         self.spinners = []  # spinner text shown, in render order (#209)
         self.radios = []  # {"label", "options", "key"} per radio, in order
+        self.containers = []  # st.container kwargs, in render order (#303)
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
@@ -1181,6 +1182,15 @@ class _FakeSt:
     def popover(self, label, **k):
         self.popover_kwargs = {"label": label, **k}
         self.popovers.append(self.popover_kwargs)
+        return _FakeCtx()
+
+    def container(self, border=None, key=None, height=None, **k):
+        # #303: Hashtags/News Links panels use st.container(border=True)
+        # for the card and st.container(height=N) for the fixed-height
+        # scroll list. Records kwargs so panel tests can assert the
+        # card/list contract; returns a no-op context manager.
+        self.containers.append(
+            {"border": border, "key": key, "height": height, **k})
         return _FakeCtx()
 
     def selectbox(self, label, options, index=0, key=None, **k):
@@ -1253,7 +1263,7 @@ def _ui_with_fake_st(clicks=()):
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
                      "link_button", "code", "toast", "divider",
-                     "text_input", "spinner", "selectbox",
+                     "text_input", "spinner", "selectbox", "container",
                      "radio", "file_uploader"):  # #159 Telegram setup/share
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
@@ -2444,25 +2454,25 @@ def test_detail_toolbar_weights_fit_full_labels():
     state. #46: Share/Copy joined the same row. #220: the row is grouped
     refresh ×3 | share+copy | destructive (reset + delete) with hairline
     separator columns between groups. The upload trigger and the AI engine
-    dropdown joined the middle group beside Share/Copy (total 13.34);
-    every action keeps its own weight, and the #24 baseline alignment is
-    preserved."""
+    dropdown joined the middle group beside Share/Copy; every action keeps
+    its own weight, and the #24 baseline alignment is preserved.
+    #303: the hashtag/news refresh buttons moved into the Hashtags/News
+    Links panel headers — only the Images refresh stays in the toolbar
+    (10 slots, total 11.54)."""
     lui, _fake = _ui_with_fake_st()
-    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 13.34
+    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 11.54
     assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.1
     # Icon columns fit the glyph + spinner (generous headroom); text
     # columns unchanged from the #38 fit.
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # hashtag icon button
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 0.8  # image icon button
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 0.8  # news icon button (#80)
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] <= 0.2  # #220 separator
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Share popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[5] >= 1.0  # Copy popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] >= 1.0  # Upload popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[7] >= 1.5  # AI engine dropdown
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[8] <= 0.2  # #220 separator
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[10] >= 1.3  # Reset popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[11] >= 1.5  # Delete popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # image icon button
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] <= 0.2  # #220 separator
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 1.0  # Share popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.0  # Copy popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Upload popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[5] >= 1.5  # AI engine dropdown
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] <= 0.2  # #220 separator
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[8] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[9] >= 1.5  # Delete popover trigger
     assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
 
 
@@ -2615,3 +2625,38 @@ def test_reset_popover_uses_explicit_verb_source():
     seg = seg[:seg.index("\ndef ", 10)]
     assert 'destructive_label="Reset media"' in seg
     assert 'title="Reset media rows?"' in seg
+
+
+# ---------------------------------------------------------------------------
+# Empty-story guard: save_story must never persist a story with no content
+# ---------------------------------------------------------------------------
+
+def test_save_story_rejects_empty_content(libdir):
+    """An empty story (blank dialogue AND blank script) is refused loudly
+    and nothing is written to the stories directory."""
+    with pytest.raises(ValueError, match="content is empty"):
+        lib.save_story(title="Empty", tone="funny", hashtags=["#x"],
+                       dialogue_md="", script_md="")
+    assert list((libdir / "stories").glob("*.md")) == []
+
+
+def test_save_story_rejects_whitespace_only_content(libdir):
+    """Whitespace-only content counts as empty."""
+    with pytest.raises(ValueError, match="content is empty"):
+        lib.save_story(title="Empty", tone="funny", hashtags=["#x"],
+                       dialogue_md="  \n ", script_md="   ")
+    assert list((libdir / "stories").glob("*.md")) == []
+
+
+def test_save_story_allows_dialogue_only_content(libdir):
+    """The guard is on combined content: dialogue alone is a real story."""
+    sid = lib.save_story(title="Dialogue only", tone="funny",
+                         hashtags=["#x"], dialogue_md="AARAV: hello",
+                         script_md="")
+    assert lib.load_story(sid)["dialogue"] == "AARAV: hello"
+
+
+def test_save_story_allows_script_only_content(libdir):
+    """Script alone (the normal autosave shape, dialogue_md="") still saves."""
+    sid = _make_story(dialogue_md="", script_md="AARAV: real content")
+    assert "real content" in lib.load_story(sid)["script"]

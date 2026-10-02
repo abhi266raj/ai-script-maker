@@ -69,10 +69,12 @@ BUSY_STATES = ("pending", "refreshing", "running")
 #
 # - ``_REFRESH_KINDS``: the manual-refresh kinds. ``"hashtags"``,
 #   ``"images"`` and ``"news"`` are independent and may run concurrently
-#   (#54, #80); ``"more_images"`` / ``"more_news"`` (#91) are the explicit
-#   "load more" batches — independent of everything except their sibling
-#   kind (``"images"``/``"more_images"`` and ``"news"``/``"more_news"``
-#   both write the same field, so each pair is mutually exclusive);
+#   (#54, #80); ``"more_images"`` / ``"more_news"`` (#91) and
+#   ``"more_hashtags"`` (#303) are the explicit "load more" batches —
+#   independent of everything except their sibling kind
+#   (``"images"``/``"more_images"``, ``"news"``/``"more_news"`` and
+#   ``"hashtags"``/``"more_hashtags"`` each write the same field, so each
+#   pair is mutually exclusive);
 #   ``"reset"`` is destructive and exclusive; ``"enrich"`` is the
 #   save-time enrichment and also exclusive with manual refreshes.
 # - ``refresh_busy`` (frontmatter, list of kind names): the kinds currently
@@ -93,15 +95,18 @@ BUSY_STATES = ("pending", "refreshing", "running")
 # each other's updates. Lock order is always kind-lock (_ENRICH_LOCKS) THEN
 # meta-lock — never the reverse (deadlock avoidance).
 _REFRESH_KINDS = ("hashtags", "images", "news", "more_images", "more_news",
-                 "reset", "enrich")
+                 "more_hashtags", "reset", "enrich")
 _EXCLUSIVE_KINDS = ("reset", "enrich")
 
 # #91: kinds that write the SAME story field must not run together — the
 # second writer would silently clobber the first's appended batch
 # (last-writer-wins on the whole list). "Load more images" is refused
-# while "Update Images" runs and vice versa; same for the news pair.
+# while "Update Images" runs and vice versa; same for the news pair and
+# (#303) the hashtag pair.
 _SIBLING_KINDS = {"images": "more_images", "more_images": "images",
-                  "news": "more_news", "more_news": "news"}
+                  "news": "more_news", "more_news": "news",
+                  "hashtags": "more_hashtags",
+                  "more_hashtags": "hashtags"}
 
 # #91: one "load more" click fetches at most this many genuinely new items.
 _LOAD_MORE_BATCH = 5
@@ -178,8 +183,11 @@ LIBRARY_AI_ENGINE_NONE_LABEL = "None"
 
 
 def new_story_id() -> str:
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"{ts}-{uuid.uuid4().hex[:6]}"
+    # #291: full UUID4 hex. No timestamp prefix — display/recency ordering
+    # comes from the `created_at` frontmatter field, not the filename.
+    # Existing timestamp-prefixed IDs remain valid (no migration):
+    # _STORY_ID_RE already accepts 32-char hex.
+    return uuid.uuid4().hex
 
 
 def _check_id(story_id: str) -> str:
@@ -322,6 +330,7 @@ def save_story(
     source_headline: str = "",
     news_links: Optional[List[Dict[str, str]]] = None,
     image_urls: Optional[List[str]] = None,
+    dedup_id: str = "",
 ) -> str:
     """Save a story immediately (no network). Returns the story id.
 
@@ -331,12 +340,18 @@ def save_story(
     under different URLs that slip through here are collapsed by every
     later image refresh, which backfills content/perceptual hashes and
     collapses stored duplicates (issue #57).
+
+    Raises ValueError when the story has no content (both dialogue and
+    script are blank) — an empty story is never persisted.
     """
+    if not (dialogue_md or "").strip() and not (script_md or "").strip():
+        raise ValueError("Cannot save: the story content is empty.")
     story_id = new_story_id()
     image_urls, _, _ = _dedupe_stored_image_entries(image_urls, [], [])
     meta = {
         "id": story_id,
         "title": title or "Untitled Story",
+        "dedup_id": dedup_id or "",
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "tone": tone or "",
         "hashtags": [h for h in (hashtags or []) if h],
@@ -1485,11 +1500,13 @@ def recover_orphaned_refreshes() -> int:
     return recovered
 
 
-def _fetch_news_articles(topic: str, limit: int = 6):
+def _fetch_news_articles(topic: str, limit: int = 6,
+                         force_refresh: bool = False):
     """Best-effort news search; returns [] on any failure."""
     try:
         from tools.news_fetcher import news_fetcher
-        return news_fetcher.search_news(topic, limit=limit) or []
+        return news_fetcher.search_news(topic, limit=limit,
+                                       force_refresh=force_refresh) or []
     except Exception:
         return []
 
@@ -2172,7 +2189,8 @@ def _relevance_words(story: Optional[Dict[str, Any]], topic: str = "") -> set:
     return words - _HASHTAG_STOPWORDS
 
 
-def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None) -> Tuple[List[str], str]:
+def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None,
+                             force_refresh: bool = False) -> Tuple[List[str], str]:
     """Deterministic hashtag discovery: trending tags, then headline/topic fallback.
 
     Primary: hashtags trending on social media (X trends + Google Trends via
@@ -2194,7 +2212,8 @@ def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None)
     note = ""
     try:
         from tools.news_fetcher import news_fetcher
-        trending = news_fetcher.fetch_famous_english_hashtags(limit=12) or []
+        trending = news_fetcher.fetch_famous_english_hashtags(
+            limit=12, force_refresh=force_refresh) or []
     except Exception as e:
         trending = []
         note = (f"Trending-hashtag lookup failed ({type(e).__name__}: {e}); "
@@ -2331,7 +2350,8 @@ def _resolve_library_engine_mode(preferred: Optional[str] = None) -> str:
 
 
 def _suggest_hashtags(story: Dict[str, Any], topic: str,
-                      ai_engine: Optional[str] = None) -> Tuple[List[str], str]:
+                      ai_engine: Optional[str] = None,
+                      force_refresh: bool = False) -> Tuple[List[str], str]:
     """Hashtag candidates: AI-found trending first, deterministic fallback.
 
     The AI is always asked first (engine: explicit ``ai_engine``, else the
@@ -2364,7 +2384,8 @@ def _suggest_hashtags(story: Dict[str, Any], topic: str,
 
 
 def refresh_hashtags(story_id: str, topic: str = "",
-                     ai_engine: Optional[str] = None) -> Tuple[bool, str]:
+                     ai_engine: Optional[str] = None,
+                     force_refresh: bool = False) -> Tuple[bool, str]:
     """Validate every stored hashtag against the story's topic/headline/title,
     drop the ones that are not relevant, and merge in fresh suggestions.
 
@@ -2397,7 +2418,8 @@ def refresh_hashtags(story_id: str, topic: str = "",
     removed = [h for h in existing if h not in valid_existing]
 
     # 2. Fresh grounded suggestions (AI first when enabled, deterministic always).
-    new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
+    new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine,
+                                         force_refresh=force_refresh)
 
     # 3. Merge: keep the validated existing tags, add genuinely new ones.
     merged: List[str] = []
@@ -2555,7 +2577,8 @@ def _news_query_variants(topic: str) -> List[str]:
 
 
 def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
-                                exclude_urls=()) -> List[Dict[str, str]]:
+                                exclude_urls=(),
+                                force_refresh: bool = False) -> List[Dict[str, str]]:
     """Fetch up to ``count`` NEW news links for ``topic`` (#82).
 
     Reusable "fetch up to N new links for topic T excluding existing
@@ -2590,7 +2613,8 @@ def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
             break
         try:
             articles = (news_fetcher.search_news(
-                variant, limit=max(count * 3, 12)) or [])
+                variant, limit=max(count * 3, 12),
+                force_refresh=force_refresh) or [])
         except Exception as e:  # noqa: BLE001 - collected, raised loudly below
             errors.append(f"{variant!r}: {type(e).__name__}: {e}")
             continue
@@ -2615,7 +2639,8 @@ def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
     return found
 
 
-def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+def refresh_news_links(story_id: str, topic: str = "",
+                       force_refresh: bool = False) -> Tuple[bool, str]:
     """Re-fetch news links (sources) and ADD the new ones to the story.
 
     Runs the same Google News search as save-time enrichment, then
@@ -2657,7 +2682,8 @@ def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
                        f"(at the {NEWS_LINKS_TARGET}-link cap).")
     added = _fetch_news_link_candidates(
         topic, count=room,
-        exclude_urls=[lk["url"] for lk in existing])
+        exclude_urls=[lk["url"] for lk in existing],
+        force_refresh=force_refresh)
     if added:
         update_story_fields(story_id, news_links=existing + added)
         total = len(existing) + len(added)
@@ -2878,7 +2904,8 @@ def load_more_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     return False, note
 
 
-def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+def load_more_news_links(story_id: str, topic: str = "",
+                         force_refresh: bool = False) -> Tuple[bool, str]:
     """Fetch ONE more batch (up to 5) of genuinely new news links (#91).
 
     The sanctioned way past the #82 5-link target: this explicit user
@@ -2910,12 +2937,50 @@ def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
                 if isinstance(lk, dict) and lk.get("url")]
     added = _fetch_news_link_candidates(
         topic, count=_LOAD_MORE_BATCH,
-        exclude_urls=[lk["url"] for lk in existing])
+        exclude_urls=[lk["url"] for lk in existing],
+        force_refresh=force_refresh)
     if added:
         update_story_fields(story_id, news_links=existing + added)
         return True, (f"Added {len(added)} more news link(s); "
                       f"{len(existing) + len(added)} total.")
     return False, (f"No more news links found; kept {len(existing)} "
+                    "existing.")
+
+
+def load_more_hashtags(story_id: str, topic: str = "",
+                       ai_engine: Optional[str] = None,
+                       force_refresh: bool = False) -> Tuple[bool, str]:
+    """Fetch ONE more batch of genuinely new hashtag suggestions (#303).
+
+    The hashtags panel's "Load more": runs the same suggestion pipeline
+    as the hashtag refresh (AI-found trending first, deterministic
+    fallback), then appends the genuinely new tags after the existing
+    ones — existing tags are never wiped and never reordered, duplicates
+    are filtered by exact match.
+
+    Fail-loud: a missing story, missing topic, or no configured AI engine
+    raises RuntimeError with the honest cause (trending hashtags need the
+    AI — same rule as refresh_hashtags). A fetch that yields nothing new
+    returns (False, "No new hashtags found...") — never a faked success.
+    Never touches news links, images, or story content.
+    """
+    story = load_story(story_id)
+    if not story:
+        raise RuntimeError("Story not found — hashtags unchanged.")
+    if ai_engine is None:
+        raise RuntimeError(_AI_DISABLED_MSG)
+    topic = (topic or story["meta"].get("source_topic") or "").strip()
+    if not topic:
+        raise RuntimeError("No topic to find hashtags for.")
+    existing = [h for h in (story["meta"].get("hashtags") or []) if h]
+    new_tags, _note = _suggest_hashtags(story, topic, ai_engine,
+                                       force_refresh=force_refresh)
+    added = [t for t in new_tags if t not in existing]
+    if added:
+        update_story_fields(story_id, hashtags=existing + added)
+        return True, (f"Added {len(added)} more hashtag(s); "
+                      f"{len(existing) + len(added)} total.")
+    return False, (f"No new hashtags found; kept {len(existing)} "
                     "existing.")
 
 
@@ -2942,15 +3007,22 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
     try:
         try:
             if kind == "hashtags":
-                changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
+                changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine,
+                                                force_refresh=True)
             elif kind == "images":
                 changed, note = refresh_images(story_id, topic)
             elif kind == "news":
-                changed, note = refresh_news_links(story_id, topic)
+                changed, note = refresh_news_links(story_id, topic,
+                                                  force_refresh=True)
             elif kind == "more_images":
                 changed, note = load_more_images(story_id, topic)
             elif kind == "more_news":
-                changed, note = load_more_news_links(story_id, topic)
+                changed, note = load_more_news_links(story_id, topic,
+                                                    force_refresh=True)
+            elif kind == "more_hashtags":
+                changed, note = load_more_hashtags(
+                    story_id, topic, ai_engine=ai_engine,
+                    force_refresh=True)
             elif kind == "reset":
                 changed, note = _do_reset(story_id, topic, ai_engine=ai_engine)
             else:
@@ -2961,6 +3033,7 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
             label = {"hashtags": "Hashtag", "images": "Image",
                      "news": "News", "more_images": "Load more images",
                      "more_news": "Load more news",
+                     "more_hashtags": "Load more hashtags",
                      "reset": "Reset"}.get(kind, kind)
             note = f"{label} refresh failed: {e}"
         try:
@@ -2975,36 +3048,37 @@ def start_refresh(story_id: str, kind: str,
                   ai_engine: Optional[str] = None) -> Tuple[bool, str]:
     """Kick off a background hashtag/image/news/reset refresh. Never raises.
 
-    ``kind`` is "hashtags", "images", "news", "more_images", "more_news" or
-    "reset". ``ai_engine`` (an engine mode string or None) enables
+    ``kind`` is "hashtags", "images", "news", "more_images", "more_news",
+    "more_hashtags" or "reset". ``ai_engine`` (an engine mode string or None) enables
     AI-assisted hashtag suggestions for the hashtags and reset kinds —
     None means the "None" option is selected in the toolbar's AI engine
     dropdown, in which case the worker fails loudly with a clear message
     instead of silently falling back. The "news" kind re-fetches news links (sources) for the
     story's topic and merges new ones in (never wipes). The "more_images"
-    / "more_news" kinds (#91) fetch ONE more batch (up to 5) of genuinely
-    new images / news links past the #83/#82 caps — the cap is bypassed
-    by this explicit user request, dedupe never is. The "reset" kind
+    / "more_news" / "more_hashtags" kinds (#91, #303) fetch ONE more batch
+    (up to 5) of genuinely new images / news links / hashtag suggestions
+    past the #83/#82 caps — the cap is bypassed by this explicit user
+    request, dedupe never is. The "reset" kind
     destructively clears all hashtags, fetched images and news links and
     re-fetches them fresh (manual uploads are never touched). The fetch
     runs in a daemon thread, so changing tabs mid-refresh won't stop it.
     Falls back to the story title when ``source_topic`` is missing so
     older stories can still refresh.
 
-    Concurrency (#54, #80, #91): "hashtags", "images", "news",
-    "more_images" and "more_news" are independent and may run at the same
-    time — a second kick is refused only for the SAME kind, for the
-    SIBLING kind that writes the same field ("images"↔"more_images",
-    "news"↔"more_news" — concurrent writers would silently clobber each
-    other's appended batch), or when an exclusive kind ("reset", or
-    save-time "enrich") is running. "reset" stays exclusive: it refuses
-    while ANY kind runs.
+    Concurrency (#54, #80, #91, #303): "hashtags", "images", "news",
+    "more_images", "more_news" and "more_hashtags" are independent and may
+    run at the same time — a second kick is refused only for the SAME kind,
+    for the SIBLING kind that writes the same field ("images"↔"more_images",
+    "news"↔"more_news", "hashtags"↔"more_hashtags" — concurrent writers
+    would silently clobber each other's appended batch), or when an
+    exclusive kind ("reset", or save-time "enrich") is running. "reset"
+    stays exclusive: it refuses while ANY kind runs.
 
     Returns (started, reason): ``reason`` is "" when the refresh started,
     otherwise a human-readable explanation of why it could not start.
     """
     if kind not in ("hashtags", "images", "news", "more_images",
-                    "more_news", "reset"):
+                    "more_news", "more_hashtags", "reset"):
         return False, f"Unknown refresh kind: {kind!r}."
     try:
         story = load_story(story_id)
