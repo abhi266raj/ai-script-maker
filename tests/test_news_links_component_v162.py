@@ -98,6 +98,67 @@ def test_component_invalid_url_fails_loudly(libdir):
 
 
 # ---------------------------------------------------------------------------
+# #205 — malformed URL renders a compact inline marker (warning pill +
+# help tag), NOT a full st.error, inside the scroll row; the full error
+# surfaces BELOW the row so the one-line geometry holds.
+# ---------------------------------------------------------------------------
+
+def test_component_invalid_url_compact_inline_marker(libdir):
+    lui, fake = _ui_with_recording_st()
+    bad = [{"title": "Bad link", "source": "Bad",
+            "url": "javascript:alert(1)"}]
+    lui._render_news_links_row("sid1", bad, set())
+
+    # still exactly one columns() row — geometry preserved with a bad link
+    assert len(fake.column_specs) == 1, (
+        f"component must render exactly one columns() row; "
+        f"saw {len(fake.column_specs)}")
+    assert any('data-marker="lib-link-invalid"' in m for m in fake.markup), (
+        f"invalid URL must render the compact inline marker; "
+        f"saw {fake.markup}")
+    warn = [k for k in fake.button_kwargs
+            if k.get("key") == "lib_newslink_invalid_sid1_0"]
+    assert warn, (
+        f"invalid URL must render a warning marker button; "
+        f"saw {fake.button_kwargs}")
+    w = warn[0]
+    assert w["label"] == "", "marker button must be icon-only (no text label)"
+    assert w.get("icon") == ":material/warning:", (
+        f"marker must use the warning icon; saw {w}")
+    assert "invalid URL" in w.get("help", ""), (
+        f"marker help tag must name the problem; saw {w}")
+    assert fake.link_buttons == [], (
+        f"invalid URL must not render a link button; saw {fake.link_buttons}")
+
+
+def test_component_invalid_url_keeps_remove_overlay(libdir):
+    lui, fake = _ui_with_recording_st()
+    bad = [{"title": "Bad link", "source": "Bad",
+            "url": "javascript:alert(1)"}]
+    lui._render_news_links_row("sid1", bad, set())
+
+    assert "lib_xlink_sid1_0" in [b[1] for b in fake.buttons], (
+        f"bad link must keep its × remove button; saw {fake.buttons}")
+
+
+def test_invalid_link_help_names_problem_and_stays_compact(libdir):
+    lui, _ = _ui_with_recording_st()
+    h = lui._invalid_link_help("javascript:alert(1)")
+    assert "invalid URL" in h, f"help tag must name the problem; saw {h!r}"
+    assert "javascript:alert(1)" in h, f"help tag must show the URL; saw {h!r}"
+    assert len(h) <= 75, f"help tag must stay <=75 chars (HIG §2); saw {h!r}"
+
+
+def test_invalid_link_help_truncates_long_url(libdir):
+    lui, _ = _ui_with_recording_st()
+    h = lui._invalid_link_help("https://example.com/" + "x" * 200)
+    assert len(h) <= 75, f"help tag must stay <=75 chars (HIG §2); saw {h!r}"
+    assert h.endswith("…)"), (
+        f"truncated URL must show the ellipsis; saw {h!r}")
+    assert "invalid URL" in h, f"help tag must name the problem; saw {h!r}"
+
+
+# ---------------------------------------------------------------------------
 # integration: story detail renders the same row through the component
 # ---------------------------------------------------------------------------
 
