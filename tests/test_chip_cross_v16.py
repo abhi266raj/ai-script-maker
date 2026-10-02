@@ -153,8 +153,8 @@ def test_chip_theme_colors_preserved():
     """#45: both themes keep their chip bg/text/border tokens, which the
     × glyph reuses via var(--lib-chip-text)."""
     css = _capture_library_css()
-    for needle in ("--lib-chip-bg: #F0E7D5;", "--lib-chip-text: #5A4227;",
-                   "--lib-chip-bg: #4A4034;", "--lib-chip-text: #F2E4C2;"):
+    for needle in ("--lib-chip-bg: var(--sunken);", "--lib-chip-text: var(--ink);",
+                   "--lib-chip-bg: var(--accent-tint);"):
         assert needle in css, needle
 
 

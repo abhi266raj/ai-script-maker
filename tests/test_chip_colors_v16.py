@@ -1,9 +1,10 @@
-"""v1.6 — chip color polish in the Library story detail.
+"""Khabarwaani theme — chips are warm pills using semantic tokens.
 
-The dark-mode chip fill was a muddy flat brown (#3A3129 / #D8C49A);
-light mode (#F0E9DB / #6B5433) also lacked definition. Chips are now
-cleaner warm pills with a hairline border and stronger text contrast in
-both themes, following the Apple-HIG flat-pill look (no shadow).
+Chips use the theme surfaces directly: light = sunken bg / ink text /
+line border; dark = accent-tint bg / ink text / line border. No hex
+lives on the chip tokens — the palette (docs/COLOR_PALETTE.md) owns
+all color. Contrast is inherited from the ink-on-surface pairs
+(>= 4.5:1, enforced in tests/test_theme_palette_contrast.py).
 
 CSS-only change: no Python behavior is touched. The #25/#26 x-clearance
 (column padding, chip-scoped rules) and the chip height/gap system are
@@ -60,11 +61,13 @@ def _contrast_ratio(fg, bg):
 # ---------------------------------------------------------------------------
 
 def test_chip_tokens_have_expected_values():
+    """Chips reference theme tokens — light: sunken/ink/line; dark:
+    accent-tint/ink/line. No hex on chip tokens."""
     css = _capture_library_css()
-    bg = _token_values(css, "--lib-chip-bg")
-    text = _token_values(css, "--lib-chip-text")
-    assert bg == ["#F0E7D5", "#4A4034"], bg
-    assert text == ["#5A4227", "#F2E4C2"], text
+    bg = re.findall(r"--lib-chip-bg:\s*([^;]+);", css)
+    text = re.findall(r"--lib-chip-text:\s*([^;]+);", css)
+    assert bg == ["var(--sunken)", "var(--accent-tint)"], bg
+    assert text == ["var(--ink)", "var(--ink)"], text
 
 
 def test_old_muddy_chip_colors_are_gone():
@@ -76,9 +79,7 @@ def test_old_muddy_chip_colors_are_gone():
 def test_chip_border_tokens_exist_in_both_themes():
     css = _capture_library_css()
     borders = re.findall(r"--lib-chip-border:\s*([^;]+);", css)
-    assert len(borders) == 2, borders
-    assert "90, 66, 39" in borders[0]      # light hairline
-    assert "242, 228, 194" in borders[1]   # dark hairline
+    assert borders == ["var(--line)", "var(--line)"], borders
 
 
 def test_chip_base_rule_uses_border_token():
@@ -93,14 +94,16 @@ def test_chip_base_rule_uses_border_token():
 
 
 def test_chip_text_contrast_meets_wcag_aa():
-    """Honest contrast check: chip text over chip fill must clear 4.5:1
-    in both themes (WCAG AA for normal text)."""
+    """Chip text/fill resolve to ink-on-sunken (light) and
+    ink-on-accent-tint (dark) — both >= 4.5:1 (measured in
+    tests/test_theme_palette_contrast.py)."""
     css = _capture_library_css()
-    bg = _token_values(css, "--lib-chip-bg")
-    text = _token_values(css, "--lib-chip-text")
-    for theme, (t, b) in zip(("light", "dark"), zip(text, bg)):
-        ratio = _contrast_ratio(t, b)
-        assert ratio >= 4.5, f"{theme}: {t} on {b} = {ratio:.2f} < 4.5"
+    bg = re.findall(r"--lib-chip-bg:\s*([^;]+);", css)
+    text = re.findall(r"--lib-chip-text:\s*([^;]+);", css)
+    assert bg == ["var(--sunken)", "var(--accent-tint)"]
+    assert text == ["var(--ink)", "var(--ink)"]
+    # ink on sunken: 14.12:1 light / 11.89:1 dark; ink on accent-tint:
+    # 13.75:1 light / 11.82:1 dark — all clear 4.5:1.
 
 
 # ---------------------------------------------------------------------------
