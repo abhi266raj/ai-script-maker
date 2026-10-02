@@ -330,6 +330,7 @@ def save_story(
     source_headline: str = "",
     news_links: Optional[List[Dict[str, str]]] = None,
     image_urls: Optional[List[str]] = None,
+    dedup_id: str = "",
 ) -> str:
     """Save a story immediately (no network). Returns the story id.
 
@@ -350,6 +351,7 @@ def save_story(
     meta = {
         "id": story_id,
         "title": title or "Untitled Story",
+        "dedup_id": dedup_id or "",
         "created_at": datetime.datetime.now().isoformat(timespec="seconds"),
         "tone": tone or "",
         "hashtags": [h for h in (hashtags or []) if h],
