@@ -1850,6 +1850,14 @@ def _render_fm_warmup_result() -> None:
     once it auto-dismissed there was zero on-screen evidence the warm-up
     had succeeded. HIG §7: in-foreground updates stay in the UI,
     discoverable but not distracting.
+
+    Failure is a deliberate, user-requested exception to #213 (errors
+    belong in persistent alerts): the failure surfaces once as an
+    auto-dismissing toast through the #88 ``_notify`` path — the probe's
+    message verbatim, so it still fails loudly at the moment it happens —
+    then goes away instead of re-rendering on every rerun forever. Retry
+    stays available through the main warm-up button in the tab bar
+    (always rendered, enabled whenever no probe is in flight).
     """
     _state = lib.read_fm_warmup_state()
     _stt = (_state or {}).get("state")
@@ -1872,14 +1880,14 @@ def _render_fm_warmup_result() -> None:
                    + (f" — {_msg}" if _msg else ""))
     elif _stt == "failed":
         _msg = ((_state.get("message") or "").strip() or "unknown error")
-        st.error(f"Warm-up failed: {_msg}")
-        # Loud failure gets an explicit retry — never a silent stuck state.
-        if st.button("Retry warm-up", key="fm_warmup_retry",
-                     help="Run the FM warm-up probe again"):
-            _ok, _reason = lib.start_fm_warmup()
-            if not _ok:
-                st.error(f"Could not start warm-up: {_reason}")
-            st.rerun()
+        # User-requested exception to #213: auto-dismissing toast, not a
+        # persistent alert. Fires once per failed run (marker below); the
+        # main warm-up button in the tab bar remains the retry path, so
+        # there is no dead end and no persistent chrome.
+        _marker = (_state.get("started_at"), "failed")
+        if st.session_state.get(_FM_WARMUP_TOAST_ANNOUNCED_KEY) != _marker:
+            _notify(f"Warm-up failed: {_msg}", icon=":material/warning:")
+            st.session_state[_FM_WARMUP_TOAST_ANNOUNCED_KEY] = _marker
 
 
 def render_tab_bar() -> str:

@@ -213,11 +213,22 @@ def test_auto_warming_skips_poll_loop():
         "poll loop must be conditional on the auto flag"
 
 
-def test_failed_result_has_retry_button():
-    """A loud failure must carry an explicit Retry option."""
+def test_failed_result_uses_autodismiss_toast_not_persistent_retry():
+    """User-requested exception to #213: the failure branch must surface
+    through the auto-dismissing ``_notify`` toast path (once per run via
+    the announced marker) and must NOT keep a persistent error banner or
+    an inline retry button. Retry stays available through the main
+    warm-up button in the tab bar (``_render_fm_warmup_button``), which is
+    always rendered."""
     src = _ui_src()
     idx = src.index("def _render_fm_warmup_result()")
     end = src.index("def render_tab_bar()", idx)
     body = src[idx:end]
-    assert "Retry warm-up" in body
-    assert "fm_warmup_retry" in body
+    assert "_notify(f\"Warm-up failed:" in body, \
+        "failure must go through the auto-dismiss toast path"
+    assert "fm_warmup_retry" not in body, \
+        "no inline retry button — the tab-bar warm-up button is the retry path"
+    assert "Retry warm-up" not in body
+    # The main warm-up button is always rendered by render_tab_bar.
+    tab_idx = src.index("def render_tab_bar()")
+    assert "_render_fm_warmup_button()" in src[tab_idx:tab_idx + 2000]

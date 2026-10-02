@@ -12,7 +12,9 @@ Covers:
 - ``_notify`` records a toast (never a persistent success banner);
 - the warm-up "done" notice (the issue's screenshot example) toasts and
   auto-dismisses instead of lingering as a success banner;
-- the warm-up "failed" notice stays loud: ``st.error`` + retry button.
+- the warm-up "failed" notice fires once as an auto-dismissing toast
+  (deliberate user-requested exception to the errors-belong-in-alerts
+  rule); retry stays available through the main warm-up button.
 """
 
 import sys
@@ -107,7 +109,7 @@ def test_notify_without_icon():
 
 
 # ---------------------------------------------------------------------------
-# Warm-up result: done toasts, failure stays loud
+# Warm-up result: done toasts; failure toasts once (user-requested exception)
 # ---------------------------------------------------------------------------
 
 def test_warmup_done_toasts_with_timing(monkeypatch):
@@ -136,14 +138,23 @@ def test_warmup_done_without_message_still_honest(monkeypatch):
     assert fake.successes == []
 
 
-def test_warmup_failed_stays_loud_with_retry(monkeypatch):
-    """A failed warm-up is not transient: it keeps the persistent
-    ``st.error`` banner and the explicit retry button."""
+def test_warmup_failed_toasts_once_then_dismisses(monkeypatch):
+    """User-requested exception to the errors-belong-in-alerts rule: a
+    failed warm-up fires once as an auto-dismissing toast (the probe's
+    message verbatim — still loud at the moment it happens), then goes
+    away instead of re-rendering forever. No persistent error chrome;
+    retry stays available through the main warm-up button."""
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(
         lib, "read_fm_warmup_state",
-        lambda: {"state": "failed", "message": "probe timed out"})
+        lambda: {"state": "failed", "message": "probe timed out",
+                 "started_at": 1700000005.0})
     lui._render_fm_warmup_result()
-    assert fake.toasts == []
-    assert fake.errors == ["Warm-up failed: probe timed out"]
-    assert ("Retry warm-up", "fm_warmup_retry") in fake.buttons
+    assert fake.toasts == [("Warm-up failed: probe timed out",
+                            ":material/warning:")]
+    assert fake.errors == []
+    assert fake.buttons == []
+    # Second render of the same failed run: nothing re-fires.
+    lui._render_fm_warmup_result()
+    assert fake.toasts == [("Warm-up failed: probe timed out",
+                            ":material/warning:")]

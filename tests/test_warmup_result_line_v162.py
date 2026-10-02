@@ -9,9 +9,11 @@ the state is "done", independent of the once-only toast.
 Covers: persistent caption on success (timing + probe message), caption
 renders even when the toast was already announced (no re-arm, no
 duplicate toast), empty-message and missing-seconds formatting, the
-failure path keeps its verbatim st.error + Retry button (no caption on
-failure — HIG: errors belong in alerts, #213), idle state renders
-nothing, and the #181 toast contract is untouched.
+failure path fires once as an auto-dismissing toast with the verbatim
+probe message (deliberate user-requested exception to #213; retry via
+the main warm-up button — no persistent error chrome, no caption on
+failure), idle state renders nothing, and the #181 toast contract is
+untouched.
 
 Run: python -m pytest tests/test_warmup_result_line_v162.py -q
 """
@@ -137,28 +139,57 @@ def test_done_missing_seconds_formats_as_zero(ui, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Failure: verbatim alert + Retry, unchanged; no quiet line for errors
+# Failure: one auto-dismissing toast, verbatim message; no persistent chrome
+# (deliberate user-requested exception to #213 — retry via the main
+# warm-up button in the tab bar)
 # ---------------------------------------------------------------------------
 
-def test_failed_keeps_verbatim_error_and_retry_button(ui, monkeypatch):
+def test_failed_fires_once_as_autodismiss_toast(ui, monkeypatch):
     probe_msg = ("Probe timed out: the on-device model may still be "
                  "initializing (first launch can download the model).")
-    _mailbox_state(monkeypatch, {"state": "failed", "message": probe_msg})
+    _mailbox_state(monkeypatch, {"state": "failed", "message": probe_msg,
+                                 "started_at": 1700000001.0})
     lui._render_fm_warmup_result()
 
-    assert len(ui.errors) == 1, ui.errors
-    assert probe_msg in ui.errors[0], \
+    assert ui.errors == [], "no persistent alert — the toast auto-dismisses"
+    assert ui.buttons == [], "no inline retry button; the tab-bar warm-up button is the retry path"
+    assert ui.captions == [], "no quiet line for failures"
+    assert len(ui.toasts) == 1, ui.toasts
+    msg, icon = ui.toasts[0]
+    assert probe_msg in msg, \
         "failure must carry the probe's own message verbatim — fail loudly"
-    assert "Retry warm-up" in ui.buttons, ui.buttons
-    assert ui.captions == [], \
-        "errors belong in alerts (#213), not quiet lines — no caption"
+    assert icon == ":material/warning:", ui.toasts
 
 
 def test_failed_fallback_message_is_never_silent(ui, monkeypatch):
-    _mailbox_state(monkeypatch, {"state": "failed", "message": "   "})
+    _mailbox_state(monkeypatch, {"state": "failed", "message": "   ",
+                                 "started_at": 1700000002.0})
     lui._render_fm_warmup_result()
 
-    assert len(ui.errors) == 1 and "unknown error" in ui.errors[0], ui.errors
+    assert ui.errors == []
+    assert len(ui.toasts) == 1 and "unknown error" in ui.toasts[0][0], ui.toasts
+
+
+def test_failed_toast_does_not_refire_for_same_run(ui, monkeypatch):
+    state = {"state": "failed", "message": "boom", "started_at": 1700000003.0}
+    ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = (
+        state["started_at"], "failed")
+    _mailbox_state(monkeypatch, state)
+    lui._render_fm_warmup_result()
+
+    assert ui.toasts == [], "already announced: no second toast"
+    assert ui.errors == []
+
+
+def test_failed_new_run_rearms_toast(ui, monkeypatch):
+    ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = (
+        1700000003.0, "failed")
+    _mailbox_state(monkeypatch, {"state": "failed", "message": "boom again",
+                                 "started_at": 1700000004.0})
+    lui._render_fm_warmup_result()
+
+    assert len(ui.toasts) == 1, ui.toasts
+    assert "boom again" in ui.toasts[0][0]
 
 
 # ---------------------------------------------------------------------------
