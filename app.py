@@ -786,8 +786,16 @@ st.markdown(
         font-size: 0.8rem !important;
         font-weight: 600 !important;
     }
-    .stCaption, .stCaption p {
-        color: var(--muted) !important;
+    /* Captions: Streamlit 1.64 renders [data-testid="stCaptionContainer"]
+       with native opacity-0.6 dimming (the old .stCaption selector is
+       dead — no such class in the 1.64 DOM). Force --ink-2, full opacity. */
+    [data-testid="stCaptionContainer"],
+    [data-testid="stCaptionContainer"] p,
+    [data-testid="stImageCaption"],
+    [data-testid="stImageCaption"] p {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+        opacity: 1 !important;
     }
 
     .nav { padding: 4px 2px 18px 2px; }
@@ -951,13 +959,26 @@ st.markdown(
     .stButton > button:disabled,
     div[data-testid="stButton"] button:disabled,
     button[data-testid="stBaseButton-primary"]:disabled,
-    button[data-testid="stBaseButton-secondary"]:disabled {
+    button[data-testid="stBaseButton-secondary"]:disabled,
+    .stDownloadButton > button:disabled,
+    [data-testid="stDownloadButton"] button:disabled {
         color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
         background-color: var(--sunken) !important;
         background: var(--sunken) !important;
         border-color: var(--line) !important;
         box-shadow: none !important;
         opacity: 1 !important;
+    }
+    /* Disabled button labels/icons: the * rules below force --ink/--on-accent
+       on descendants — override to --ink-3 when disabled (else white text
+       on sunken, ~1.2:1). */
+    button[data-testid="stBaseButton-primary"]:disabled *,
+    button[data-testid="stBaseButton-secondary"]:disabled *,
+    .stButton > button:disabled *,
+    .stDownloadButton > button:disabled * {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
     }
 
     /* Focus-visible: 2px accent ring, 2px offset (Khabarwaani spec). */
@@ -965,6 +986,9 @@ st.markdown(
     button[data-testid="stBaseButton-secondary"]:focus-visible,
     .stButton > button:focus,
     .stButton > button:focus-visible,
+    .stDownloadButton > button:focus-visible,
+    [data-testid="stDownloadButton"] button:focus-visible,
+    [data-testid="stLinkButton"] a:focus-visible,
     [data-testid="stPopover"] button:focus,
     [data-testid="stPopover"] button:focus-visible,
     [data-testid="stPopoverButton"]:focus,
@@ -972,6 +996,10 @@ st.markdown(
         outline: 2px solid var(--accent) !important;
         outline-offset: 2px !important;
         box-shadow: var(--shadow-sm) !important;
+    }
+    /* News-link chips render as anchors: kill the native red focus glow. */
+    [data-testid="stLinkButton"] a:focus-visible {
+        box-shadow: none !important;
     }
 
     button[data-testid="stBaseButton-secondary"] *,
@@ -1002,8 +1030,6 @@ st.markdown(
     [data-baseweb="base-input"],
     [data-baseweb="base-input"] input,
     [data-testid="stNumberInput"] input,
-    [data-testid="stTextInput"] input,
-    [data-testid="stTextArea"] textarea,
     [data-testid="stSelectbox"] div[class*="e1fp86qc0"] {
         -moz-appearance: none !important;
         appearance: none !important;
@@ -1013,6 +1039,56 @@ st.markdown(
         caret-color: var(--ink) !important;
         border: 1px solid var(--line) !important;
         border-radius: var(--radius) !important;
+    }
+    /* Text input / textarea: Streamlit 1.64 paints the visible box on the
+       ROOT element ([data-testid="stTextInputRootElement"] /
+       [data-testid="stTextAreaRootElement"]) — native secondaryBg + a red
+       :focus-within border. The border lives on the root (single border
+       only); the inner field is transparent and borderless. */
+    [data-testid="stTextInputRootElement"],
+    [data-testid="stTextAreaRootElement"] {
+        background: var(--sunken) !important;
+        background-color: var(--sunken) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: var(--radius) !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stTextInputRootElement"]:focus-within,
+    [data-testid="stTextAreaRootElement"]:focus-within {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+    [data-testid="stTextInput"] input,
+    [data-testid="stTextArea"] textarea {
+        -moz-appearance: none !important;
+        appearance: none !important;
+        color-scheme: var(--scheme) !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        caret-color: var(--ink) !important;
+        border: none !important;
+        box-shadow: none !important;
+        outline: none !important;
+        border-radius: var(--radius) !important;
+    }
+    [data-testid="stTextInput"] input:disabled,
+    [data-testid="stTextArea"] textarea:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    /* Text-input clear (x) button: ink-3 at rest, accent on hover. */
+    [data-testid="stTextInput"] button[data-testid="stTextInputClearButton"] {
+        color: var(--ink-3) !important;
+    }
+    [data-testid="stTextInput"] button[data-testid="stTextInputClearButton"]:hover {
+        color: var(--accent) !important;
+    }
+    /* "Press Enter to apply" hint under focused text inputs. */
+    [data-testid="InputInstructions"] {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
     }
     /* The select wrapper itself: no border, no background — the inner
        trigger div above is the single bordered field. */
@@ -1030,12 +1106,12 @@ st.markdown(
         opacity: 1 !important;
     }
 
-    /* Focus: accent border + 3px accent-tint ring (Khabarwaani spec). */
+    /* Focus: accent border + 3px accent-tint ring (Khabarwaani spec).
+       Text input / textarea focus lives on the root (:focus-within,
+       defined above) — not the inner field. */
     textarea:focus-visible, input:focus-visible, select:focus-visible,
     [data-baseweb="input"]:focus-within,
     [data-baseweb="textarea"]:focus-within,
-    [data-testid="stTextInput"] input:focus,
-    [data-testid="stTextArea"] textarea:focus,
     [data-testid="stNumberInput"] input:focus {
         outline: none !important;
         border-color: var(--accent) !important;
@@ -1251,28 +1327,47 @@ st.markdown(
     [data-testid="stCheckbox"] span {
         color: var(--ink) !important;
     }
-    [data-testid="stCheckbox"] [data-baseweb="checkbox"] span {
-        border-color: var(--line) !important;
-    }
+    /* (checkbox box theming lives in the live-selector block below) */
     /* Toggle/switch: off = line-strong, ON = accent. NEVER red (red reads
-       as error/"off"). Streamlit ships no custom theme here, so its
-       default red would show without this override. */
-    [data-testid="stToggle"] [role="switch"] {
+       as error/"off"). Streamlit 1.64 renders st.toggle INSIDE
+       [data-testid="stCheckbox"] (no stToggle testid exists; the old
+       [data-testid="stToggle"] selectors were dead). State lives on
+       label[data-selected]; track = e15oan337, thumb = e15oan338. */
+    [data-testid="stCheckbox"] label div[class*="e15oan337"] {
         background-color: var(--line-strong) !important;
+        border-color: var(--line-strong) !important;
     }
-    [data-testid="stToggle"] [role="switch"][aria-checked="true"] {
-        background-color: var(--accent) !important;
-    }
-    [data-testid="stToggle"] [role="switch"][aria-checked="true"] > div {
-        background-color: var(--on-accent) !important;
-    }
-    /* Checkbox: checked box + check = accent, never red. */
-    [data-testid="stCheckbox"] label:has(input:checked) [data-baseweb="checkbox"] > div:first-child {
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan337"] {
         background-color: var(--accent) !important;
         border-color: var(--accent) !important;
     }
-    [data-testid="stCheckbox"] label:has(input:checked) [data-baseweb="checkbox"] svg {
+    [data-testid="stCheckbox"] label div[class*="e15oan338"] {
+        background-color: var(--ink) !important;
+    }
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan338"] {
+        background-color: var(--on-accent) !important;
+    }
+    /* Checkbox: checked box + check = accent, never red. The old
+       [data-baseweb="checkbox"] selectors were dead (BaseWeb is gone
+       in 1.64); the box is e15oan335, state on label[data-selected]. */
+    [data-testid="stCheckbox"] label div[class*="e15oan335"] {
+        background-color: var(--sunken) !important;
+        border-color: var(--line) !important;
+    }
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan335"] {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stCheckbox"] label[data-selected] div[class*="e15oan335"] svg {
+        stroke: var(--on-accent) !important;
         color: var(--on-accent) !important;
+    }
+    [data-testid="stCheckbox"] label[data-disabled] div[class*="e15oan335"] {
+        border-color: var(--ink-3) !important;
+    }
+    [data-testid="stCheckbox"] label[data-focus-visible] div[class*="e15oan335"],
+    [data-testid="stCheckbox"] label[data-focused] div[class*="e15oan335"] {
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
     }
 
     /* Dividers: one consistent 1px line style, consistent height. */
@@ -1360,24 +1455,39 @@ st.markdown(
         border-top-color: var(--orange) !important;
     }
 
-    [data-baseweb="tab-list"] {
+    /* Tabs: Streamlit 1.64 tabs are react-aria (the old
+       [data-baseweb="tab*"] selectors were dead — BaseWeb is gone).
+       Selected tab text + underline = accent, never native red. */
+    [data-testid="stTabs"] [role="tablist"] {
         background-color: transparent !important;
         border-bottom: 1px solid var(--line) !important;
     }
-    [data-baseweb="tab"],
-    [data-baseweb="tab-highlight"] {
-        color: var(--muted) !important;
+    [data-testid="stTabs"] [role="tablist"]::after {
+        background-color: var(--line) !important;
+    }
+    [data-testid="stTabs"] [role="tablist"] button {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
         background-color: transparent !important;
     }
-    [data-baseweb="tab"]:hover {
+    [data-testid="stTabs"] [role="tablist"] button[data-hovered] {
         color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
         background-color: var(--hover) !important;
     }
-    [data-baseweb="tab"][aria-selected="true"] {
-        color: var(--primary-strong) !important;
+    [data-testid="stTabs"] [role="tablist"] button[data-selected] {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
     }
-    [data-baseweb="tab-border"] {
-        background-color: var(--line) !important;
+    [data-testid="stTabs"] [role="tablist"] button .react-aria-SelectionIndicator {
+        background-color: var(--accent) !important;
+    }
+    [data-testid="stTabs"] [role="tablist"] button[data-focus-visible] {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+        box-shadow: none !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
     }
 
     /* — Phone Mockup & Script Elements (Cohesive Canvas) — */
@@ -1704,6 +1814,307 @@ st.markdown(
         min-height: 40px !important;
         border-radius: 10px !important;
         overflow: hidden !important;
+    }
+
+    /* ================================================================
+       STREAMLIT-NATIVE COLOR AUDIT — full sweep (see issue #278).
+       Every rule below themes a sub-element that Streamlit 1.64 paints
+       with its own native colors, verified against the 1.64 frontend
+       bundle (not guessed). Only palette tokens are used — never
+       hard-coded colors. See docs/COLOR_PALETTE.md (binding spec).
+       Colors only: no layout, behavior, or wording changes.
+       ================================================================ */
+
+    /* — Expander (#278): the expanded summary paints native bgMix
+       (dark native bgMix) — force transparent; the outer card already draws
+       the surface. Hover/active/focus wash = --hover, never native. — */
+    [data-testid="stExpander"] summary {
+        background: transparent !important;
+        background-color: transparent !important;
+    }
+    [data-testid="stExpander"] summary:hover,
+    [data-testid="stExpander"] summary:active {
+        background: var(--hover) !important;
+        background-color: var(--hover) !important;
+    }
+    [data-testid="stExpander"] summary:focus-visible {
+        background: var(--hover) !important;
+        background-color: var(--hover) !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+    /* Inner details ring + header/body divider: native borderColor → line. */
+    [data-testid="stExpander"] details {
+        border-color: var(--line) !important;
+    }
+    [data-testid="stExpander"] [id="stExpanderDetails"] {
+        border-top-color: var(--line) !important;
+    }
+    /* st.status step connector line. */
+    [data-testid="stExpander"] [id="stExpanderStepConnector"] {
+        background: var(--line) !important;
+        background-color: var(--line) !important;
+    }
+
+    /* — Tooltip visible surface: the old div[role="tooltip"] rule hit the
+       transparent positioning wrapper, not the visible box — dark-on-dark.
+       The box is [data-testid="stTooltipContent"]. — */
+    div[data-testid="stTooltipContent"],
+    div[data-testid="stTooltipErrorContent"] {
+        background: var(--popover) !important;
+        background-color: var(--popover) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: var(--radius-lg) !important;
+        box-shadow: var(--shadow-pop) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    div[data-testid="stTooltipContent"] *,
+    div[data-testid="stTooltipErrorContent"] * {
+        background: transparent !important;
+        background-color: transparent !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+
+    /* — Toast: kill the native brightness filter (shifts --popover in
+       dark mode); theme the view-more and close hovers. — */
+    [data-testid="stToast"] {
+        filter: none !important;
+    }
+    button[data-testid="stToastViewButton"]:hover {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+    }
+    [data-testid="stToast"] [data-hovered] {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+
+    /* — Spinner cache gradient: native bgColor stops → paper. — */
+    div.stSpinner.stCacheSpinner {
+        background: linear-gradient(to bottom, var(--paper) 0%, var(--paper) 80%, transparent) !important;
+    }
+
+    /* — Progress: track = sunken; fill = accent (native is Streamlit blue,
+       both modes — palette: never blue). — */
+    div[data-testid="stProgressBarTrack"] {
+        background: var(--sunken) !important;
+        background-color: var(--sunken) !important;
+    }
+    div[data-testid="stProgressBarTrack"] > div {
+        background: var(--accent) !important;
+        background-color: var(--accent) !important;
+    }
+
+    /* — Dialog body text + close button: native bodyText → ink. — */
+    [data-testid="stDialog"] div[class*="ee2kfji5"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stDialog"] button[class*="ee2kfji3"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stDialog"] button[class*="ee2kfji3"]:hover {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+    [data-testid="stDialog"] button[class*="ee2kfji3"]:focus-visible {
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+
+    /* — Radio: selected ring = accent (never Streamlit-native red);
+       unselected ring = line; inner dot = paper / on-accent. — */
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div[class*="e1mpz0hj4"] {
+        background-color: var(--line) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div[class*="e1mpz0hj4"],
+    [data-testid="stRadioOption"][data-selected] div[class*="e1mpz0hj4"] {
+        background-color: var(--accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div[class*="e1mpz0hj5"] {
+        background-color: var(--paper) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div[class*="e1mpz0hj5"],
+    [data-testid="stRadioOption"][data-selected] div[class*="e1mpz0hj5"] {
+        background-color: var(--on-accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"][data-focus-visible] {
+        background-color: var(--accent-tint) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"][data-disabled] div[class*="e1mpz0hj4"] {
+        background-color: var(--ink-3) !important;
+    }
+
+    /* — Number input: stepper keyboard focus (native flashes white-on-red);
+       stepper disabled; container focus-within ring (a11y). — */
+    [data-testid="stNumberInput"] button:focus-visible {
+        background-color: var(--card) !important;
+        background: var(--card) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
+        outline: 2px solid var(--accent) !important;
+        outline-offset: -2px !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stNumberInput"] button:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+        background: var(--sunken) !important;
+        background-color: var(--sunken) !important;
+    }
+    [data-testid="stNumberInputContainer"]:focus-within {
+        border-color: var(--accent) !important;
+        box-shadow: 0 0 0 3px var(--accent-tint) !important;
+    }
+
+    /* — Selectbox dropdown options in the portal: text = ink (native
+       bodyText beats container inheritance); hover/focus = --hover;
+       disabled = ink-3; empty-state message = ink-3. — */
+    div[data-testid="stSelectboxVirtualDropdown"] li div[class*="e1fp86qc7"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    div[data-testid="stSelectboxVirtualDropdown"] li div[class*="e1fp86qc7"][data-disabled] {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    div[data-testid="stSelectboxVirtualDropdown"] span[class*="e1fp86qc6"] {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+
+    /* — File uploader: drag overlay, chips, icon tiles, delete, add. — */
+    [data-testid="stFileUploaderDropzone"]:focus-visible {
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stFileUploaderDropzone"] div[class*="e3v525e1"] {
+        background: var(--popover) !important;
+        background-color: var(--popover) !important;
+    }
+    [data-testid="stFileUploaderDropzone"] div[class*="e3v525e2"] {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+    }
+    [data-testid="stFileChip"] {
+        background: var(--card) !important;
+        background-color: var(--card) !important;
+        border: 1px solid var(--line) !important;
+    }
+    [data-testid="stFileChip"] [class*="e1dmul8p5"] {
+        background-color: var(--ink) !important;
+        color: var(--card) !important;
+        -webkit-text-fill-color: var(--card) !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipIconError"] {
+        background-color: var(--danger-tint) !important;
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipIconSpinner"] {
+        background-color: var(--sunken) !important;
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    [data-testid="stFileChipName"] {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipDeleteBtn"] > button {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+        background: transparent !important;
+        background-color: transparent !important;
+        border: none !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stFileChip"] [data-testid="stFileChipDeleteBtn"] > button:hover {
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
+    }
+    /* "Add files" (+) button: borderlessIcon kind paints native red. */
+    button[data-testid="stBaseButton-borderlessIcon"] {
+        background: transparent !important;
+        background-color: transparent !important;
+        border-color: transparent !important;
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+        box-shadow: none !important;
+    }
+    button[data-testid="stBaseButton-borderlessIcon"]:hover:not(:disabled) {
+        color: var(--accent) !important;
+        -webkit-text-fill-color: var(--accent) !important;
+    }
+    button[data-testid="stBaseButton-borderlessIcon"]:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+
+    /* — Password visibility toggle inside text inputs. — */
+    [data-testid="stTextInput"] button[class*="eqy66r59"] {
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+    [data-testid="stTextInput"] button[class*="eqy66r59"]:hover:not(:disabled) {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stTextInput"] button[class*="eqy66r59"]:disabled {
+        color: var(--ink-3) !important;
+        -webkit-text-fill-color: var(--ink-3) !important;
+    }
+    [data-testid="stTextInput"] button[class*="eqy66r59"]:focus-visible {
+        outline: 2px solid var(--accent) !important;
+        outline-offset: 2px !important;
+        box-shadow: none !important;
+    }
+
+    /* — Segmented control: kill the native red focus box-shadow
+       (the accent outline is set in library_ui.py). — */
+    div[class*="eqzt73c26"][data-focus-visible] {
+        box-shadow: none !important;
+    }
+
+    /* — Markdown: links = ink (native is BLUE — palette: never blue);
+       blockquote border = line; tables = line. — */
+    [data-testid="stMarkdownContainer"] a,
+    [data-testid="stMarkdownContainer"] a:visited,
+    [data-testid="stMarkdownContainer"] a:hover,
+    [data-testid="stMarkdownContainer"] a:active {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+    }
+    [data-testid="stMarkdownContainer"] blockquote {
+        border-left-color: var(--line) !important;
+        opacity: 1 !important;
+        color: var(--ink-2) !important;
+        -webkit-text-fill-color: var(--ink-2) !important;
+    }
+    [data-testid="stMarkdownContainer"] th,
+    [data-testid="stMarkdownContainer"] td,
+    [data-testid="stMarkdownContainer"] tr {
+        border-color: var(--line) !important;
+    }
+
+    /* — st.exception: same native kind-colored wrapper as alerts. — */
+    [data-testid="stException"] {
+        background-color: var(--popover) !important;
+        background: var(--popover) !important;
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
+        border: 1px solid var(--line) !important;
+        border-radius: var(--radius-lg) !important;
+        box-shadow: var(--shadow-pop) !important;
+    }
+    [data-testid="stException"] * {
+        color: var(--ink) !important;
+        -webkit-text-fill-color: var(--ink) !important;
     }
 </style>
 """,
