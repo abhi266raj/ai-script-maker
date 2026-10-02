@@ -902,6 +902,16 @@ def _inject_story_list_css() -> None:
         border: 1px solid var(--danger) !important;
         box-shadow: none !important;
     }
+    /* Descendant override: app.py forces --ink on every button child
+       (label span, svg glyphs) with !important, defeating currentColor
+       inheritance — repaint glyphs danger red at rest and on hover. */
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button *,
+    div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover * {
+        color: var(--danger) !important;
+        -webkit-text-fill-color: var(--danger) !important;
+    }
     /* v1.6 (#58): destructive popover triggers are NEUTRAL — they read as
        plain buttons like their neighbours (see the approved screenshot).
        macOS system red lives ONLY on the explicit destructive button
