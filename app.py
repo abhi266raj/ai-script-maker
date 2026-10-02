@@ -423,25 +423,84 @@ st.markdown(
 <style>
     @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@500;600;700&display=swap');
 
-    /* Light: 60% Paper canvas, 30% Card & typography, 10% Terracotta orange actions.
-       Dark: 60% Warm earth canvas, 30% Elevated cards & parchment type, 10% Terracotta orange. */
+    /* ================================================================
+       APPLE PALETTE — SINGLE SOURCE OF TRUTH
+       ----------------------------------------------------------------
+       HOW TO CHANGE THEME COLORS: edit ONLY the --apple-* / --brand-*
+       / --status-* values in the :root block below. Every semantic token
+       (--primary, --secondary, --tertiary, --quaternary, --bg-*,
+       --text-*, ...) references these via var(). The three appearance
+       blocks (light / dark) contain NO hex literals — only var()
+       references (plus color-mix() derivations and the --scheme
+       keyword). Component CSS must reference semantic tokens, never
+       hard-coded hex.
+
+       --apple-* VALUES: Apple's 2025 unified system colors (HIG → Color
+       → Specifications), sampled from Apple's published swatches:
+         Orange  #FF8D28 / #FF9230   ·  IC Orange #C55300 / #FFA056
+         Gray    #8E8E93 / #8E8E93   ·  IC Gray   #6C6C70 / #AEAEB2
+         Gray2   #AEAEB2 / #636366    ·  Gray3     #C7C7CC / #48484A
+       (IC = Increased Contrast variant, also published by Apple.)
+
+       4 ROLES (Apple's label hierarchy: primary / secondary /
+       tertiary / quaternary):
+         --primary    → Apple Orange   (brand/action; warm feel kept)
+         --secondary  → Apple IC Gray  (≥4.5:1 text on bg — strict)
+         --tertiary   → Apple Gray     (≥3:1 — Apple's own tertiary)
+         --quaternary → Apple Gray2    (faintest; decorative-only — never
+                                       for essential text, mirroring
+                                       Apple's 18% quaternaryLabel)
+       --primary-strong (#C55300, Apple's IC Orange, both modes) is the
+       darkest Apple orange that keeps white button text at ≥4.5:1 — it
+       backs primary buttons/badges and small orange text. The vivid
+       --primary is reserved for non-text emphasis (focus rings,
+       borders, icons). Enforced by tests/test_apple_palette_contrast.py.
+       ================================================================ */
+    :root {
+        /* Apple system palette — light / dark variants. */
+        --apple-orange-light: #FF8D28;      --apple-orange-dark: #FF9230;
+        --apple-orange-ic-light: #C55300;   --apple-orange-ic-dark: #FFA056;
+        --apple-gray-light: #8E8E93;        --apple-gray-dark: #8E8E93;
+        --apple-gray-ic-light: #6C6C70;     --apple-gray-ic-dark: #AEAEB2;
+        --apple-gray2-light: #AEAEB2;       --apple-gray2-dark: #636366;
+        --apple-gray3-light: #C7C7CC;       --apple-gray3-dark: #48484A;
+        /* Brand canvas (warm paper / warm earth) + ink. */
+        --brand-bg1-light: #FAF7F0;    --brand-bg1-dark: #2C261F;
+        --brand-bg2-light: #FFFCF6;    --brand-bg2-dark: #3A3229;
+        --brand-bg3-light: #F5EFE6;    --brand-bg3-dark: #342C24;
+        --brand-hover-light: #EFE6D8;  --brand-hover-dark: #4A4036;
+        --brand-line-light: #E4D9C8;   --brand-line-dark: #5A4E42;
+        --brand-ink-light: #1F1A14;    --brand-ink-dark: #FAF7F0;
+        /* Status pairs (#219): each passes 4.5:1 with a dark variant. */
+        --status-ok-light: #1c7c3a;         --status-ok-dark: #2e7d46;
+        --status-ok-text-light: #1c7c3a;    --status-ok-text-dark: #4fae63;
+        --status-bad-light: #c41e3a;        --status-bad-dark: #c9303f;
+        --status-bad-text-light: #cf1322;   --status-bad-text-dark: #f0787f;
+        /* Text on primary surfaces (buttons, badges). */
+        --on-primary: #FFFFFF;
+    }
+
+    /* Light: 60% Paper canvas, 30% Card & typography, 10% Apple orange.
+       Semantic mapping only — every value is a var() reference. */
     :root,
     [data-theme="light"] {
-        /* Standard 60-30-10 Color Tokens */
-        --bg-primary: #FAF7F0;
-        --bg-secondary: #FFFCF6;
-        --bg-tertiary: #F5EFE6;
-        --bg-hover: #EFE6D8;
-        --border-primary: #E4D9C8;
-        --text-primary: #1F1A14;
-        --text-secondary: #5C5348;
-        --text-tertiary: #8C8275;
-        --primary: #E0692A;
-        --primary-hover: #C4551C;
-        --primary-subtle: #FDF1EA;
-        --secondary: #5C5348;
-        --tertiary: #8C8275;
-        
+        --bg-primary: var(--brand-bg1-light);
+        --bg-secondary: var(--brand-bg2-light);
+        --bg-tertiary: var(--brand-bg3-light);
+        --bg-hover: var(--brand-hover-light);
+        --border-primary: var(--brand-line-light);
+        --text-primary: var(--brand-ink-light);
+        --text-secondary: var(--secondary);
+        --text-tertiary: var(--tertiary);
+        --text-quaternary: var(--quaternary);
+        --primary: var(--apple-orange-light);
+        --primary-hover: var(--apple-orange-ic-light);
+        --primary-strong: var(--apple-orange-ic-light);
+        --primary-subtle: color-mix(in srgb, var(--apple-orange-light) 12%, white);
+        --secondary: var(--apple-gray-ic-light);
+        --tertiary: var(--apple-gray-light);
+        --quaternary: var(--apple-gray2-light);
+
         /* Direct token aliases */
         --paper: var(--bg-primary);
         --card: var(--bg-secondary);
@@ -449,35 +508,39 @@ st.markdown(
         --hover: var(--bg-hover);
         --line: var(--border-primary);
         --ink: var(--text-primary);
-        --ink-deep: #1C1712;
+        --ink-deep: var(--text-primary);
         --muted: var(--text-secondary);
         --orange: var(--primary);
         --orange-press: var(--primary-hover);
         --scheme: light;
         /* Status tokens (#219): semantic, with a dark variant each. */
-        --ok: #1c7c3a;
-        --bad: #c41e3a;
-        --ok-text: #1c7c3a;
-        --bad-text: #cf1322;
+        --ok: var(--status-ok-light);
+        --bad: var(--status-bad-light);
+        --ok-text: var(--status-ok-text-light);
+        --bad-text: var(--status-bad-text-light);
     }
+
 
     @media (prefers-color-scheme: dark) {
         :root:not([data-theme="light"]),
         html:not([data-theme="light"]),
         body:not([data-theme="light"]) {
-            --bg-primary: #2C261F;
-            --bg-secondary: #3A3229;
-            --bg-tertiary: #342C24;
-            --bg-hover: #4A4036;
-            --border-primary: #5A4E42;
-            --text-primary: #FAF7F0;
-            --text-secondary: #D4C7B6;
-            --text-tertiary: #A89B8B;
-            --primary: #E0692A;
-            --primary-hover: #F08A52;
-            --primary-subtle: #3D291C;
-            --secondary: #D4C7B6;
-            --tertiary: #A89B8B;
+            --bg-primary: var(--brand-bg1-dark);
+            --bg-secondary: var(--brand-bg2-dark);
+            --bg-tertiary: var(--brand-bg3-dark);
+            --bg-hover: var(--brand-hover-dark);
+            --border-primary: var(--brand-line-dark);
+            --text-primary: var(--brand-ink-dark);
+            --text-secondary: var(--secondary);
+            --text-tertiary: var(--tertiary);
+            --text-quaternary: var(--quaternary);
+            --primary: var(--apple-orange-dark);
+            --primary-hover: var(--apple-orange-ic-dark);
+            --primary-strong: var(--apple-orange-ic-light);
+            --primary-subtle: color-mix(in srgb, var(--apple-orange-dark) 12%, black);
+            --secondary: var(--apple-gray-ic-dark);
+            --tertiary: var(--apple-gray-dark);
+            --quaternary: var(--apple-gray2-dark);
 
             --paper: var(--bg-primary);
             --card: var(--bg-secondary);
@@ -491,15 +554,53 @@ st.markdown(
             --orange-press: var(--primary-hover);
             --scheme: dark;
             /* Status tokens (#219): semantic, with a dark variant each. */
-            --ok: #2e7d46;
-            --bad: #c9303f;
-            --ok-text: #4fae63;
-            --bad-text: #f0787f;
+            --ok: var(--status-ok-dark);
+            --bad: var(--status-bad-dark);
+            --ok-text: var(--status-ok-text-dark);
+            --bad-text: var(--status-bad-text-dark);
         }
     }
 
+
     :root[data-theme="dark"],
     html[data-theme="dark"],
+    body[data-theme="dark"],
+    [data-theme="dark"] {
+            --bg-primary: var(--brand-bg1-dark);
+            --bg-secondary: var(--brand-bg2-dark);
+            --bg-tertiary: var(--brand-bg3-dark);
+            --bg-hover: var(--brand-hover-dark);
+            --border-primary: var(--brand-line-dark);
+            --text-primary: var(--brand-ink-dark);
+            --text-secondary: var(--secondary);
+            --text-tertiary: var(--tertiary);
+            --text-quaternary: var(--quaternary);
+            --primary: var(--apple-orange-dark);
+            --primary-hover: var(--apple-orange-ic-dark);
+            --primary-strong: var(--apple-orange-ic-light);
+            --primary-subtle: color-mix(in srgb, var(--apple-orange-dark) 12%, black);
+            --secondary: var(--apple-gray-ic-dark);
+            --tertiary: var(--apple-gray-dark);
+            --quaternary: var(--apple-gray2-dark);
+
+            --paper: var(--bg-primary);
+            --card: var(--bg-secondary);
+            --field: var(--bg-tertiary);
+            --hover: var(--bg-hover);
+            --line: var(--border-primary);
+            --ink: var(--text-primary);
+            --ink-deep: var(--text-primary);
+            --muted: var(--text-secondary);
+            --orange: var(--primary);
+            --orange-press: var(--primary-hover);
+            --scheme: dark;
+            /* Status tokens (#219): semantic, with a dark variant each. */
+            --ok: var(--status-ok-dark);
+            --bad: var(--status-bad-dark);
+            --ok-text: var(--status-ok-text-dark);
+            --bad-text: var(--status-bad-text-dark);
+    }
+
     body[data-theme="dark"],
     [data-theme="dark"] {
         --bg-primary: #2C261F;
@@ -620,7 +721,7 @@ st.markdown(
     .nav-sub { font-size: 0.8rem; color: var(--muted) !important; margin-top: 2px; }
     .nav-ver { font-size: 0.7rem; font-weight: 600; color: var(--muted) !important; }
     .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--ok-text); padding: 4px 0; border-bottom: 3px solid var(--ok-text); }
-    .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--orange); padding: 4px 0; border-bottom: 3px solid var(--orange); }
+    .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--primary-strong); padding: 4px 0; border-bottom: 3px solid var(--primary); }
     .step-wait { text-align: center; font-size: 0.75rem; font-weight: 500; color: var(--muted); padding: 4px 0; border-bottom: 3px solid var(--line); }
 
     .ios-section-label {
@@ -656,10 +757,10 @@ st.markdown(
     .stButton > button[data-testid="baseButton-primary"],
     [data-testid="stFormSubmitButton"] button[kind="primary"],
     [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"] {
-        background-color: var(--orange) !important;
-        background: var(--orange) !important;
-        color: #FAF7F0 !important;
-        border: 1px solid var(--orange) !important;
+        background-color: var(--primary-strong) !important;
+        background: var(--primary-strong) !important;
+        color: var(--on-primary) !important;
+        border: 1px solid var(--primary-strong) !important;
         border-radius: 10px !important;
         font-weight: 600 !important;
         box-shadow: none !important;
@@ -676,10 +777,11 @@ st.markdown(
     .stButton > button[data-testid="baseButton-primary"]:hover,
     [data-testid="stFormSubmitButton"] button[kind="primary"]:hover,
     [data-testid="stFormSubmitButton"] button[data-testid="stBaseButton-primary"]:hover {
-        background-color: var(--orange-press) !important;
-        background: var(--orange-press) !important;
-        color: #FAF7F0 !important;
-        border-color: var(--orange-press) !important;
+        background-color: var(--primary-strong) !important;
+        background: var(--primary-strong) !important;
+        color: var(--on-primary) !important;
+        border-color: var(--primary-strong) !important;
+        filter: brightness(0.9) !important;
     }
 
     button[data-testid="stBaseButton-primary"] *,
@@ -688,7 +790,7 @@ st.markdown(
     .stButton > button[kind="primary"] *,
     .stButton > button[data-testid="stBaseButton-primary"] *,
     .stButton > button[data-testid="baseButton-primary"] * {
-        color: #FAF7F0 !important;
+        color: var(--on-primary) !important;
     }
 
     /* Secondary buttons */
@@ -933,8 +1035,8 @@ st.markdown(
     [data-testid="stPopoverBody"] code,
     div[class*="ecfxx9g0"] code {
         background: var(--field) !important;
-        color: var(--orange) !important;
-        -webkit-text-fill-color: var(--orange) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
         padding: 2px 6px !important;
         border-radius: 4px !important;
         border: 1px solid var(--line) !important;
@@ -987,8 +1089,8 @@ st.markdown(
     li[role="option"][aria-selected="true"] *,
     div[class*="e1fp86qc7"][data-hovered] *,
     div[class*="e1fp86qc7"][data-focused] * {
-        color: var(--orange) !important;
-        -webkit-text-fill-color: var(--orange) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
         font-weight: 600 !important;
     }
 
@@ -1079,7 +1181,7 @@ st.markdown(
         background-color: var(--hover) !important;
     }
     [data-baseweb="tab"][aria-selected="true"] {
-        color: var(--orange) !important;
+        color: var(--primary-strong) !important;
     }
     [data-baseweb="tab-border"] {
         background-color: var(--line) !important;
@@ -1120,7 +1222,7 @@ st.markdown(
         margin-bottom: 16px;
     }
     .script-scene { margin-bottom: 18px; }
-    .script-time { font-weight: 700; font-size: 0.9rem; color: var(--orange); margin-bottom: 6px; }
+    .script-time { font-weight: 700; font-size: 0.9rem; color: var(--primary-strong); margin-bottom: 6px; }
     .script-visual { font-size: 0.92rem; line-height: 1.5; margin-bottom: 10px; }
     .script-character { font-size: 0.82rem; font-weight: 700; margin-bottom: 4px; }
     .script-dialogue { font-family: "Noto Sans Devanagari", sans-serif; font-size: 1rem; line-height: 1.6; }
@@ -1134,8 +1236,8 @@ st.markdown(
         background: var(--hover) !important; color: var(--ink) !important;
         border: 1px solid var(--line) !important;
     }
-    .pill-ok { background: var(--ok) !important; color: #ffffff !important; border-color: var(--ok) !important; }
-    .pill-bad { background: var(--bad) !important; color: #ffffff !important; border-color: var(--bad) !important; }
+    .pill-ok { background: var(--ok) !important; color: var(--on-primary) !important; border-color: var(--ok) !important; }
+    .pill-bad { background: var(--bad) !important; color: var(--on-primary) !important; border-color: var(--bad) !important; }
 
     .frame-card {
         background: var(--field) !important;
@@ -1150,7 +1252,7 @@ st.markdown(
     .frame-time { color: var(--muted) !important; font-size: 0.72rem; }
     .character-badge {
         display: inline-block; font-size: 0.7rem; font-weight: 600;
-        color: #FAF7F0 !important; background: var(--orange) !important;
+        color: var(--on-primary) !important; background: var(--primary-strong) !important;
         padding: 2px 8px; border-radius: 6px; margin-bottom: 6px;
     }
     .dialogue-text {
@@ -1177,7 +1279,7 @@ st.markdown(
         margin-bottom: 8px;
         color: var(--ink);
     }
-    .news-rank { font-size: 0.72rem; font-weight: 700; color: var(--orange); }
+    .news-rank { font-size: 0.72rem; font-weight: 700; color: var(--primary-strong); }
     .news-title { font-size: 0.92rem; font-weight: 600; color: var(--ink) !important; line-height: 1.35; }
     .news-meta { font-size: 0.72rem; color: var(--muted) !important; margin-top: 4px; }
 
@@ -1324,8 +1426,8 @@ st.markdown(
     [data-testid="stNumberInput"] button:hover {
         background-color: var(--card) !important;
         background: var(--card) !important;
-        color: var(--orange) !important;
-        -webkit-text-fill-color: var(--orange) !important;
+        color: var(--primary-strong) !important;
+        -webkit-text-fill-color: var(--primary-strong) !important;
     }
     /* (-) docks left, (+) docks right; only the divider side differs.
        Stable testids first, aria-label substring as fallback. */
@@ -1757,7 +1859,7 @@ elif server_action == "restart":
     st.markdown(
         """
         <div class="server-status-card">
-            <h2 style="color: var(--orange); margin-top: 0;">🔄 Studio Server Restarting</h2>
+            <h2 style="color: var(--primary-strong); margin-top: 0;">🔄 Studio Server Restarting</h2>
             <p>The studio server is rebooting. This page will automatically reconnect once the service is back online...</p>
             <div style="margin-top: 15px; font-size: 13px; color: var(--muted);">Reconnecting in seconds...</div>
         </div>
