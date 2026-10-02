@@ -161,7 +161,7 @@ def test_start_fm_warmup_takes_no_auto_kwarg(libdir, monkeypatch):
     mailbox: every warm-up is manual."""
     gate = threading.Event()
 
-    def fake_worker():
+    def fake_worker(*a):
         gate.wait(timeout=10)
 
     monkeypatch.setattr(lib, "_fm_warmup_worker", fake_worker)

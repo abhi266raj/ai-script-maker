@@ -119,7 +119,10 @@ def test_warmup_done_toasts_with_timing(monkeypatch):
     monkeypatch.setattr(
         lib, "read_fm_warmup_state",
         lambda: {"state": "done", "seconds": 10.4,
-                 "message": "Apple Foundation Model ready (On-Device)"})
+                 "message": "Apple Foundation Model ready (On-Device)",
+                 "started_at": 1700000006.0})
+    # #298: this session initiated the run, so the toast announces it.
+    fake.session_state[lui._FM_WARMUP_SESSION_RUNS_KEY] = {1700000006.0}
     lui._render_fm_warmup_result()
     assert fake.toasts == [
         ("Apple FM warmed up in 10.4s — "
@@ -132,7 +135,9 @@ def test_warmup_done_without_message_still_honest(monkeypatch):
     lui, fake = _ui_with_fake_st()
     monkeypatch.setattr(
         lib, "read_fm_warmup_state",
-        lambda: {"state": "done", "seconds": 3.0, "message": ""})
+        lambda: {"state": "done", "seconds": 3.0, "message": "",
+                 "started_at": 1700000007.0})
+    fake.session_state[lui._FM_WARMUP_SESSION_RUNS_KEY] = {1700000007.0}
     lui._render_fm_warmup_result()
     assert fake.toasts == [("Apple FM warmed up in 3.0s", ":material/check_circle:")]
     assert fake.successes == []
@@ -149,6 +154,7 @@ def test_warmup_failed_toasts_once_then_dismisses(monkeypatch):
         lib, "read_fm_warmup_state",
         lambda: {"state": "failed", "message": "probe timed out",
                  "started_at": 1700000005.0})
+    fake.session_state[lui._FM_WARMUP_SESSION_RUNS_KEY] = {1700000005.0}
     lui._render_fm_warmup_result()
     assert fake.toasts == [("Warm-up failed: probe timed out",
                             ":material/warning:")]

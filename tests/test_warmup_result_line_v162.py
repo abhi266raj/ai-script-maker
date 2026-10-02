@@ -15,6 +15,11 @@ the verbatim probe message (deliberate user-requested exception to
 #213; retry via the main warm-up button — no persistent error chrome,
 no caption on failure), and idle/warming states render nothing.
 
+#298: the toast only announces runs initiated in the CURRENT session
+(via the button). Tests that expect a toast therefore seed the
+session-runs set, exactly as the button-tap path does; a "done" mailbox
+with a fresh session state (simulated refresh) must render nothing.
+
 Run: python -m pytest tests/test_warmup_result_line_v162.py -q
 """
 
@@ -80,6 +85,13 @@ def _done_state(**over):
     return state
 
 
+def _session_run(ui, started_at):
+    """Mark `started_at` as initiated in this session — what the button
+    tap path records (#298). Without this, a terminal mailbox state is
+    treated as a stale previous-session run and renders nothing."""
+    ui.session_state[lui._FM_WARMUP_SESSION_RUNS_KEY] = {started_at}
+
+
 # ---------------------------------------------------------------------------
 # Success (#289): toast exactly once, NO persistent chrome
 # ---------------------------------------------------------------------------
@@ -88,6 +100,7 @@ def test_done_renders_no_persistent_chrome(ui, monkeypatch):
     """#289: a successful warm-up leaves no persistent result line — the
     auto-dismissing toast is the only success signal."""
     _mailbox_state(monkeypatch, _done_state())
+    _session_run(ui, 1700000000.0)  # this session tapped the button
     lui._render_fm_warmup_result()
 
     assert ui.captions == [], f"no persistent line allowed: {ui.captions}"
@@ -107,6 +120,7 @@ def test_done_rerun_after_toast_announced_renders_nothing(ui, monkeypatch):
     state = _done_state()
     marker = (state["started_at"], state["seconds"])
     ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = marker
+    _session_run(ui, state["started_at"])
     _mailbox_state(monkeypatch, state)
 
     lui._render_fm_warmup_result()
@@ -121,6 +135,7 @@ def test_done_toast_fires_exactly_once_across_reruns(ui, monkeypatch):
     toast total, zero captions — the success signal is never dropped and
     never duplicated."""
     _mailbox_state(monkeypatch, _done_state())
+    _session_run(ui, 1700000000.0)
     lui._render_fm_warmup_result()
     lui._render_fm_warmup_result()
 
@@ -133,6 +148,7 @@ def test_done_new_run_rearms_toast(ui, monkeypatch):
     started_at), still with no persistent line."""
     ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = (
         1700000000.0, 12.345)
+    _session_run(ui, 1700000001.0)  # the NEW run was started here
     _mailbox_state(monkeypatch, _done_state(started_at=1700000001.0,
                                             seconds=8.7))
 
@@ -145,6 +161,7 @@ def test_done_new_run_rearms_toast(ui, monkeypatch):
 
 def test_done_empty_message_toast_has_no_dangling_dash(ui, monkeypatch):
     _mailbox_state(monkeypatch, _done_state(message=""))
+    _session_run(ui, 1700000000.0)
     lui._render_fm_warmup_result()
 
     assert ui.captions == [], ui.captions
@@ -153,6 +170,7 @@ def test_done_empty_message_toast_has_no_dangling_dash(ui, monkeypatch):
 
 def test_done_missing_seconds_formats_as_zero(ui, monkeypatch):
     _mailbox_state(monkeypatch, _done_state(seconds=None, message=""))
+    _session_run(ui, 1700000000.0)
     lui._render_fm_warmup_result()
 
     assert ui.captions == [], ui.captions
@@ -170,6 +188,7 @@ def test_failed_fires_once_as_autodismiss_toast(ui, monkeypatch):
                  "initializing (first launch can download the model).")
     _mailbox_state(monkeypatch, {"state": "failed", "message": probe_msg,
                                  "started_at": 1700000001.0})
+    _session_run(ui, 1700000001.0)
     lui._render_fm_warmup_result()
 
     assert ui.errors == [], "no persistent alert — the toast auto-dismisses"
@@ -185,6 +204,7 @@ def test_failed_fires_once_as_autodismiss_toast(ui, monkeypatch):
 def test_failed_fallback_message_is_never_silent(ui, monkeypatch):
     _mailbox_state(monkeypatch, {"state": "failed", "message": "   ",
                                  "started_at": 1700000002.0})
+    _session_run(ui, 1700000002.0)
     lui._render_fm_warmup_result()
 
     assert ui.errors == []
@@ -195,6 +215,7 @@ def test_failed_toast_does_not_refire_for_same_run(ui, monkeypatch):
     state = {"state": "failed", "message": "boom", "started_at": 1700000003.0}
     ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = (
         state["started_at"], "failed")
+    _session_run(ui, state["started_at"])
     _mailbox_state(monkeypatch, state)
     lui._render_fm_warmup_result()
 
@@ -205,6 +226,7 @@ def test_failed_toast_does_not_refire_for_same_run(ui, monkeypatch):
 def test_failed_new_run_rearms_toast(ui, monkeypatch):
     ui.session_state[lui._FM_WARMUP_TOAST_ANNOUNCED_KEY] = (
         1700000003.0, "failed")
+    _session_run(ui, 1700000004.0)
     _mailbox_state(monkeypatch, {"state": "failed", "message": "boom again",
                                  "started_at": 1700000004.0})
     lui._render_fm_warmup_result()
