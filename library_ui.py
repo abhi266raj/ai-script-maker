@@ -1800,38 +1800,40 @@ def _fm_warmup_button_props(state: dict) -> tuple:
     unit-testable without a Streamlit runtime."""
     if (state or {}).get("state") == "warming":
         return "Warming up…", True
-    return "Cold start", False
+    return "Warm up local LLM", False
 
 
 def _render_fm_warmup_button() -> None:
-    """Developer warm-up control (issue #37): subtle, compact, sits next to
-    the Studio/Library tab bar. Tapping it kicks off the #4 FM probe in a
-    daemon thread so the first real generation skips the cold-start delay.
+    """Manual-only warm-up control (issue #37): labeled "Warm up local LLM",
+    sits next to the Studio/Library tab bar. Tapping it kicks off the #4 FM
+    probe in a daemon thread so the first real generation skips the
+    cold-start delay. Nothing automatic: warm-up runs ONLY on tap.
 
     HIG: the button owns its progress — while warming it paints
-    "Warming up…" and stays disabled (no second tap). A *manual* warm-up
-    auto-polls until the worker writes its terminal state; an *automatic*
-    launch-time warm-up (#122) is purely informational — no poll loop, so
-    the page renders once and stays interactive while the probe runs.
+    "Warming up…" and stays disabled (no second tap). The render
+    auto-polls until the worker writes its terminal state; the daemon
+    worker cannot trigger st.rerun() itself. Same pattern as the library
+    refresh flow — the loop always terminates because the worker always
+    writes a terminal state within 60s (#122) and stale states are
+    recovered.
     """
     _state = lib.read_fm_warmup_state()
     _label, _disabled = _fm_warmup_button_props(_state)
     if _disabled:
         st.button(_label, key="fm_warmup_btn", disabled=True,
-                  help="Warm up the on-device Apple FM model",
+                  help="Warm up the local LLM",
                   use_container_width=True)
-        if not (_state or {}).get("auto"):
-            # Manual warm-up: the initiating control owns its loading state.
-            # Auto-poll while the probe is in flight: the daemon worker
-            # cannot trigger st.rerun() itself. Same pattern as the library
-            # refresh flow — the loop always terminates because the worker
-            # always writes a terminal state within 60s (#122) and stale
-            # states are recovered.
-            _time.sleep(1.0)
-            st.rerun()
+        # Manual warm-up: the initiating control owns its loading state.
+        # Auto-poll while the probe is in flight: the daemon worker
+        # cannot trigger st.rerun() itself. Same pattern as the library
+        # refresh flow — the loop always terminates because the worker
+        # always writes a terminal state within 60s (#122) and stale
+        # states are recovered.
+        _time.sleep(1.0)
+        st.rerun()
         return
     if st.button(_label, key="fm_warmup_btn", disabled=False,
-                 help="Warm up the Apple FM model to skip the first "
+                 help="Warm up the local LLM to skip the first "
                       "generation's cold-start delay",
                  use_container_width=True):
         _ok, _reason = lib.start_fm_warmup()
@@ -1884,10 +1886,6 @@ def _render_fm_warmup_result() -> None:
 
 def render_tab_bar() -> str:
     """Render the macOS-style tab bar. Returns 'studio' or 'library'."""
-    # #115: cold-start init runs in a background thread — fire it once per
-    # process before anything else so the UI renders immediately and stays
-    # interactive while the FM probe warms up. Never blocks, never raises.
-    lib.maybe_auto_cold_start()
     inject_library_css()
     # Developer warm-up (issue #37) rides in a compact trailing column so
     # the normal author flow keeps its centered tab strip untouched.

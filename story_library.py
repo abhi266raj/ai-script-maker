@@ -3175,16 +3175,15 @@ def _fm_warmup_worker() -> None:
         })
 
 
-def start_fm_warmup(*, auto: bool = False) -> Tuple[bool, str]:
+def start_fm_warmup() -> Tuple[bool, str]:
     """Kick off a background on-device Apple FM warm-up probe. Never raises.
 
     Returns (started, reason): ``reason`` is "" when the worker started,
     otherwise a human-readable explanation of why it could not start
     (e.g. a warm-up is already running).
 
-    ``auto`` marks a launch-time automatic kick-off (#115/#122): it is
-    recorded in the mailbox so the UI can treat it as purely informational
-    (no poll loop) instead of user-initiated work.
+    Manual-only: warm-up is NEVER triggered automatically. It runs solely
+    when the user taps the "Warm up local LLM" button.
     """
     try:
         state = read_fm_warmup_state()
@@ -3197,7 +3196,6 @@ def start_fm_warmup(*, auto: bool = False) -> Tuple[bool, str]:
             "message": "",
             "seconds": 0.0,
             "started_at": time.time(),
-            "auto": bool(auto),
         })
         t = threading.Thread(target=_fm_warmup_worker, daemon=True,
                              name="fm-warmup")
@@ -3205,48 +3203,6 @@ def start_fm_warmup(*, auto: bool = False) -> Tuple[bool, str]:
         return True, ""
     except Exception as e:
         return False, f"Could not start warm-up: {type(e).__name__}: {e}"
-
-
-# ---------------------------------------------------------------------------
-# Automatic cold-start (#115)
-# ---------------------------------------------------------------------------
-
-_auto_cold_start_lock = threading.Lock()
-_auto_cold_start_fired = False
-
-
-def maybe_auto_cold_start() -> None:
-    """Kick off the FM warm-up automatically once per process (#115).
-
-    Cold-start init must run in a background thread without disturbing
-    anything else: the UI renders immediately and stays interactive while
-    the probe warms up the on-device model. This only *fires* the daemon
-    thread via :func:`start_fm_warmup` — it never waits for it, never
-    touches ``st.session_state`` (not thread-safe), and never raises.
-
-    Safe to call on every render: the per-process flag guarantees at most
-    one kick-off, and ``start_fm_warmup`` itself refuses a double-start
-    while a warm-up is already in flight. If the kick-off fails, it stays
-    silent here — the manual "Cold start" button remains available, and
-    the worker itself fails loudly via the mailbox on probe failure.
-    """
-    global _auto_cold_start_fired
-    with _auto_cold_start_lock:
-        if _auto_cold_start_fired:
-            return
-        _auto_cold_start_fired = True
-    try:
-        start_fm_warmup(auto=True)
-    except Exception:
-        # Never break the render for a background kick-off failure.
-        pass
-
-
-def _reset_auto_cold_start_for_tests() -> None:
-    """Reset the per-process auto cold-start flag. Tests only."""
-    global _auto_cold_start_fired
-    with _auto_cold_start_lock:
-        _auto_cold_start_fired = False
 
 
 def _do_reset(story_id: str, topic: str,
