@@ -8,6 +8,8 @@ import sys
 import types
 from pathlib import Path
 
+import json
+
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -201,6 +203,79 @@ def test_discover_chat_id_with_no_updates_raises_with_start_instruction():
         tg.discover_chat_id("TOK", transport=post)
 
 
+def test_discover_chat_id_prefers_newest_private_over_group():
+    def post(url, *, data=None, files=None, timeout=None):
+        return _FakeResp({"ok": True, "result": [
+            {"update_id": 1,
+             "message": {"chat": {"id": 111, "type": "private"}}},
+            {"update_id": 2,
+             "message": {"chat": {"id": -100222, "type": "supergroup"}}},
+        ]})
+    assert tg.discover_chat_id("TOK", transport=post) == 111
+
+
+def test_discover_chat_id_falls_back_to_newest_group_when_no_private():
+    def post(url, *, data=None, files=None, timeout=None):
+        return _FakeResp({"ok": True, "result": [
+            {"update_id": 1,
+             "message": {"chat": {"id": -100111, "type": "group"}}},
+            {"update_id": 2,
+             "message": {"chat": {"id": -100222, "type": "supergroup"}}},
+        ]})
+    assert tg.discover_chat_id("TOK", transport=post) == -100222
+
+
+def test_resolve_chat_id_uses_cache_without_api_call(tmp_path):
+    cache = tmp_path / "chat_id.json"
+    cache.write_text('{"chat_id": 555}', encoding="utf-8")
+
+    def post(url, *, data=None, files=None, timeout=None):
+        raise AssertionError("getUpdates must not run on a cache hit")
+
+    assert tg.resolve_chat_id("TOK", transport=post,
+                              chat_id_path=cache) == 555
+
+
+def test_resolve_chat_id_discovers_and_caches_on_miss(tmp_path):
+    cache = tmp_path / "chat_id.json"
+
+    def post(url, *, data=None, files=None, timeout=None):
+        return _FakeResp({"ok": True, "result": [
+            {"update_id": 7,
+             "message": {"chat": {"id": 777, "type": "private"}}},
+        ]})
+
+    assert tg.resolve_chat_id("TOK", transport=post,
+                              chat_id_path=cache) == 777
+    assert json.loads(cache.read_text(encoding="utf-8")) == {"chat_id": 777}
+
+
+def test_resolve_chat_id_corrupt_cache_rediscovers(tmp_path):
+    cache = tmp_path / "chat_id.json"
+    cache.write_text("not json{", encoding="utf-8")
+
+    def post(url, *, data=None, files=None, timeout=None):
+        return _FakeResp({"ok": True, "result": [
+            {"update_id": 9,
+             "message": {"chat": {"id": 999, "type": "private"}}},
+        ]})
+
+    assert tg.resolve_chat_id("TOK", transport=post,
+                              chat_id_path=cache) == 999
+    assert json.loads(cache.read_text(encoding="utf-8")) == {"chat_id": 999}
+
+
+def test_resolve_chat_id_loud_error_when_nothing_discoverable(tmp_path):
+    cache = tmp_path / "chat_id.json"
+
+    def post(url, *, data=None, files=None, timeout=None):
+        return _FakeResp({"ok": True, "result": []})
+
+    with pytest.raises(tg.TelegramShareError, match="Start"):
+        tg.resolve_chat_id("TOK", transport=post, chat_id_path=cache)
+    assert not cache.exists()  # nothing cached on failure
+
+
 # ---------------------------------------------------------------------------
 # library_ui composition helpers
 # ---------------------------------------------------------------------------
@@ -317,6 +392,8 @@ def test_share_bot_discovers_and_remembers_chat_id(libdir, monkeypatch,
     lui = _library_ui_module()
     store = _prefs_double(monkeypatch, {"telegram_bot_token": "TOK"})
     monkeypatch.setattr(tg, "DEFAULT_GROUPS_PATH", tmp_path / "groups.json")
+    monkeypatch.setattr(tg, "DEFAULT_CHAT_ID_PATH",
+                        tmp_path / "chat_id.json")
     sid = _make_story_with_video(libdir, with_video=False)
     story = lib.load_story(sid)
 

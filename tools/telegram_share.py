@@ -39,7 +39,8 @@ One-time setup (guided in the Share popover):
      the group to @getmyid_bot — it replies with the chat ID (group IDs
      look like -100...).
   the chat id is discovered automatically from the bot's updates and
-  remembered in prefs.
+  remembered in ~/.cache/telegram_bot_chat_id.json (the app prefs keep a
+  copy too).
 
 All failures raise TelegramShareError with an actionable message — never
 a silent no-op. httpx is imported lazily so this module stays importable
@@ -188,30 +189,90 @@ def _api(transport: Optional[Transport], token: str, method: str, *,
 
 
 def discover_chat_id(token: str, transport: Optional[Transport] = None) -> int:
-    """Return the chat id to post to: the newest chat the bot has heard from.
+    """Return the chat id to post to: the user's DM chat with the bot.
 
-    In practice this is the user's own chat with the bot (what they see as
-    their conversation with it). Raises TelegramShareError — never None —
-    when the bot has no updates yet, telling the user exactly what to do.
+    Scans updates newest-first and prefers the newest chat whose type is
+    ``private`` (the user's own conversation with the bot). When no
+    private chat appears, falls back to the newest chat of any type
+    (group/channel). Raises TelegramShareError — never None — when the
+    bot has no updates yet, telling the user exactly what to do.
     """
     result = _api(transport, token, "getUpdates",
                   data={"timeout": 0, "limit": 25}, timeout=25)
     updates = result if isinstance(result, list) else []
+    newest_any: Optional[int] = None
     for upd in reversed(updates):
         if not isinstance(upd, dict):
             continue
-        msg = upd.get("message") or upd.get("channel_post") or {}
-        chat = msg.get("chat") if isinstance(msg, dict) else None
-        cid = chat.get("id") if isinstance(chat, dict) else None
-        if cid is None:
-            continue
-        try:
-            return int(cid)
-        except (TypeError, ValueError):
-            continue
+        for key in ("message", "channel_post"):
+            msg = upd.get(key) or {}
+            chat = msg.get("chat") if isinstance(msg, dict) else None
+            if not isinstance(chat, dict):
+                continue
+            try:
+                cid = int(chat.get("id"))
+            except (TypeError, ValueError):
+                continue
+            if newest_any is None:
+                newest_any = cid
+            if chat.get("type") == "private":
+                return cid  # newest private chat — the user's DM
+    if newest_any is not None:
+        return newest_any
     raise TelegramShareError(
         "The bot hasn't heard from you yet — open it in Telegram and tap "
         "Start (or send it any message), then share again.")
+
+
+# Where the user's DM chat id is remembered (JSON ``{"chat_id": int}``).
+# Discovery via getUpdates only has to succeed once: another process
+# (e.g. a message relay) may consume/acknowledge the bot's updates
+# afterwards, leaving the queue empty on later shares. The Streamlit
+# server runs on the user's Mac, so ~ is the user's home.
+DEFAULT_CHAT_ID_PATH = Path.home() / ".cache" / "telegram_bot_chat_id.json"
+
+
+def _load_cached_chat_id(chat_id_path: Path) -> Optional[int]:
+    """Read the persisted DM chat id; missing/corrupt → None (re-discover)."""
+    try:
+        raw = chat_id_path.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    value = data.get("chat_id") if isinstance(data, dict) else data
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def resolve_chat_id(token: str, transport: Optional[Transport] = None,
+                    chat_id_path: Optional[Any] = None) -> int:
+    """Return the DM chat id, using the on-disk cache when present.
+
+    Reads ``~/.cache/telegram_bot_chat_id.json`` first — no API call.
+    On a missing or corrupt cache, falls back to ``discover_chat_id``
+    and persists the id on success (best-effort: an unwritable cache
+    never fails the share). Never returns a guessed id: with no cache
+    hit and no discoverable updates, ``discover_chat_id`` raises loudly.
+
+    ``chat_id_path`` overrides the cache location (for tests).
+    """
+    path = (Path(chat_id_path) if chat_id_path is not None
+            else DEFAULT_CHAT_ID_PATH)
+    cached = _load_cached_chat_id(path)
+    if cached is not None:
+        return cached
+    chat_id = discover_chat_id(token, transport)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"chat_id": chat_id}), encoding="utf-8")
+    except OSError:
+        pass  # cache is best-effort; the discovered id is still returned
+    return chat_id
 
 
 # Where the discovered group ids are remembered (JSON list of ints).
