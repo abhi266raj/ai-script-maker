@@ -13,6 +13,10 @@ import feedparser
 import httpx
 from bs4 import BeautifulSoup
 from core.models import NewsArticle
+from core.hashtag_news_cache import (  # #320: 24h cache, force-refresh bypass
+    get_cached as _cache_get,
+    store_cache as _cache_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -882,7 +886,8 @@ class NewsFetcher:
             raise NewsFetchError(report)
         return ranked, report
 
-    def search_news(self, query: str, limit: Optional[int] = None) -> List[NewsArticle]:
+    def search_news(self, query: str, limit: Optional[int] = None,
+                    force_refresh: bool = False) -> List[NewsArticle]:
         """Multi-source news search (#121, #133, #135, #136).
 
         Same signature as before; now backed by Google News RSS, Bing
@@ -892,8 +897,23 @@ class NewsFetcher:
         URLs (#136). Raises :class:`NewsFetchError` (carrying the
         per-source report) when every source failed or returned nothing —
         callers surface it loudly instead of reporting an empty result.
+
+        #320: results are cached for 24h by default; pass
+        ``force_refresh=True`` to bypass the cache (Force fetch).
         """
+        if not force_refresh:
+            cached = _cache_get("news", query or "")
+            if cached is not None:
+                try:
+                    return [NewsArticle.model_validate(c) for c in cached][:limit]
+                except Exception:
+                    pass  # corrupt entry: fall through to live fetch
         articles, _report = self.search_news_multi(query, limit)
+        try:
+            _cache_store("news", query or "",
+                         [a.model_dump() for a in articles])
+        except Exception:
+            pass  # cache write is best-effort; the articles are real
         return articles
 
     def get_top_world_news(self, limit: int = 8) -> List[NewsArticle]:
@@ -1198,13 +1218,22 @@ class NewsFetcher:
             print(f"Warning: google trends fetch failed: {e}")
         return articles
 
-    def fetch_famous_english_hashtags(self, limit: int = 12) -> list:
+    def fetch_famous_english_hashtags(self, limit: int = 12,
+                                     force_refresh: bool = False) -> list:
         """English hashtags already trending on X, plus English Google Trends topics.
 
         Instagram has no public hashtag feed, so X (trends24) and Google Trends
         stand in for tags people are actually posting. Non-Latin topics are dropped.
         Each entry is {tag, headline, link, source}.
+
+        #320: results are cached for 24h by default (keyed "trending" — the
+        list is not query-specific); pass ``force_refresh=True`` to bypass
+        the cache (Force fetch).
         """
+        if not force_refresh:
+            cached = _cache_get("hashtags", "trending")
+            if cached is not None:
+                return list(cached)[:limit]
         entries: list = []
         seen = set()
 
@@ -1234,7 +1263,12 @@ class NewsFetcher:
                 continue
             _push(tag, raw.lstrip("#"), link, "X")
             if len(entries) >= limit:
-                return entries[:limit]
+                result = entries[:limit]
+                try:
+                    _cache_store("hashtags", "trending", result)
+                except Exception:
+                    pass
+                return result
 
         # Fill remaining slots with English Google Trends search topics.
         for art in self._fetch_google_trends_topics(limit=20):
@@ -1242,7 +1276,12 @@ class NewsFetcher:
             _push(tag, art.title, art.link, art.source or "Google Trends")
             if len(entries) >= limit:
                 break
-        return entries[:limit]
+        result = entries[:limit]
+        try:
+            _cache_store("hashtags", "trending", result)
+        except Exception:
+            pass  # cache write is best-effort; the entries are real
+        return result
 
     def _fetch_x_trend_labels(self) -> list:
         """Ordered (label, search_url) pairs from the public India X trends page."""
