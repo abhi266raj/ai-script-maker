@@ -358,13 +358,25 @@ class NewsFetcher:
             title = clean_html(getattr(entry, "title", "Untitled"))
             link = getattr(entry, "link", "")
             published = getattr(entry, "published", "")
-            source = fallback_source
             if " - " in title:
                 parts = title.rsplit(" - ", 1)
                 title = parts[0].strip()
                 source = parts[1].strip()
             elif hasattr(entry, "source") and hasattr(entry.source, "title"):
                 source = entry.source.title
+            else:
+                # #229: derive the label from the item's URL domain — never
+                # the fetch-method wire name ("News Wire" / "Bing News" /
+                # "Live Wire"), which leaked into share text as if it were
+                # the publisher.
+                source = publisher_name_from_url(link)
+                if not source:
+                    # Loud last resort: warn visibly instead of silently
+                    # mislabeling the item with the wire name.
+                    print(f"Warning: #229 could not derive a publisher name "
+                          f"from link {link!r} (feed {feed_url}); falling "
+                          f"back to {fallback_source!r}")
+                    source = fallback_source
             dt = _parse_pub_datetime(published, entry)
             age_h = None
             time_lbl = ""
