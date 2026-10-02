@@ -37,6 +37,17 @@ from tools.news_fetcher import news_fetcher, NewsFetchError
 import story_library  # noqa: F401
 from library_ui import render_tab_bar, render_library_page, maybe_autosave_story
 from core.workflow import reel_workflow
+from core.stepwise_flow import (
+    step_run_inflight,
+    request_step_run,
+    complete_step_run,
+    inflight_action,
+    ACTION_LAUNCH,
+    ACTION_RETRY,
+    ACTION_PROCEED,
+    ACTION_RERUN,
+    ACTION_RESTART,
+)
 from agents.dialogue_writer import strip_commenting_and_cta
 from core.screenplay_formatter import (
     format_industry_screenplay,
@@ -1604,6 +1615,12 @@ if "stepwise_extra_instruction" not in st.session_state:
     st.session_state.stepwise_extra_instruction = ""
 if "stepwise_run_requested" not in st.session_state:
     st.session_state.stepwise_run_requested = False
+if "stepwise_inflight" not in st.session_state:
+    # In-flight step-wise run marker (issue #198, HIG §3): the action name of
+    # the run currently executing, or None. While set, every step-wise
+    # action button renders disabled and the initiating button shows a
+    # running label — no second click until the step result lands.
+    st.session_state.stepwise_inflight = None
 if "stepwise_completed_steps" not in st.session_state:
     st.session_state.stepwise_completed_steps = {}
 
@@ -2324,15 +2341,24 @@ with col_settings:
 
         if st.session_state.get("workflow_mode") == "🪜 Step-Wise":
             if not st.session_state.get("stepwise_active"):
+                # Issue #198 / HIG §3: the launch button owns its loading
+                # state — while a step run is in flight it stays disabled so
+                # a second click can never queue a duplicate run.
                 # #199: icon-only primary launch — play metaphor + verb-first help tag.
+                _sw_locked = step_run_inflight(st.session_state)
                 launch_btn = st.button("", icon=":material/play_arrow:", type="primary", use_container_width=True, key="launch_stepwise_btn",
-                                       help="Start step-wise script generation")
+                                       disabled=_sw_locked, help="Start step-wise script generation")
                 if launch_btn and st.session_state.get("active_story_input", "").strip():
                     _issues = validate_config()
                     if _issues:
                         st.error(":material/block: Cannot start — fix these first:")
                         for _iss in _issues:
                             st.error(f"• {_iss}")
+                    elif not request_step_run(st.session_state, ACTION_LAUNCH):
+                        # Unreachable while the button is disabled; landing
+                        # here means session state is out of sync — fail
+                        # loudly and never queue a duplicate step run.
+                        st.error("A step-wise run is already in flight — please wait for it to finish.")
                     else:
                         st.session_state.stepwise_active = True
                         st.session_state.stepwise_current_step = 1
@@ -2340,7 +2366,6 @@ with col_settings:
                         st.session_state.stepwise_step_model = st.session_state.chosen_engine_mode
                         st.session_state.stepwise_extra_instruction = ""
                         st.session_state.stepwise_completed_steps = {}
-                        st.session_state.stepwise_run_requested = True
                         st.session_state.batch_result = None
                         st.session_state.generation_error = None
                         st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
@@ -2364,16 +2389,26 @@ with col_settings:
                         st.session_state.stepwise_run_requested = False
                         st.rerun()
                 with c_new:
-                    # #199: icon-only control — restart metaphor + verb-first help tag.
-                    if st.button("", icon=":material/restart_alt:", use_container_width=True, key="restart_step1_btn",
+                    # Issue #198 / HIG §3: Restart initiates a step run, so it
+                    # owns its loading state — disabled while a run is in
+                    # flight, with the running label shown visibly.
+                    # #199: icon-only control at rest — restart metaphor +
+                    # verb-first help tag.
+                    _restart_inflight = inflight_action(st.session_state) == ACTION_RESTART
+                    _restart_label = "Restarting Step 1…" if _restart_inflight else ""
+                    _restart_icon = None if _restart_inflight else ":material/restart_alt:"
+                    if st.button(_restart_label, icon=_restart_icon, use_container_width=True, key="restart_step1_btn",
+                                 disabled=step_run_inflight(st.session_state),
                                  help="Restart step-wise generation from step 1"):
-                        st.session_state.stepwise_current_step = 1
-                        st.session_state.stepwise_state = None
-                        st.session_state.stepwise_completed_steps = {}
-                        st.session_state.stepwise_run_requested = True
-                        st.session_state.batch_result = None
-                        st.session_state.generation_error = None
-                        st.rerun()
+                        if not request_step_run(st.session_state, ACTION_RESTART):
+                            st.error("A step-wise run is already in flight — please wait for it to finish.")
+                        else:
+                            st.session_state.stepwise_current_step = 1
+                            st.session_state.stepwise_state = None
+                            st.session_state.stepwise_completed_steps = {}
+                            st.session_state.batch_result = None
+                            st.session_state.generation_error = None
+                            st.rerun()
         else:
             # Issue #195 / HIG §3: the Generate button owns its loading state.
             # While a run is in flight it stays disabled, so a second click
@@ -3954,96 +3989,11 @@ with col_output:
         finally:
             end_run(st.session_state)
 
-    if st.session_state.get("stepwise_active") and st.session_state.get("stepwise_run_requested"):
-        st.session_state.stepwise_run_requested = False
-        curr_step = st.session_state.get("stepwise_current_step", 1)
-        step_model = st.session_state.get("stepwise_step_model", st.session_state.chosen_engine_mode)
-        extra_inst = st.session_state.get("stepwise_extra_instruction", "")
-
-        step_titles = {
-            1: "Stage 1: Wire Fact Validation",
-            2: "Stage 2: Character Finalisation",
-            3: "Stage 3: Dialogue Writing & Calibration",
-            4: "Stage 4: Scene Finalisation",
-            5: "Stage 5: Storyboards & AI Video Prompts",
-            6: "Stage 6: Integration & Final Validation",
-        }
-
-        with st.status(f"Executing {step_titles.get(curr_step, f'Step {curr_step}')} with {ENGINE_NAMES_REV.get(step_model, step_model)}…", expanded=True) as s_box:
-            try:
-                if curr_step == 1:
-                    st_res = reel_workflow.run_step_1(
-                        news_input=st.session_state.run_topic,
-                        scenario=st.session_state.run_scenario,
-                        batch_size=st.session_state.chosen_batch_count,
-                        target_seconds=st.session_state.chosen_duration,
-                        engine_mode=step_model,
-                        max_retries=st.session_state.chosen_max_retries,
-                        preferred_angle=get_effective_angle(),
-                        character_count=st.session_state.chosen_character_count,
-                        scene_style=st.session_state.chosen_scene_style,
-                        preferred_tone=st.session_state.chosen_tone,
-                        sample_story=st.session_state.get("run_sample_story", ""),
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 2:
-                    st_res = reel_workflow.run_step_2(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 3:
-                    st_res = reel_workflow.run_step_3(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 4:
-                    st_res = reel_workflow.run_step_4(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 5:
-                    st_res = reel_workflow.run_step_5(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                elif curr_step == 6:
-                    st_res = reel_workflow.run_step_6(
-                        state=st.session_state.stepwise_state,
-                        engine_mode=step_model,
-                        extra_instruction=extra_inst,
-                    )
-                    st.session_state.batch_result = st_res["batch_result"]
-                    st.session_state.selected_script_idx = 0
-                    save_config("selected_script_index", 0)
-
-                st.session_state.stepwise_state = st_res
-                # Store retry count for the collapsible history display.
-                _rc = st_res.get("stage3_retry_count", 0) if curr_step == 3 else st_res.get("retry_count", 0)
-                st_res["stage_retry_count"] = _rc
-                # Deep-copy: execute_stage_N mutates the state dict in place, so
-                # without a copy every history entry would alias the latest
-                # state and earlier stages' outputs would appear "lost".
-                st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = copy.deepcopy(st_res)
-                st.session_state.stepwise_extra_instruction = ""
-                st.session_state.generation_error = None
-                s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
-                st.rerun()
-            except Exception as e:
-                st.session_state.stepwise_run_requested = False
-                st.session_state.generation_error = {
-                    "message": str(e),
-                    "error_type": type(e).__name__,
-                    "engine_mode": step_model,
-                    "partial_output": getattr(e, "partial_output", "") or "",
-                    "step": curr_step,
-                    "attempt_history": getattr(e, "attempt_history", None) or [],
-                    "validation_steps": getattr(e, "validation_steps", None) or [],
-                }
-                s_box.update(label=f"Step {curr_step} Failed", state="error")
+    # Issue #198 / HIG §3: live step progress renders in this slot at the top
+    # of the output column. The (blocking) step executes AFTER the action
+    # buttons below, so they render in their disabled in-flight state first —
+    # the initiating button owns its loading state; no second click mid-run.
+    step_status_slot = st.empty()
 
     step_names = STAGE_NAMES
 
@@ -4126,12 +4076,23 @@ with col_output:
                 c_retry, c_abort = st.columns([1, 1])
                 c_back = None
             with c_retry:
-                # #199: icon-only control — refresh metaphor + verb-first help tag.
-                if st.button("", icon=":material/refresh:", key="retry_stepwise_step", type="primary", use_container_width=True,
+                # Issue #198 / HIG §3: Retry initiates a step run — it owns
+                # its loading state (running label shown visibly + disabled
+                # until the step result lands); a duplicate click is refused
+                # loudly.
+                # #199: icon-only control at rest — refresh metaphor +
+                # verb-first help tag.
+                _retry_inflight = inflight_action(st.session_state) == ACTION_RETRY
+                _retry_label = f"Retrying Step {err_step}…" if _retry_inflight else ""
+                _retry_icon = None if _retry_inflight else ":material/refresh:"
+                if st.button(_retry_label, icon=_retry_icon, key="retry_stepwise_step", type="primary", use_container_width=True,
+                             disabled=step_run_inflight(st.session_state),
                              help=f"Retry step {err_step} with the same settings"):
-                    st.session_state.generation_error = None
-                    st.session_state.stepwise_run_requested = True
-                    st.rerun()
+                    if not request_step_run(st.session_state, ACTION_RETRY):
+                        st.error("A step-wise run is already in flight — please wait for it to finish.")
+                    else:
+                        st.session_state.generation_error = None
+                        st.rerun()
             if c_back is not None:
                 with c_back:
                     # #199: icon-only control — back-arrow metaphor + verb-first help tag.
@@ -4255,10 +4216,18 @@ with col_output:
                         height=75,
                     )
 
+                # Issue #198 / HIG §3: every step-wise action button is disabled
+                # while a step run is in flight — the initiating button shows
+                # a running label and owns its loading state until the step
+                # result lands. No second click, ever.
+                _sw_inflight = step_run_inflight(st.session_state)
+                _sw_action = inflight_action(st.session_state)
+
                 if curr_step > 1:
                     c_back, c_proceed, c_rerun = st.columns([1, 1.3, 1])
                     with c_back:
-                        if st.button(f"⬅️ Back to Step {curr_step - 1}", use_container_width=True, key=f"back_btn_{curr_step}"):
+                        if st.button(f"⬅️ Back to Step {curr_step - 1}", use_container_width=True, key=f"back_btn_{curr_step}",
+                                     disabled=_sw_inflight):
                             _stepwise_go_back(curr_step - 1)
                             st.rerun()
                 else:
@@ -4266,24 +4235,142 @@ with col_output:
                 with c_proceed:
                     if curr_step < 5:
                         proceed_label = f"Proceed to Step {curr_step + 1} ➡️"
+                        proceed_running_label = f"Proceeding to Step {curr_step + 1}…"
                     else:
                         proceed_label = "Integrate & Validate (Step 6) 🏁"
+                        proceed_running_label = "Integrating & validating…"
+                    if _sw_action == ACTION_PROCEED:
+                        proceed_label = proceed_running_label
 
-                    if st.button(proceed_label, type="primary", use_container_width=True, key=f"proceed_btn_{curr_step}"):
-                        st.session_state.stepwise_step_model = chosen_step_engine
-                        # If user typed feedback for next step, pass it
-                        st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and apply_target == "next" and extra_text.strip()) else ""
-                        st.session_state.stepwise_current_step = curr_step + 1
-                        st.session_state.stepwise_run_requested = True
-                        st.rerun()
+                    if st.button(proceed_label, type="primary", use_container_width=True, key=f"proceed_btn_{curr_step}",
+                                 disabled=_sw_inflight):
+                        if not request_step_run(st.session_state, ACTION_PROCEED):
+                            # Unreachable while the button is disabled; fail
+                            # loudly rather than queue a duplicate step run.
+                            st.error("A step-wise run is already in flight — please wait for it to finish.")
+                        else:
+                            st.session_state.stepwise_step_model = chosen_step_engine
+                            # If user typed feedback for next step, pass it
+                            st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and apply_target == "next" and extra_text.strip()) else ""
+                            st.session_state.stepwise_current_step = curr_step + 1
+                            st.rerun()
 
                 with c_rerun:
-                    if st.button(f"🔄 Re-run Step {curr_step}", use_container_width=True, key=f"rerun_step_btn_{curr_step}"):
-                        st.session_state.stepwise_step_model = chosen_step_engine
-                        # When user clicks Re-run Step with extra instruction, always feed it as correction feedback
-                        st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and extra_text.strip()) else ""
-                        st.session_state.stepwise_run_requested = True
-                        st.rerun()
+                    # Issue #198 / HIG §3: Re-run owns its loading state too.
+                    _rerun_running = _sw_action == ACTION_RERUN
+                    _rerun_label = f"Re-running Step {curr_step}…" if _rerun_running else f"🔄 Re-run Step {curr_step}"
+                    if st.button(_rerun_label, use_container_width=True, key=f"rerun_step_btn_{curr_step}",
+                                 disabled=_sw_inflight):
+                        if not request_step_run(st.session_state, ACTION_RERUN):
+                            st.error("A step-wise run is already in flight — please wait for it to finish.")
+                        else:
+                            st.session_state.stepwise_step_model = chosen_step_engine
+                            # When user clicks Re-run Step with extra instruction, always feed it as correction feedback
+                            st.session_state.stepwise_extra_instruction = extra_text.strip() if (has_extra and extra_text.strip()) else ""
+                            st.rerun()
+
+    # Issue #198: the step-wise run executes AFTER the action buttons above
+    # have rendered. While a run is in flight those buttons render disabled
+    # (the initiating one with a running label), so the live progress in the
+    # slot above is owned by the initiating control — no second click mid-run.
+    if st.session_state.get("stepwise_active") and st.session_state.get("stepwise_run_requested"):
+        st.session_state.stepwise_run_requested = False
+        curr_step = st.session_state.get("stepwise_current_step", 1)
+        step_model = st.session_state.get("stepwise_step_model", st.session_state.chosen_engine_mode)
+        extra_inst = st.session_state.get("stepwise_extra_instruction", "")
+
+        step_titles = {
+            1: "Stage 1: Wire Fact Validation",
+            2: "Stage 2: Character Finalisation",
+            3: "Stage 3: Dialogue Writing & Calibration",
+            4: "Stage 4: Scene Finalisation",
+            5: "Stage 5: Storyboards & AI Video Prompts",
+            6: "Stage 6: Integration & Final Validation",
+        }
+
+        with step_status_slot.status(f"Executing {step_titles.get(curr_step, f'Step {curr_step}')} with {ENGINE_NAMES_REV.get(step_model, step_model)}…", expanded=True) as s_box:
+            try:
+                if curr_step == 1:
+                    st_res = reel_workflow.run_step_1(
+                        news_input=st.session_state.run_topic,
+                        scenario=st.session_state.run_scenario,
+                        batch_size=st.session_state.chosen_batch_count,
+                        target_seconds=st.session_state.chosen_duration,
+                        engine_mode=step_model,
+                        max_retries=st.session_state.chosen_max_retries,
+                        preferred_angle=get_effective_angle(),
+                        character_count=st.session_state.chosen_character_count,
+                        scene_style=st.session_state.chosen_scene_style,
+                        preferred_tone=st.session_state.chosen_tone,
+                        sample_story=st.session_state.get("run_sample_story", ""),
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 2:
+                    st_res = reel_workflow.run_step_2(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 3:
+                    st_res = reel_workflow.run_step_3(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 4:
+                    st_res = reel_workflow.run_step_4(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 5:
+                    st_res = reel_workflow.run_step_5(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                elif curr_step == 6:
+                    st_res = reel_workflow.run_step_6(
+                        state=st.session_state.stepwise_state,
+                        engine_mode=step_model,
+                        extra_instruction=extra_inst,
+                    )
+                    st.session_state.batch_result = st_res["batch_result"]
+                    st.session_state.selected_script_idx = 0
+                    save_config("selected_script_index", 0)
+
+                st.session_state.stepwise_state = st_res
+                # Store retry count for the collapsible history display.
+                _rc = st_res.get("stage3_retry_count", 0) if curr_step == 3 else st_res.get("retry_count", 0)
+                st_res["stage_retry_count"] = _rc
+                # Deep-copy: execute_stage_N mutates the state dict in place, so
+                # without a copy every history entry would alias the latest
+                # state and earlier stages' outputs would appear "lost".
+                st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = copy.deepcopy(st_res)
+                st.session_state.stepwise_extra_instruction = ""
+                st.session_state.generation_error = None
+                s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
+            except Exception as e:
+                st.session_state.generation_error = {
+                    "message": str(e),
+                    "error_type": type(e).__name__,
+                    "engine_mode": step_model,
+                    "partial_output": getattr(e, "partial_output", "") or "",
+                    "step": curr_step,
+                    "attempt_history": getattr(e, "attempt_history", None) or [],
+                    "validation_steps": getattr(e, "validation_steps", None) or [],
+                }
+                s_box.update(label=f"Step {curr_step} Failed", state="error")
+            finally:
+                # Issue #198 / HIG §3: release the in-flight marker the moment
+                # the step result lands — success or loud failure — so the
+                # action buttons re-enable exactly then. Idempotent; a failed
+                # step can never leave the buttons permanently disabled.
+                complete_step_run(st.session_state)
+            # Success: show the fresh step output. Failure: the error view
+            # renders above this block, so rerun to display it (the failure is
+            # recorded in generation_error — fail loudly, never swallowed).
+            st.rerun()
 
     if st.session_state.get("batch_result"):
         res = st.session_state.batch_result
