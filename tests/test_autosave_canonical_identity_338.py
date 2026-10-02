@@ -175,8 +175,9 @@ def test_canonical_hash_ignores_batch_position_and_title(ui):
 # ---------------------------------------------------------------------------
 
 def test_dedup_id_recorded_and_skips_resave(ui):
-    """First save records the dedup id; a new run with the same script
-    and title skips via the dedup id even if the formatted text differs."""
+    """First save records the content id; a new run with the same script
+    skips via the content id even if the formatted text differs. The
+    title plays no part in the identity."""
     fake, saved, _ = ui
     fake.session_state["run_topic"] = "Same Topic"
     batch1, batch2 = _Batch(), _Batch()
@@ -185,21 +186,19 @@ def test_dedup_id_recorded_and_skips_resave(ui):
 
     _view(fake, batch1, s1, 0, "formatted one")
     assert len(saved) == 1
-    did = lui._story_dedup_id(s1, lui._build_autosave_title(s1))
-    assert did in lui._autosaved_content_hashes()
+    cid = lui._canonical_script_hash(s1)
+    assert cid in lui._autosaved_content_hashes()
 
     _view(fake, batch2, s2, 0, "formatted two — toggles flipped")
     assert len(saved) == 1
 
 
-def test_dedup_id_differs_with_title():
-    """Same script, different version titles -> different dedup ids
-    (v1 vs v2 of one batch stay distinct)."""
+def test_identity_ignores_title():
+    """Same script, different titles -> SAME identity. The title is
+    presentation; only content hash + script id form the dedup base."""
     s = _Script(1, "same dialogue")
-    t1 = lui._story_dedup_id(s, "Headline · v1")
-    t2 = lui._story_dedup_id(s, "Headline · v2")
-    assert t1 != t2
-    assert lui._story_dedup_id(s, "Headline · v1") == t1  # deterministic
+    assert (lui._canonical_script_hash(s)
+            == lui._canonical_script_hash(_Script(2, "same dialogue")))
 
 
 # ---------------------------------------------------------------------------

@@ -2240,19 +2240,13 @@ def _build_autosave_title(script=None) -> str:
     return f"{title} · v{_vnum}"
 
 
-def _story_dedup_id(script, title: str) -> str:
-    """Save/load identity for a story (issue #338): sha256 of the
-    canonical script hash + the normalized final title.
-
-    The title rides along so the identity names the exact library row
-    (``Headline · v1``); the canonical hash carries the content. Checked
-    while saving AND after loading — a story with the same dedup id is
-    the same story, no matter which run or toggle state produced it.
-    Stored in the story frontmatter (``dedup_id``) so load-time
-    verification never has to recompute it."""
-    norm_title = _re.sub(r"\s+", " ", (title or "").lower()).strip()
-    raw = f"{_canonical_script_hash(script)}|{norm_title}"
-    return _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+# Identity design (issue #338): the dedup base is the content hash +
+# script id ONLY — no title. ``_canonical_script_hash`` is the
+# content-derived stable id of a script (deterministic across runs,
+# toggles and batch positions); mixing the title in could only weaken
+# it (a reworded headline would miss). It is stored in the story
+# frontmatter as ``dedup_id`` so load-time verification never has to
+# recompute it.
 
 
 def _autosaved_content_hashes() -> set:
@@ -2322,20 +2316,17 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
     content_hash = _canonical_script_hash(script)
-    title = _build_autosave_title(script)
-    dedup_id = _story_dedup_id(script, title)
     known_hashes = _autosaved_content_hashes()
-    if (content_hash in known_hashes or dedup_id in known_hashes
+    if (content_hash in known_hashes
             or _screenplay_content_hash(pro_screenplay) in known_hashes):
         # Already in the Library from an earlier run — skip silently.
         # Recording the session guard too keeps reruns cheap. Stories
         # saved by older builds recorded the formatted-text hash only;
-        # upgrade the record to the canonical + dedup ids so a later
-        # toggle change can never re-save them (#338).
+        # upgrade the record to the canonical hash so a later toggle
+        # change can never re-save them (#338).
         _autosave_completed_guards().add(guard)
-        for _h in (content_hash, dedup_id):
-            if _h not in known_hashes:
-                _record_autosaved_content_hash(_h)
+        if content_hash not in known_hashes:
+            _record_autosaved_content_hash(content_hash)
         return
     try:
         story_id = _save_current_story(batch_result, script, pro_screenplay)
@@ -2346,7 +2337,6 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         return
     _autosave_completed_guards().add(guard)
     _record_autosaved_content_hash(content_hash)
-    _record_autosaved_content_hash(dedup_id)
     st.session_state.pop("lib_save_failed_for", None)
     topic = st.session_state.get("run_topic", "") or ""
     _ok, _why = lib.start_enrichment(story_id, topic)
@@ -2428,7 +2418,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
         source_headline=headline,
         news_links=_verified_news_links(batch_result),
         image_urls=st.session_state.get("s1_kept_images") or [],
-        dedup_id=_story_dedup_id(script, title),
+        dedup_id=_canonical_script_hash(script),
     )
 
 
@@ -2443,10 +2433,8 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
         _autosave_completed_guards().add(guard)
         # Cross-run dedup (#138, #338): a manual save counts — a later autosave
         # of the same screenplay must skip. Record the canonical script hash
-        # and the dedup id so toggle changes cannot re-save it.
+        # (the content-derived script id) so toggle changes cannot re-save it.
         _record_autosaved_content_hash(_canonical_script_hash(script))
-        _record_autosaved_content_hash(
-            _story_dedup_id(script, _build_autosave_title(script)))
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
         _ok, _why = lib.start_enrichment(story_id, topic)
