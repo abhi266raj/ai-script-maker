@@ -1154,12 +1154,14 @@ def _delete_confirm_dialog() -> None:
     _bc, _bd = st.columns(2)
     with _bc:
         if st.button("Cancel", key="_pending_delete_no",
-                     use_container_width=True):
+                     use_container_width=True,
+                     help="Close without deleting"):
             st.session_state.pop(_PENDING_DELETE_KEY, None)
             st.rerun()
     with _bd:
         if _danger_button(_destructive_label, key="_pending_delete_yes",
-                          use_container_width=True):
+                          use_container_width=True,
+                          help="Confirm this deletion"):
             try:
                 if _kind == "story":
                     _confirm_delete_story(_pending.get("story_id", ""))
@@ -1283,6 +1285,7 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
             st.button(
                 "Cancel", key=f"{popover_key}-no", use_container_width=True,
                 on_click=lambda: st.session_state.update({popover_key: False}),
+                help="Close without deleting",
             )
         with _bd:
             _danger_button(
@@ -1290,6 +1293,7 @@ def _confirm_popover(*, trigger_icon: str = "", trigger_label: str = "",
                 use_container_width=True,
                 on_click=lambda: st.session_state.update(
                     {popover_key: False, _go_key: True}),
+                help="Confirm this deletion",
             )
 
     if as_dialog:
@@ -2232,7 +2236,8 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
 
 
 def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenplay: str = "") -> None:
-    if st.button("Save to Library", key="lib_manual_save_btn", type="primary"):
+    if st.button("Save to Library", key="lib_manual_save_btn", type="primary",
+                 help="Save the current script to the library"):
         try:
             story_id = _save_current_story(batch_result, script, pro_screenplay)
         except Exception as e:
@@ -2976,7 +2981,7 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                     "Send via WhatsApp",
                     icon=_TB_ICON_CHAT,
                     key=f"lib_wa_{story_id}",
-                    help="Share via WhatsApp — opens the Mac app, otherwise "
+                    help="Share via WhatsApp - opens the Mac app, otherwise "
                          "your browser",
                     use_container_width=True,
                 ):
@@ -3118,7 +3123,8 @@ def _render_telegram_setup_section(story_id: str) -> None:
             key=f"lib_tg_tok_{story_id}")
         if st.button("Save Telegram bot",
                      key=f"lib_tg_tok_save_{story_id}",
-                     use_container_width=True):
+                     use_container_width=True,
+                     help="Save the Telegram bot token"):
             _tok_in = (_tok_in or "").strip()
             if not _tok_in:
                 st.error("Paste the bot token from @BotFather first.")
@@ -3600,12 +3606,14 @@ def _render_script_version_body(story_id: str, version: dict, is_default: bool,
             # HIG, phase 1: the initiating control owns the loading state.
             if st.button("Saving…" if _saving else "Save",
                          key=f"lib_script_vsave_{story_id}_{_n}",
-                         disabled=_saving or busy):
+                         disabled=_saving or busy,
+                         help="Save the edited script version"):
                 st.session_state[_save_key] = True
                 st.rerun()
         with _vb2:
             if st.button("Cancel", key=f"lib_script_vcancel_{story_id}_{_n}",
-                         disabled=_saving):
+                         disabled=_saving,
+                         help="Discard the edits and keep the current version"):
                 st.session_state.pop(_edit_key, None)
                 st.rerun()
     else:
@@ -3780,14 +3788,15 @@ def _render_story_detail(story_id: str) -> None:
         ec1, ec2, ec3, ec4, ec8, _esp, ec5 = st.columns(
             _TITLE_EDIT_TOOLBAR_WEIGHTS, vertical_alignment="center")
         with ec1:
-            if st.button("Save", key=f"lib_title_save_{story_id}"):  # rule 1: one primary per screen (fine-tune keeps it)
+            if st.button("Save", key=f"lib_title_save_{story_id}", help="Save the new story title"):  # rule 1: one primary per screen (fine-tune keeps it)
                 _new = (st.session_state.get(f"lib_title_{story_id}") or "").strip()
                 if _new:
                     lib.update_story_fields(story_id, title=_new)
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
         with ec2:
-            if st.button("Cancel", key=f"lib_title_cancel_{story_id}"):
+            if st.button("Cancel", key=f"lib_title_cancel_{story_id}",
+                         help="Discard the title change"):
                 st.session_state.pop(f"lib_edit_title_{story_id}", None)
                 st.rerun()
         with ec3:
@@ -3906,7 +3915,8 @@ def _render_story_detail(story_id: str) -> None:
                       key=f"lib_edimg_url_{story_id}_{_edit_idx}")
         _eb1, _eb2, _ebs = st.columns([1, 1, 6])
         with _eb1:
-            if st.button("Save", key=f"lib_edimg_save_{story_id}_{_edit_idx}"):
+            if st.button("Save", key=f"lib_edimg_save_{story_id}_{_edit_idx}",
+                         help="Save the new image address"):
                 try:
                     lib.update_fetched_image_url(
                         story_id, _edit_idx,
@@ -3917,7 +3927,8 @@ def _render_story_detail(story_id: str) -> None:
                     st.session_state.pop(f"lib_editimg_{story_id}_{_edit_idx}", None)
                     st.rerun()
         with _eb2:
-            if st.button("Cancel", key=f"lib_edimg_cancel_{story_id}_{_edit_idx}"):
+            if st.button("Cancel", key=f"lib_edimg_cancel_{story_id}_{_edit_idx}",
+                         help="Discard the image address change"):
                 st.session_state.pop(f"lib_editimg_{story_id}_{_edit_idx}", None)
                 st.rerun()
     if img_urls or uploaded:
