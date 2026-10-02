@@ -72,16 +72,19 @@ def test_all_seven_toolbar_controls_are_icon_only(monkeypatch):
     assert [b[0] for b in fake.buttons[:3]] == ["", "", ""]
     assert [k.get("icon") for k in fake.button_kwargs[:3]] == [
         lui._TB_ICON_TAG, lui._TB_ICON_IMAGE, lui._TB_ICON_NEWS]
-    # Popovers: Reset, Share, Copy (#84 reverted the title popover —
-    # every popover here is a toolbar action). #114: the upload popover
+    # Popovers: Share, Copy, Reset (#220: Reset moved after Copy so it
+    # shares the trailing destructive group with Delete; #84 reverted the
+    # title popover — every popover here is a toolbar action). #114: the upload popover
     # is icon-only now — it lives in the upload row, so it is excluded
     # from the icon-only assertion by its upload icon. #119: Delete is a
     # direct button, not a popover — no dropdown chevron (Apple HIG).
     toolbar_pops = [p for p in fake.popovers
                     if p.get("icon") != lui._TB_ICON_UPLOAD]
     assert [p["label"] for p in toolbar_pops] == ["", "", ""]
+    # #220: Reset moved after Copy so it shares the trailing destructive
+    # group with Delete.
     assert [p.get("icon") for p in toolbar_pops] == [
-        lui._TB_ICON_RESET, lui._TB_ICON_SHARE, lui._TB_ICON_COPY]
+        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_RESET]
     _del_trig = [k for k in fake.button_kwargs
                  if k.get("key") == "lib_delpop_sid1-trigger"]
     assert len(_del_trig) == 1

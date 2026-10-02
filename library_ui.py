@@ -588,6 +588,18 @@ def inject_library_css() -> None:
     .lib-spacer-delete {
         height: 12px;
     }
+    /* #220: hairline VERTICAL separator between the detail toolbar's
+       three action groups (macOS HIG §1: max three toolbar groups,
+       visually separated). Neutral translucent gray — theme-safe in
+       light and dark mode (HIG §4: semantic/adaptive, no hard-coded
+       theme colors, no theme branch). Height follows the shared
+       --lib-act-h token so the divider matches the toolbar buttons. */
+    .lib-tb-sep {
+        width: 1px;
+        height: var(--lib-act-h);
+        margin: 0 auto;
+        background: rgba(128, 128, 128, 0.4);
+    }
     /* v1.6 (#53) HIG progress: the button that starts work owns its loading
        state — its label NEVER changes, it shows a spinner and stays
        disabled while the work runs. (#111: the spinner is Streamlit's
@@ -2987,7 +2999,17 @@ def _copy_button(label: str, text: str, key: str, icon: str) -> None:
 # stays visually trailing. #80: the news button is icon-only too (same 0.9
 # slot); the spacer gives up 0.9 to keep the total unchanged (10.0) so the
 # overall layout is preserved and the #24 baseline alignment is untouched.
-_DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, 1.4, 1.1, 1.1, 2.0, 1.7]
+# #220 (HIG §1: max three toolbar groups): the detail toolbar is grouped
+# as refresh ×3 | share+copy | destructive (reset + delete trailing),
+# with a hairline separator column between groups. Reset moved next to
+# Delete so the two destructive actions share one group; the spacer
+# still pushes the destructive group trailing. Existing action weights
+# are untouched — the two separator slots are the only addition, so the
+# total grows from 10.0 to 10.24 and every button keeps its exact share
+# of the row (columns distribute proportionally).
+_TB_SEP_W = 0.12
+_DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, _TB_SEP_W, 1.1, 1.1, _TB_SEP_W,
+                           2.0, 1.4, 1.7]
 _TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 4.2, 1.5]
 
 
@@ -3293,6 +3315,15 @@ def _any_script_version_editing(story_id: str) -> bool:
     )
 
 
+def _render_toolbar_separator() -> None:
+    """#220: hairline vertical divider between the detail toolbar's three
+    action groups (macOS HIG §1: max three toolbar groups, visually
+    separated). Decorative only — aria-hidden so it adds no noise for
+    assistive tech."""
+    st.markdown('<div class="lib-tb-sep" aria-hidden="true"></div>',
+                unsafe_allow_html=True)
+
+
 def _render_story_detail(story_id: str) -> None:
     story = lib.load_story(story_id)
     if not story:
@@ -3309,7 +3340,11 @@ def _render_story_detail(story_id: str) -> None:
     # Share, Copy — with Delete trailing (#46). #90: all seven are
     # icon-only, drawn from Streamlit's native material icons (#111);
     # the title carries its own quiet borderless edit icon hugging the
-    # left-aligned title text (#120).
+    # left-aligned title text (#120). #220 (HIG §1: max three toolbar
+    # groups): the seven controls are grouped refresh ×3 | share+copy |
+    # destructive (reset + delete), with a hairline separator column
+    # between groups — Reset moved next to Delete so the destructive
+    # actions share one group.
     #
     # #53 HIG progress: a refresh button NEVER changes its text label
     # (always empty). While its kind runs the button shows Streamlit's
@@ -3369,8 +3404,12 @@ def _render_story_detail(story_id: str) -> None:
         with ec5:
             _story_delete_popover()
     else:
-        tc1, tc2, tc3, tc4, tc5, tc6, _tsp, tc7 = st.columns(
-            _DETAIL_TOOLBAR_WEIGHTS, vertical_alignment="center")
+        # #220: three visually separated groups (HIG §1) — refresh ×3 |
+        # share+copy | destructive (reset + delete). The separator columns
+        # are thin slots only; all action weights are unchanged.
+        # #206: the row stays vertically centered.
+        (tc1, tc2, tc3, _sep1, tc5, tc6, _sep2, _tsp, tc4, tc7
+         ) = st.columns(_DETAIL_TOOLBAR_WEIGHTS, vertical_alignment="center")
         with tc1:
             _render_kind_button(
                 story_id=story_id, kind="hashtags", label=_TB_ICON_TAG,
@@ -3395,16 +3434,23 @@ def _render_story_detail(story_id: str) -> None:
                 button_key=f"lib_news_{story_id}", kick_label="news",
                 help_text="Update News",
                 busy_kinds=_busy_kinds, ai_engine=_ai_engine)
+        with _sep1:
+            _render_toolbar_separator()
+        with tc5:
+            _render_share_popover(story_id, _share_text, meta)
+        with tc6:
+            _render_copy_popover(story_id, meta, script_md)
+        with _sep2:
+            _render_toolbar_separator()
         with tc4:
             # Reset is destructive: it confirms via the same native popover
             # pattern as Delete (red explicit verb / standard Cancel, #58).
             # #53: the trigger label never changes; #54: it stays disabled
             # while any kind runs (exclusive).
+            # #220: Reset moved here so it shares the destructive group
+            # with Delete (HIG §1: max three toolbar groups, visually
+            # separated) — no longer between News and Share.
             _render_reset_popover(story_id, _busy_kinds, _ai_engine)
-        with tc5:
-            _render_share_popover(story_id, _share_text, meta)
-        with tc6:
-            _render_copy_popover(story_id, meta, script_md)
         with tc7:
             _story_delete_popover()
     # #53: toast each freshly-finished refresh outcome exactly once, then
