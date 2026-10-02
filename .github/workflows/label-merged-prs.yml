@@ -1,10 +1,18 @@
 name: Code-completed labeling
 
-# 1. When a PR is squash-merged into develop, tag it "code completed".
+# The "code completed" tag marks work merged into develop that is awaiting
+# the release. Triage view = open issues WITHOUT the tag:
+#   is:issue is:open -label:"code completed"
+#
+# 1. When a PR is squash-merged into develop, tag the PR "code completed"
+#    AND tag every open issue it references (#N in title/body) — so the
+#    fixed bug drops out of the triage view. (Fixer PRs must reference
+#    their issue number in the body.)
 # 2. When the same bug is reported again, remove the tag — the work
 #    wasn't actually complete. That covers both shapes of "again":
 #      - an issue REOPENED (finds PRs that referenced it via Closes #N), and
-#      - a new issue whose title/body says "reopen" and names the PR (e.g. "PR #272").
+#      - a new issue whose title/body says "reopen" and names the PR or
+#        issue (e.g. "PR #272", "see #271").
 # (Issues stay open until the v1.7 release PR to main closes them.)
 
 on:
@@ -22,45 +30,61 @@ jobs:
     if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
-      - name: Add "code completed" label
+      - name: Add "code completed" label to PR and its issues
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
+          REPO="${{ github.repository }}"
+          PR="${{ github.event.pull_request.number }}"
           gh label create "code completed" \
             --color "0E8A16" \
-            --description "Code merged into develop; awaiting release" \
-            --repo "${{ github.repository }}" 2>/dev/null || true
-          gh pr edit "${{ github.event.pull_request.number }}" \
-            --add-label "code completed" \
-            --repo "${{ github.repository }}"
+            --description "Fix merged into develop; awaiting release" \
+            --repo "$REPO" 2>/dev/null || true
+          gh pr edit "$PR" --add-label "code completed" --repo "$REPO"
+
+          # Tag every open issue the PR references, so it leaves the triage view.
+          TITLE="${{ github.event.pull_request.title }}"
+          BODY="${{ github.event.pull_request.body }}"
+          CANDS=$(printf '%s\n%s' "$TITLE" "$BODY" | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true)
+          for N in $CANDS; do
+            [ "$N" = "$PR" ] && continue
+            # gh issue view fails for PR numbers — only real issues pass.
+            if gh issue view "$N" --repo "$REPO" --json state \
+                 --jq -e 'select(.state=="OPEN")' >/dev/null 2>&1; then
+              gh issue edit "$N" --repo "$REPO" --add-label "code completed" >/dev/null 2>&1 \
+                && echo "Tagged issue #$N as code completed (via PR #$PR)"
+            fi
+          done
 
   unlabel-reopened:
     if: github.event_name == 'issues'
     runs-on: ubuntu-latest
     steps:
-      - name: Remove "code completed" from the PR that claimed the fix
+      - name: Remove "code completed" where the bug came back
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           REPO="${{ github.repository }}"
           ISSUE="${{ github.event.issue.number }}"
           ACTION="${{ github.event.action }}"
-          PRS=""
+          TITLE="${{ github.event.issue.title }}"
+          BODY="${{ github.event.issue.body }}"
 
+          # The issue itself loses the tag — a new report means the work wasn't complete.
+          gh issue edit "$ISSUE" --repo "$REPO" --remove-label "code completed" 2>/dev/null || true
+
+          # PRs that claimed the fix lose it too.
+          PRS=""
           if [ "$ACTION" = "reopened" ]; then
             # PRs that referenced this issue (e.g. via "Closes #N" in the body)
             PRS=$(gh api "repos/$REPO/issues/$ISSUE/timeline" --paginate \
               -q '[.[] | select(.event=="cross-referenced") | .source.issue | select(.pull_request != null) | .number] | unique | .[]' 2>/dev/null || true)
-          else
-            TITLE="${{ github.event.issue.title }}"
-            BODY="${{ github.event.issue.body }}"
-            case "$TITLE $BODY" in
-              *[Rr][Ee][Oo][Pp][Ee][Nn]*)
-                PRS=$(printf '%s\n%s' "$TITLE" "$BODY" | grep -oiE '(PR|pull request) #[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
-                ;;
-            esac
           fi
-
+          case "$TITLE $BODY" in
+            *[Rr][Ee][Oo][Pp][Ee][Nn]*)
+              PRS=$(printf '%s\n%s\n%s' "$PRS" "$TITLE" "$BODY" | grep -oiE '(PR|pull request) #[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+              ;;
+          esac
           for PR in $PRS; do
             if gh pr view "$PR" --repo "$REPO" \
                  --json state,baseRefName \
@@ -69,3 +93,18 @@ jobs:
                 && echo "Removed 'code completed' from PR #$PR (bug #$ISSUE reported again)"
             fi
           done
+
+          # Open issues named in a "reopen" report lose the tag as well
+          # (e.g. a new issue saying "reopened, see #271").
+          case "$TITLE $BODY" in
+            *[Rr][Ee][Oo][Pp][Ee][Nn]*)
+              for N in $(printf '%s\n%s' "$TITLE" "$BODY" | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true); do
+                [ "$N" = "$ISSUE" ] && continue
+                if gh issue view "$N" --repo "$REPO" --json state \
+                     --jq -e 'select(.state=="OPEN")' >/dev/null 2>&1; then
+                  gh issue edit "$N" --repo "$REPO" --remove-label "code completed" 2>/dev/null \
+                    && echo "Removed 'code completed' from issue #$N (reported again in #$ISSUE)"
+                fi
+              done
+              ;;
+          esac
