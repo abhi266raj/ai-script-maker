@@ -178,8 +178,11 @@ LIBRARY_AI_ENGINE_NONE_LABEL = "None"
 
 
 def new_story_id() -> str:
-    ts = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
-    return f"{ts}-{uuid.uuid4().hex[:6]}"
+    # #291: full UUID4 hex. No timestamp prefix — display/recency ordering
+    # comes from the `created_at` frontmatter field, not the filename.
+    # Existing timestamp-prefixed IDs remain valid (no migration):
+    # _STORY_ID_RE already accepts 32-char hex.
+    return uuid.uuid4().hex
 
 
 def _check_id(story_id: str) -> str:
