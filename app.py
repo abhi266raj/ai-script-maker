@@ -895,19 +895,24 @@ st.markdown(
     }
 
     /* Secondary buttons — Khabarwaani spec: card fill, 1px line border,
-       36px system, soft shadow; hover lifts border to line-strong. */
+       36px system, soft shadow; hover lifts border to line-strong.
+       #271: the catch-all selectors below MUST exclude primary buttons via
+       :not(...). Without the guard, e.g. `div[data-testid="stButton"] button`
+       (0,1,2) out-specifies the primary rule (0,1,1), painting primary
+       buttons with the white --card background while the primary `*` rule
+       keeps their text --on-accent (white) — white on white. */
     button[data-testid="stBaseButton-secondary"],
     button[data-testid="baseButton-secondary"],
     button[kind="secondary"],
-    .stButton > button,
-    .stDownloadButton > button,
-    [data-testid="stDownloadButton"] button,
-    [data-testid="stFormSubmitButton"] button,
-    [data-testid="stPopover"] button,
-    [data-testid="stPopover"] > button,
+    .stButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    .stDownloadButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stDownloadButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stFormSubmitButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stPopover"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
+    [data-testid="stPopover"] > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]),
     [data-testid="stPopoverButton"],
     button[data-testid="stPopoverButton"],
-    div[data-testid="stButton"] button {
+    div[data-testid="stButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]) {
         background-color: var(--card) !important;
         background: var(--card) !important;
         color: var(--ink) !important;
@@ -923,15 +928,15 @@ st.markdown(
     button[data-testid="stBaseButton-secondary"]:hover,
     button[data-testid="baseButton-secondary"]:hover,
     button[kind="secondary"]:hover,
-    .stButton > button:hover,
-    .stDownloadButton > button:hover,
-    [data-testid="stDownloadButton"] button:hover,
-    [data-testid="stFormSubmitButton"] button:hover,
-    [data-testid="stPopover"] button:hover,
-    [data-testid="stPopover"] > button:hover,
+    .stButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    .stDownloadButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stDownloadButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stFormSubmitButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stPopover"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
+    [data-testid="stPopover"] > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover,
     [data-testid="stPopoverButton"]:hover,
     button[data-testid="stPopoverButton"]:hover,
-    div[data-testid="stButton"] button:hover {
+    div[data-testid="stButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):hover {
         background-color: var(--hover) !important;
         background: var(--hover) !important;
         color: var(--ink) !important;
@@ -941,15 +946,15 @@ st.markdown(
     button[data-testid="stBaseButton-secondary"]:active,
     button[data-testid="baseButton-secondary"]:active,
     button[kind="secondary"]:active,
-    .stButton > button:active,
-    .stDownloadButton > button:active,
-    [data-testid="stDownloadButton"] button:active,
-    [data-testid="stFormSubmitButton"] button:active,
-    [data-testid="stPopover"] button:active,
-    [data-testid="stPopover"] > button:active,
+    .stButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    .stDownloadButton > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stDownloadButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stFormSubmitButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stPopover"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
+    [data-testid="stPopover"] > button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active,
     [data-testid="stPopoverButton"]:active,
     button[data-testid="stPopoverButton"]:active,
-    div[data-testid="stButton"] button:active {
+    div[data-testid="stButton"] button:not([kind="primary"]):not([data-testid="stBaseButton-primary"]):not([data-testid="baseButton-primary"]):active {
         background-color: var(--hover) !important;
         background: var(--hover) !important;
         color: var(--ink) !important;
