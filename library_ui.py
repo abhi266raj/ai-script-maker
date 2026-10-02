@@ -83,6 +83,9 @@ def inject_library_css() -> None:
         --lib-seg-bg: #E9E2D6;
         --lib-seg-active-bg: #FFFFFF;
         --lib-seg-active-shadow: 0 1px 3px rgba(60, 40, 20, 0.18);
+        --lib-seg-text: #6B5F4E;
+        --lib-seg-text-hover: #3A2E1A;
+        --lib-seg-text-active: #2A2118;
         /* latest macOS: floating glass tab strip */
         --lib-glass-bg: rgba(233, 226, 214, 0.55);
         --lib-glass-border: rgba(255, 255, 255, 0.55);
@@ -116,6 +119,9 @@ def inject_library_css() -> None:
         --lib-seg-bg: #2E2620;
         --lib-seg-active-bg: #4A3F33;
         --lib-seg-active-shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+        --lib-seg-text: #A89B8B;
+        --lib-seg-text-hover: #F5EFE3;
+        --lib-seg-text-active: #FAF7F0;
         /* latest macOS: floating glass tab strip */
         --lib-glass-bg: rgba(46, 38, 32, 0.55);
         --lib-glass-border: rgba(255, 255, 255, 0.14);
@@ -204,31 +210,24 @@ def inject_library_css() -> None:
         border-radius: 14px !important;
         background: transparent !important;
         box-shadow: none !important;
-        color: #6B5F4E !important;
+        color: var(--lib-seg-text) !important;
     }
     [data-testid="stButtonGroup"] button[data-variant="segmented_control"]:hover {
         background: rgba(60, 40, 20, 0.06) !important;
-        color: #3A2E1A !important;
+        color: var(--lib-seg-text-hover) !important;
     }
     [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"] {
         background: var(--lib-seg-active-bg) !important;
-        color: #2A2118 !important;
+        color: var(--lib-seg-text-active) !important;
         box-shadow: var(--lib-seg-active-shadow) !important;
         font-weight: 600 !important;
     }
     [data-testid="stButtonGroup"] button[data-variant="segmented_control"]:focus-visible {
-        outline: 2px solid #E0692A !important;
+        outline: 2px solid var(--primary) !important;
         outline-offset: 1px !important;
-    }
-    [data-theme="dark"] [data-testid="stButtonGroup"] button[data-variant="segmented_control"] {
-        color: #A89B8B !important;
     }
     [data-theme="dark"] [data-testid="stButtonGroup"] button[data-variant="segmented_control"]:hover {
         background: rgba(255, 255, 255, 0.06) !important;
-        color: #F5EFE3 !important;
-    }
-    [data-theme="dark"] [data-testid="stButtonGroup"] button[data-variant="segmented_control"][data-selected="true"] {
-        color: #FAF7F0 !important;
     }
     /* Fallback: horizontal radio styled as segmented control
        (scoped to the tab bar's widget container) */
@@ -876,15 +875,16 @@ def _inject_story_list_css() -> None:
        themes. Graceful — plain button if unmatched. */
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
-        background-color: #FF3B30 !important;
-        color: #FFFFFF !important;
-        border-color: #FF3B30 !important;
+        background-color: var(--bad) !important;
+        color: var(--on-primary) !important;
+        border-color: var(--bad) !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker^="lib-danger-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
-        background-color: #D92D20 !important;
-        color: #FFFFFF !important;
-        border-color: #D92D20 !important;
+        background-color: var(--bad) !important;
+        color: var(--on-primary) !important;
+        border-color: var(--bad) !important;
+        filter: brightness(0.9) !important;
     }
     /* v1.6 (#58): destructive popover triggers are NEUTRAL — they read as
        plain buttons like their neighbours (see the approved screenshot).

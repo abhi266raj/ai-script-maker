@@ -56,10 +56,29 @@ def _theme_block(kind):
     return SOURCE[start:end]
 
 
-def _token_hex(block, token):
-    matches = re.findall(rf"{re.escape(token)}:\s*(#[0-9A-Fa-f]{{6}})", block)
-    assert len(matches) == 1, f"{token} must be defined exactly once per theme block, found {matches!r}"
+def _raw_block():
+    """Return the raw :root palette block (holds --apple-*/--brand-*/--status-* hexes)."""
+    m = re.search(r":root\s*\{(.*?)\}", SOURCE, re.DOTALL)
+    blocks = [b for b in re.findall(r":root\s*\{(.*?)\}", SOURCE, re.DOTALL)
+              if "--apple-orange-light" in b]
+    assert len(blocks) == 1, "raw palette block not found exactly once"
+    return blocks[0]
+
+
+def _raw_hex(token):
+    matches = re.findall(rf"{re.escape(token)}:\s*(#[0-9A-Fa-f]{{6}})", _raw_block())
+    assert len(matches) == 1, f"{token} must be defined exactly once in the raw palette, found {matches!r}"
     return matches[0]
+
+
+def _token_hex(block, token):
+    matches = re.findall(rf"{re.escape(token)}:\s*(#[0-9A-Fa-f]{{6}}|var\(--[a-z0-9-]+\))", block)
+    assert len(matches) == 1, f"{token} must be defined exactly once per theme block, found {matches!r}"
+    value = matches[0]
+    m = re.fullmatch(r"var\((--[a-z0-9-]+)\)", value)
+    if m:
+        return _raw_hex(m.group(1))
+    return value
 
 
 def _contrast_ratio(fg, bg):
@@ -108,11 +127,15 @@ def test_consumers_use_semantic_tokens():
 
 def test_no_hard_coded_status_hex_outside_token_definitions():
     css_lines = SOURCE.splitlines()
+    allowed_def = re.compile(
+        r"--(ok|bad|ok-text|bad-text)\s*:"
+        r"|--status-(ok|bad|ok-text|bad-text)-(light|dark)\s*:"
+    )
     for i, line in enumerate(css_lines, start=1):
         lowered = line.lower()
         for hx in LEGACY_HEXES:
             if hx in lowered:
-                assert re.search(rf"--(ok|bad|ok-text|bad-text):\s*{re.escape(hx)}", lowered), (
+                assert allowed_def.search(lowered), (
                     f"app.py:{i}: hard-coded status color {hx} survives outside a token definition"
                 )
 
