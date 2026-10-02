@@ -122,8 +122,9 @@ def test_duplicate_click_fails_loudly_in_handler():
 
 def test_all_continuous_launch_sites_use_begin_run():
     # Generate button, "Try again" after failure, compliance "Retry
-    # Generation with Recommended Settings" — exactly three launch sites.
-    assert APP_SRC.count("begin_run(st.session_state)") == 3
+    # Generation with Recommended Settings", #316 "Continue without
+    # verification" bypass — exactly four launch sites.
+    assert APP_SRC.count("begin_run(st.session_state)") == 4
 
 
 def test_no_bare_run_requested_for_continuous_pipeline():

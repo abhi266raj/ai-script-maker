@@ -345,6 +345,7 @@ class ChiefEditorCoordinatorAgent:
         sample_story: Optional[str] = None,
         extra_instruction: Optional[str] = None,
         on_substep: Optional[Callable[[Dict[str, Any]], None]] = None,
+        bypass_verification: bool = False,  # #316: user chose to continue after a Stage 1 failure
         **kwargs,
     ) -> Dict[str, Any]:
         """Execute Stage 1: News Validation & Instruction Decomposition."""
@@ -463,17 +464,51 @@ class ChiefEditorCoordinatorAgent:
                 raise
             except Exception as e:
                 # Fail loudly: never substitute "Story confirmed: {headline}" as verified facts.
-                raise ModelGenerationError(
-                    f"Stage 1 verification failed: {type(e).__name__}: {e}. "
-                    f"News input: {news_input[:200]!r}"
-                ) from e
+                if bypass_verification:
+                    # #316: the user explicitly chose to continue without
+                    # verification after a Stage 1 failure. Build an explicit
+                    # UNVERIFIED report — never a fake "verified" one — so
+                    # downstream stages and the UI can see it was bypassed.
+                    logger.warning("Stage 1 verification bypassed by user: %s: %s",
+                                   type(e).__name__, e)
+                    stage1_failures += 1
+                    stage1_errors.append(
+                        f"Verification bypassed after failure ({type(e).__name__}: {str(e)[:80]})")
+                    stage1_resolution = (
+                        "User bypassed verification after all news sources failed; "
+                        "continuing with UNVERIFIED facts.")
+                    verification = NewsVerificationReport(
+                        is_verified=False,
+                        confidence_score=0,
+                        headline=(news_input or "")[:200],
+                        verification_summary=(
+                            "VERIFICATION BYPASSED — live news sources were unreachable "
+                            f"({type(e).__name__}: {e}). The user chose to continue "
+                            "without verification. Treat every fact below as UNVERIFIED."),
+                        verified_facts=[],
+                        flagged_claims=[f"UNVERIFIED (bypassed): {(news_input or '')[:200]}"],
+                        sources=[],
+                    )
+                else:
+                    raise ModelGenerationError(
+                        f"Stage 1 verification failed: {type(e).__name__}: {e}. "
+                        f"News input: {news_input[:200]!r}"
+                    ) from e
             # Cache the successful verification for 24h (never cached on failure
             # because exceptions above propagate before reaching this line).
             store_verification(news_input, verification.model_dump())
 
+        # #316: True when the user bypassed verification after a Stage 1 failure.
+        was_bypassed = bool(
+            verification is not None
+            and "VERIFICATION BYPASSED" in (verification.verification_summary or "")
+        )
+
         _emit_substep(on_substep, 1, "1.1", "Fact verification & dossier", "complete",
-                       status="pass",
-                       detail=(f"Verified with {verification.confidence_score}% confidence"
+                       status="bypassed" if was_bypassed else "pass",
+                       detail=("Verification bypassed by user — facts are UNVERIFIED"
+                               if was_bypassed
+                               else f"Verified with {verification.confidence_score}% confidence"
                                + (f" (cache hit, {cache_age_hours:.1f}h old)" if verification_from_cache else "")),
                        input=f"News: {(news_input or '')[:300]}",
                        output=(verification.verification_summary or "")[:500])
@@ -492,7 +527,8 @@ class ChiefEditorCoordinatorAgent:
                       status="pass" if (_s1_is_v and _s1_conf >= 70) else "fail",
                       detail="Verification gate passed" if (_s1_is_v and _s1_conf >= 70) else "Issues detected")
 
-        if not verification_from_cache and verification.confidence_score < 70 and max_retries > 0:
+        if (not was_bypassed and not verification_from_cache
+                and verification.confidence_score < 70 and max_retries > 0):
             stage1_failures += 1
             stage1_errors.append(f"Initial confidence score low ({verification.confidence_score}%)")
             _emit_substep(on_substep, 1, "1.3", "Confidence retry", "start",

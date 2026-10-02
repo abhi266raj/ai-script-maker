@@ -4776,6 +4776,8 @@ with col_output:
                         scene_style=st.session_state.chosen_scene_style,
                         preferred_tone=st.session_state.chosen_tone,
                         sample_story=st.session_state.get("run_sample_story", ""),
+                        # #316: one-shot bypass — consumed below so it never sticks.
+                        bypass_verification=st.session_state.pop("bypass_stage1_verification", False),
                     )
                     for step in pipeline:
                         # Live substep events: update tracker + heading, keep pumping.
@@ -4929,6 +4931,30 @@ with col_output:
             _err_step_txt = f" during Step {failure['step']}" if failure.get("step") else ""
             st.caption(f"Error detail: `{failure['error_type']}`{_err_step_txt}")
         st.warning(failure["message"])
+        # #316: Stage 1 verification failure (all 5 news sources failed) —
+        # offer a one-shot bypass that continues without verification.
+        # Detected by step == 1 plus the Stage 1 failure signature.
+        _is_stage1_verify_fail = (
+            _f_step == 1
+            and ("stage 1 verification failed" in _f_msg
+                 or "newsfetcherror" in _f_msg
+                 or "live wire feed returned no articles" in _f_msg)
+        )
+        if _is_stage1_verify_fail:
+            st.info(
+                "All 5 news sources failed (Google, Bing, DuckDuckGo, Yahoo, GDELT). "
+                "You can continue without verification — the script will be built "
+                "from your topic text and every fact will be marked UNVERIFIED."
+            )
+            if st.button(
+                "Continue without verification",
+                key="bypass_stage1_btn",
+                help="Skip verification and generate from your topic. Facts stay unverified.",
+            ):
+                st.session_state.bypass_stage1_verification = True
+                st.session_state.generation_error = None
+                begin_run(st.session_state)
+                st.rerun()
         # Generic failure view (all 6 stages, one pattern): if this stage has
         # no live substep events (e.g. stepwise mode), seed the tracker from
         # the recorded step history so the generic renderer displays it.
