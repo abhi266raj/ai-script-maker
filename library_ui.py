@@ -2186,6 +2186,46 @@ def _screenplay_content_hash(text: str) -> str:
     return _hashlib.sha256(norm.encode("utf-8")).hexdigest()
 
 
+def _canonical_script_hash(script) -> str:
+    """Stable identity for a SCRIPT (issue #338): sha256 over the script's
+    canonical authored content.
+
+    ``_screenplay_content_hash`` hashes the FORMATTED screenplay, which
+    varies with presentation toggles (text-overlay / SFX checkboxes) even
+    when the script itself is byte-identical. Two runs of the same topic
+    then hash differently and the same story saves twice. The canonical
+    hash covers only authored content — angle, hook, narration and every
+    beat's character/dialogue/visual/audio — so identical scripts hash
+    equal across runs, toggle states and batch positions. Run-specific
+    metadata (retry counts, engine, healing notes, validation) is
+    excluded: it must never make the same story look different.
+    """
+    import json as _json
+
+    def _norm(text):
+        return _re.sub(r"\s+", " ", (text or "").lower()).strip()
+
+    scenes = []
+    for sc in getattr(script, "scenes", None) or []:
+        scenes.append({
+            "n": getattr(sc, "scene_number", 0),
+            "character": _norm(getattr(sc, "character", "")),
+            "dialogue": _norm(getattr(sc, "dialogue", "")),
+            "on_screen_text": _norm(getattr(sc, "on_screen_text", "")),
+            "audio_sfx": _norm(getattr(sc, "audio_sfx", "")),
+            "visual_b_roll": _norm(getattr(sc, "visual_b_roll", "")),
+            "timestamp": _norm(getattr(sc, "timestamp", "")),
+        })
+    canonical = {
+        "angle": _norm(getattr(script, "angle", "")),
+        "hook": _norm(getattr(script, "hook_hindi", "")),
+        "narration": _norm(getattr(script, "narration_hindi", "")),
+        "scenes": scenes,
+    }
+    blob = _json.dumps(canonical, sort_keys=True, ensure_ascii=False)
+    return _hashlib.sha256(blob.encode("utf-8")).hexdigest()
+
+
 def _autosaved_content_hashes() -> set:
     """Content-hashes of screenplays already saved to the library,
     persisted in prefs.json so dedup works ACROSS runs/sessions."""
@@ -2229,10 +2269,12 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
     saves at most once per session, no matter how the user navigates
     between scripts (#279).
 
-    Cross-run dedup (#138 save phase): the screenplay's content-hash is
-    checked against the persisted set (prefs.json). A re-generated
-    identical script — e.g. v1 landing again on a fresh run — is skipped
-    silently because the story already exists in the Library.
+    Cross-run dedup (#138 save phase, #338): the script's canonical
+    content-hash is checked against the persisted set (prefs.json). A
+    re-generated identical script — e.g. v1 landing again on a fresh run —
+    is skipped silently because the story already exists in the Library.
+    The hash covers authored content only, so overlay/SFX toggle changes
+    between runs cannot make the same script look new.
     """
     res_id = id(batch_result)
     script_id = getattr(script, "id", "?")
@@ -2250,11 +2292,17 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         st.error("Auto-save to library failed: the final-stage screenplay text was not provided.")
         _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
-    content_hash = _screenplay_content_hash(pro_screenplay)
-    if content_hash in _autosaved_content_hashes():
+    content_hash = _canonical_script_hash(script)
+    known_hashes = _autosaved_content_hashes()
+    if content_hash in known_hashes or _screenplay_content_hash(pro_screenplay) in known_hashes:
         # Already in the Library from an earlier run — skip silently.
-        # Recording the session guard too keeps reruns cheap.
+        # Recording the session guard too keeps reruns cheap. Stories
+        # saved by older builds recorded the formatted-text hash only;
+        # upgrade the record to the canonical hash so a later toggle
+        # change can never re-save them (#338).
         _autosave_completed_guards().add(guard)
+        if content_hash not in known_hashes:
+            _record_autosaved_content_hash(content_hash)
         return
     try:
         story_id = _save_current_story(batch_result, script, pro_screenplay)
@@ -2368,9 +2416,10 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
             st.error(f"Save to library failed: {e}")
             return
         _autosave_completed_guards().add(guard)
-        # Cross-run dedup (#138): a manual save counts — a later autosave
-        # of the same screenplay must skip.
-        _record_autosaved_content_hash(_screenplay_content_hash(pro_screenplay))
+        # Cross-run dedup (#138, #338): a manual save counts — a later autosave
+        # of the same screenplay must skip. Record the canonical script hash
+        # so toggle changes cannot re-save it.
+        _record_autosaved_content_hash(_canonical_script_hash(script))
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
         _ok, _why = lib.start_enrichment(story_id, topic)

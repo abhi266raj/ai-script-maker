@@ -59,6 +59,12 @@ class _FakeSt:
 class _Script:
     def __init__(self, sid):
         self.id = sid
+        # #338: autosave identity is canonical content now — distinct stub
+        # scripts need distinct content, not just distinct ids.
+        self.angle = f"angle-{sid}"
+        self.hook_hindi = f"hook-{sid}"
+        self.narration_hindi = f"narration-{sid}"
+        self.scenes = []
 
 
 @pytest.fixture
