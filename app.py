@@ -2632,8 +2632,10 @@ with col_settings:
             # HIG §3 (#196): the Refresh button owns its loading state — it
             # renders disabled while a fetch it kicked off is in flight, and
             # the activity indicator appears here, next to the button.
+            # #264: icon-only (house rule) — no text label; the hover help
+            # tag carries the description.
             _refresh_busy = is_refresh_busy(st.session_state)
-            refresh_news = st.button("Refresh", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
+            refresh_news = st.button("", icon=":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
             refresh_indicator = st.empty()
         # Claim the click once per fragment run: the first fetch site below
         # takes the claim; stacked re-clicks (busy or inside the cooldown
