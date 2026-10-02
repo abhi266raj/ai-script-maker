@@ -70,6 +70,7 @@ _TB_ICON_EDIT = ":material/edit:"            # Edit title/script (no emoji)
 _TB_ICON_TUNE = ":material/tune:"            # Fine tune script (#105)
 _TB_ICON_ADD = ":material/add:"              # New script version (#104)
 _TB_ICON_DEFAULT = ":material/star:"         # Make default version (#104)
+_TB_ICON_WARN = ":material/warning:"         # Invalid news-link URL (#205)
 _TB_ICON_SPINNER = "spinner"                 # native animated spinner
 
 
@@ -97,6 +98,12 @@ def inject_library_css() -> None:
         --lib-chip-bg: #F0E7D5;
         --lib-chip-text: #5A4227;
         --lib-chip-border: rgba(90, 66, 39, 0.28);
+        /* #205: compact inline marker for malformed news-link URLs —
+           warm amber warning pill; theme-paired below (light/dark
+           variants behind one semantic token, HIG §4). */
+        --lib-warn-bg: #FAEBCB;
+        --lib-warn-text: #7A4E00;
+        --lib-warn-border: rgba(122, 78, 0, 0.35);
         /* IDE-style token colors for the full script view */
         --lib-spk: #1D4ED8;
         --lib-said: #047857;
@@ -124,6 +131,10 @@ def inject_library_css() -> None:
         --lib-chip-bg: #4A4034;
         --lib-chip-text: #F2E4C2;
         --lib-chip-border: rgba(242, 228, 194, 0.22);
+        /* #205: warning pill (dark variant of the same semantic token). */
+        --lib-warn-bg: #45331B;
+        --lib-warn-text: #F2D08A;
+        --lib-warn-border: rgba(242, 208, 138, 0.30);
         /* IDE-style token colors for the full script view */
         --lib-spk: #93C5FD;
         --lib-said: #6EE7B7;
@@ -402,6 +413,33 @@ def inject_library_css() -> None:
         white-space: nowrap !important;
         max-width: 100% !important;
     }
+    /* #205: malformed-URL chips are a compact INLINE warning marker — a
+       native icon-only st.button (``:material/warning:``) styled as a
+       small pill at the standard chip height. No st.error inside the
+       scroll row, so the one-line title+chips geometry is preserved;
+       the full error renders below the row. The marker sits directly
+       before the button so these selectors find exactly this button;
+       chip-scoped like the link-button rules above. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]:has([data-marker="lib-link-invalid"])
+        [data-testid="stElementContainer"]:has([data-marker="lib-link-invalid"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        box-sizing: border-box !important;
+        min-height: var(--lib-chip-h) !important;
+        min-width: var(--lib-chip-h) !important;
+        background: var(--lib-warn-bg) !important;
+        color: var(--lib-warn-text) !important;
+        border: 1px solid var(--lib-warn-border) !important;
+        border-radius: 999px !important;
+        padding: 3px 12px !important;
+        margin: 2px 4px 2px 0 !important;
+        font-size: 13px !important;
+        cursor: default !important;
+    }
     /* Image cards: one uniform size so every card in the row shares a
        baseline. Columns holding an image become fixed 180px cards; the
        image covers a 120px-tall frame (cropped, never distorted) with
@@ -541,7 +579,7 @@ def inject_library_css() -> None:
        above, so they win without touching them. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
-        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])
+        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"], [data-marker="lib-link-invalid"]):has([data-marker="lib-x-r"])
         div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
         + div[data-testid="stElementContainer"] {
         top: 50% !important;
@@ -550,7 +588,7 @@ def inject_library_css() -> None:
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
-        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])
+        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"], [data-marker="lib-link-invalid"]):has([data-marker="lib-x-r"])
         div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
         background: transparent !important;
@@ -564,7 +602,7 @@ def inject_library_css() -> None:
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
-        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"]):has([data-marker="lib-x-r"])
+        div[data-testid="stColumn"]:has(.lib-chip, [data-testid="stLinkButton"], [data-marker="lib-link-invalid"]):has([data-marker="lib-x-r"])
         div[data-testid="stElementContainer"]:has([data-marker="lib-x-r"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button:hover {
         opacity: 1 !important;
@@ -1434,6 +1472,21 @@ def _is_openable_article_url(url: str) -> bool:
         return False
 
 
+def _invalid_link_help(url: str) -> str:
+    """#205: help tag for the compact invalid-URL marker chip.
+
+    Names the problem inline (HIG §2: help tags describe the hovered
+    element; sentence case, <=75 chars) so the malformed URL is
+    reported without breaking the scroll row's geometry. The full
+    error still renders below the row (fail loudly). Pure (no
+    Streamlit) so it is unit-testable.
+    """
+    _u = (url or "").strip()
+    if len(_u) > 40:
+        _u = _u[:39] + "…"
+    return f"Link not opened: invalid URL ({_u})"
+
+
 def _chip_col_weights(labels) -> list:
     """Proportional ``st.columns`` weights for chip rows (#56).
 
@@ -1483,10 +1536,11 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
     Renders the full row — "News Links" title + link chips + "Load more
     news" — and OWNS its alignment: the hscroll marker, the column
     layout (title weight + per-chip weights + load-more weight), the
-    title cell, every chip cell (link button or loud error + × remove
-    overlay), and the load-more cell all live inside this function.
-    Alignment can no longer drift one call site at a time — any fix
-    lands here and applies everywhere.
+    title cell, every chip cell (link button or compact warning marker +
+    × remove overlay), and the load-more cell all live inside this
+    function. Malformed URLs are reported BELOW the scroll row so the
+    row's one-line geometry holds. Alignment can no longer drift one
+    call site at a time — any fix lands here and applies everywhere.
 
     Pure refactor of the inline block in ``_render_story_detail``
     (#156): no behavior change. ``links`` are the story's ``news_links``
@@ -1509,6 +1563,10 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
     with _lcols[0]:
         st.markdown('<div class="lib-section lib-section-inline">News Links</div>',
                     unsafe_allow_html=True)
+    # #205: malformed URLs are collected here and reported BELOW the
+    # scroll row — a full st.error inside the row breaks its one-line
+    # geometry. Never silently dropped (fail loudly).
+    _invalid_links = []
     for _i, (_lc, _lk, _label) in enumerate(zip(_lcols[1:-1], links, _labels)):
         _ltitle = _lk.get("title", "News link") or "News link"
         _lurl = (_lk.get("url") or "").strip()
@@ -1518,13 +1576,21 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
             # neuters the anchor (clicks do nothing). st.link_button
             # forces a new browser tab (the same guarantee the #95
             # WhatsApp comment relies on) and is styled as the chip
-            # pill by the marker-scoped CSS. Malformed URLs fail
-            # loudly instead of rendering a dead chip; the × still
-            # removes the bad link.
+            # pill by the marker-scoped CSS.
             if not _is_openable_article_url(_lurl):
-                st.error(
-                    f"News link \u201c{_ltitle}\u201d has an invalid URL "
-                    f"and was not rendered as a link.")
+                # #205: compact inline marker INSTEAD of st.error inside
+                # the row — an icon-only warning pill (marker-scoped
+                # CSS keeps the standard chip height) whose help tag
+                # names the problem; the row's geometry is preserved.
+                # The full error renders below the row; the × still
+                # removes the bad link.
+                st.markdown('<div data-marker="lib-link-invalid" '
+                            'style="display:none"></div>',
+                            unsafe_allow_html=True)
+                st.button("", icon=_TB_ICON_WARN,
+                          key=f"lib_newslink_invalid_{story_id}_{_i}",
+                          help=_invalid_link_help(_lurl))
+                _invalid_links.append((_ltitle, _lurl))
             else:
                 st.link_button(
                     _label,
@@ -1540,6 +1606,13 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
                     st.error(str(e))
                 else:
                     st.rerun()
+    # #205: full error detail BELOW the scroll row — malformed URLs fail
+    # loudly (never silently dropped) without breaking the row's
+    # one-line geometry.
+    for _bad_title, _bad_url in _invalid_links:
+        st.error(
+            f"News link \u201c{_bad_title}\u201d has an invalid URL "
+            f"and was not rendered as a link.")
     # #113: inline Load more — last column of the scroll row. The button
     # owns its loading state (spinner + disabled while more_news runs,
     # #91/#53).
