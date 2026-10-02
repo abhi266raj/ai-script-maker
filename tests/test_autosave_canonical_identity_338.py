@@ -222,13 +222,15 @@ def test_group_duplicate_stories_by_dedup_id():
 
 
 def test_group_duplicate_stories_fallback_old_stories():
-    """Stories saved before dedup_id existed group by normalized
-    title (version suffix stripped) + body."""
+    """Stories saved before dedup_id existed group by normalized body
+    only — the title plays no part (titles can be edited)."""
     items = [
         (_meta("a", "X · v1"), "same body"),
         (_meta("b", "X · v1"), "same body"),   # two runs, same title
-        (_meta("c", "X · v2"), "same body"),   # batch dupe, v-suffix differs
+        (_meta("c", "Y · v9"), "same body"),   # title differs entirely
         (_meta("d", "X · v1"), "different body"),
+        (_meta("e", "X · v1"), "   "),          # hollow: never grouped
+        (_meta("f", "X · v1"), ""),
     ]
     groups = lui._group_duplicate_stories(items)
     assert len(groups) == 1

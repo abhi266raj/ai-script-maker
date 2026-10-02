@@ -2457,10 +2457,11 @@ def _norm_text(text: str) -> str:
     return _re.sub(r"\s+", " ", (text or "").lower()).strip()
 
 
-def _fallback_content_key(title: str, script_text: str) -> str:
-    title = _re.sub(r"\s*·\s*v\d+\s*$", "", title or "")
-    raw = f"{_norm_text(title)}|{_norm_text(script_text)}"
-    return _hashlib.sha256(raw.encode("utf-8")).hexdigest()
+def _fallback_content_key(script_text: str) -> str:
+    """Fallback identity for stories saved before ``dedup_id`` existed:
+    sha256 of the normalized script text. Title plays no part — titles
+    can be edited, so they must never define identity (#338)."""
+    return _hashlib.sha256(_norm_text(script_text).encode("utf-8")).hexdigest()
 
 
 def _load_time_dedup_keys(meta: dict, script_text: str = "") -> set:
@@ -2469,7 +2470,10 @@ def _load_time_dedup_keys(meta: dict, script_text: str = "") -> set:
     did = (meta.get("dedup_id") or "").strip()
     if did:
         keys.add("id:" + did)
-    keys.add("fb:" + _fallback_content_key(meta.get("title") or "", script_text))
+    if _norm_text(script_text):
+        # Never group hollow stories: two empty bodies are not evidence
+        # of duplication.
+        keys.add("fb:" + _fallback_content_key(script_text))
     return keys
 
 
