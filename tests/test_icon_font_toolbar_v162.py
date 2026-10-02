@@ -30,7 +30,7 @@ _MATERIAL_ICONS = {
     "images": ":material/image:",
     "news": ":material/newspaper:",
     "reset": ":material/refresh:",
-    "share": ":material/share:",
+    "share": ":material/ios_share:",  # #216: iOS square-with-up-arrow, not Android
     "copy": ":material/content_copy:",
     "delete": ":material/delete:",
 }
