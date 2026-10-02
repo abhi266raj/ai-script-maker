@@ -389,6 +389,11 @@ st.markdown(
         --orange: var(--primary);
         --orange-press: var(--primary-hover);
         --scheme: light;
+        /* Status tokens (#219): semantic, with a dark variant each. */
+        --ok: #1c7c3a;
+        --bad: #c41e3a;
+        --ok-text: #1c7c3a;
+        --bad-text: #cf1322;
     }
 
     @media (prefers-color-scheme: dark) {
@@ -420,6 +425,11 @@ st.markdown(
             --orange: var(--primary);
             --orange-press: var(--primary-hover);
             --scheme: dark;
+            /* Status tokens (#219): semantic, with a dark variant each. */
+            --ok: #2e7d46;
+            --bad: #c9303f;
+            --ok-text: #4fae63;
+            --bad-text: #f0787f;
         }
     }
 
@@ -452,6 +462,11 @@ st.markdown(
         --orange: var(--primary);
         --orange-press: var(--primary-hover);
         --scheme: dark;
+        /* Status tokens (#219): semantic, with a dark variant each. */
+        --ok: #2e7d46;
+        --bad: #c9303f;
+        --ok-text: #4fae63;
+        --bad-text: #f0787f;
     }
 
     :root, html, body,
@@ -539,7 +554,7 @@ st.markdown(
     }
     .nav-sub { font-size: 0.8rem; color: var(--muted) !important; margin-top: 2px; }
     .nav-ver { font-size: 0.7rem; font-weight: 600; color: var(--muted) !important; }
-    .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: #1c7c3a; padding: 4px 0; border-bottom: 3px solid #1c7c3a; }
+    .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--ok-text); padding: 4px 0; border-bottom: 3px solid var(--ok-text); }
     .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--orange); padding: 4px 0; border-bottom: 3px solid var(--orange); }
     .step-wait { text-align: center; font-size: 0.75rem; font-weight: 500; color: var(--muted); padding: 4px 0; border-bottom: 3px solid var(--line); }
 
@@ -1054,8 +1069,8 @@ st.markdown(
         background: var(--hover) !important; color: var(--ink) !important;
         border: 1px solid var(--line) !important;
     }
-    .pill-ok { background: #1c7c3a !important; color: #ffffff !important; border-color: #1c7c3a !important; }
-    .pill-bad { background: #c41e3a !important; color: #ffffff !important; border-color: #c41e3a !important; }
+    .pill-ok { background: var(--ok) !important; color: #ffffff !important; border-color: var(--ok) !important; }
+    .pill-bad { background: var(--bad) !important; color: #ffffff !important; border-color: var(--bad) !important; }
 
     .frame-card {
         background: var(--field) !important;
@@ -1104,7 +1119,7 @@ st.markdown(
     /* Alert and notification banner classes */
     .banner-error {
         background-color: var(--field) !important;
-        border: 1px solid #c41e3a !important;
+        border: 1px solid var(--bad) !important;
         border-radius: 8px !important;
         padding: 10px 12px !important;
         margin: 8px 0 !important;
@@ -1519,7 +1534,7 @@ if server_action == "stop":
     st.markdown(
         """
         <div class="server-status-card">
-            <h2 style="color: #cf1322; margin-top: 0;">🛑 Studio Server Stopped</h2>
+            <h2 style="color: var(--bad-text); margin-top: 0;">🛑 Studio Server Stopped</h2>
             <p>The server process has shut down cleanly. To resume, launch the app from the macOS Dock / Applications folder or restart it from your terminal.</p>
         </div>
         """,
