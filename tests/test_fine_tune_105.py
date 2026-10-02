@@ -292,8 +292,14 @@ def _ui_with_fake_st(st):
         tools_pkg = _types.ModuleType("tools")
         tools_pkg.__path__ = [str(Path(__file__).resolve().parent.parent
                                   / "tools")]
-        tools_pkg.fine_tune = sys.modules.get("fine_tune_mod")
+        # Register the real fine_tune module (loaded by path at the top of
+        # this file) as BOTH the package attribute and sys.modules entry.
+        # A bare ``tools_pkg.fine_tune = None`` attribute suppresses the
+        # submodule import and binds None (latent isolation bug: ui.fine_tune
+        # was None whenever another test module had stubbed sys.modules).
+        tools_pkg.fine_tune = ft
         sys.modules["tools"] = tools_pkg
+        sys.modules["tools.fine_tune"] = ft
         sys.modules.pop("library_ui", None)
         import library_ui
         return library_ui
@@ -302,28 +308,21 @@ def _ui_with_fake_st(st):
         sys.modules.update(saved)
 
 
-def test_ui_flow_surfaces_refined_script_when_latest_is_not_default(libdir):
-    """#191: with v1 (default) + v2 (latest, not default), a completed
-    fine-tune run must leave the refined script as the latest version —
-    which is what the versions list expands — not hidden in a collapsed
-    default expander showing old text."""
-    sid = _make_story()
-    lib.create_script_version(sid)  # v2: latest, NOT the default
-    lib.update_script_version_text(sid, 2, "BEAT 9:\nVIKRAM: \"v2 text\"")
-
-    st = _FakeSt()
-    ui = _ui_with_fake_st(st)
+def _drive_two_phases(ui, st, sid, instruction, refined,
+                      llm_side_effect=None, expect_rerun=True):
+    """Drive the HIG two-phase flow; returns after phase 2's rerun."""
     btn_key = f"lib_ft_apply_{sid}"
     input_key = f"lib_ft_input_{sid}"
+    output_key = f"lib_ft_output_{sid}"
 
     def fake_llm(current_script, instruction, story_context="",
                  history=(), tone="", generate_fn=None):
-        assert current_script.strip() == "BEAT 1:\nVIKRAM: \"नमस्ते\""
-        assert instruction == "make it funnier"
-        return "BEAT 1:\nVIKRAM: \"REFINED\""
+        if llm_side_effect is not None:
+            raise llm_side_effect
+        return refined
 
     # Phase 1: user typed the instruction and clicked the button.
-    st.session_state[input_key] = "make it funnier"
+    st.session_state[input_key] = instruction
     st.click(btn_key)
     story = lib.load_story(sid)
     with pytest.raises(_Rerun):
@@ -336,17 +335,246 @@ def test_ui_flow_surfaces_refined_script_when_latest_is_not_default(libdir):
     ui.fine_tune.fine_tune_script = fake_llm
     try:
         story2 = lib.load_story(sid)
-        with pytest.raises(_Rerun):
+        if expect_rerun:
+            with pytest.raises(_Rerun):
+                ui._render_fine_tune_section(sid, story2["meta"],
+                                             story2["script"].strip(), False)
+        else:
+            # Failure path: the error is shown, no rerun.
             ui._render_fine_tune_section(sid, story2["meta"],
                                          story2["script"].strip(), False)
     finally:
         ui.fine_tune.fine_tune_script = _orig_llm
+    return output_key
+
+
+def test_ui_flow_parks_refined_output_without_auto_merge(libdir):
+    """#270: with v1 (default) + v2 (latest, not default), a completed
+    fine-tune run must park ONLY the LLM output in the right panel —
+    no new version, no default change, no auto-merge. The user sees the
+    refined script (not the old one) in the output panel."""
+    sid = _make_story()
+    lib.create_script_version(sid)  # v2: latest, NOT the default
+    lib.update_script_version_text(sid, 2, "BEAT 9:\nVIKRAM: \"v2 text\"")
+
+    st = _FakeSt()
+    ui = _ui_with_fake_st(st)
+    output_key = _drive_two_phases(
+        ui, st, sid, "make it funnier", "BEAT 1:\nVIKRAM: \"REFINED\"")
     assert st.errors == []
 
-    # The refined script is the latest version AND the default — the
-    # versions list expands the latest, so the user sees it immediately.
+    # ONLY the LLM output is parked — nothing was merged.
+    output = st.session_state.get(output_key)
+    assert output is not None
+    assert output["refined"] == "BEAT 1:\nVIKRAM: \"REFINED\""
+    assert output["instruction"] == "make it funnier"
+    versions, default_n = lib.get_script_versions(sid)
+    assert [v["n"] for v in versions] == [2, 1]  # no new version
+    assert default_n == 1  # default untouched
+    assert lib.load_story(sid)["script"].startswith("BEAT 1:\nVIKRAM: \"नमस्ते\"")
+    assert lib.get_fine_tune_history(sid) == []  # no turn recorded yet
+
+
+def test_ui_flow_add_to_current_script_adopts_refined_output(libdir):
+    """#270: clicking "Add to current script" saves the parked refined
+    output as a new version (latest on top) and makes it the default —
+    the left panel then shows the new script, and the output clears."""
+    sid = _make_story()
+    lib.create_script_version(sid)  # v2: latest, NOT the default
+    lib.update_script_version_text(sid, 2, "BEAT 9:\nVIKRAM: \"v2 text\"")
+
+    st = _FakeSt()
+    ui = _ui_with_fake_st(st)
+    output_key = _drive_two_phases(
+        ui, st, sid, "make it funnier", "BEAT 1:\nVIKRAM: \"REFINED\"")
+    assert st.errors == []
+
+    # The user clicks "Add to current script".
+    st.click(f"lib_ft_add_{sid}")
+    story = lib.load_story(sid)
+    with pytest.raises(_Rerun):
+        ui._render_fine_tune_section(sid, story["meta"],
+                                     story["script"].strip(), False)
+    assert st.errors == []
+
     versions, default_n = lib.get_script_versions(sid)
     assert [v["n"] for v in versions] == [3, 2, 1]
     assert default_n == 3
     assert versions[0]["text"] == "BEAT 1:\nVIKRAM: \"REFINED\""
     assert lib.load_story(sid)["script"] == "BEAT 1:\nVIKRAM: \"REFINED\""
+    # The output panel is consumed; the turn is recorded in history.
+    assert st.session_state.get(output_key) is None
+    history = lib.get_fine_tune_history(sid)
+    assert len(history) == 1
+    assert history[0]["instruction"] == "make it funnier"
+
+
+def test_enter_in_instruction_input_does_not_start_fine_tune(libdir):
+    """#270: pressing Enter in the instruction input only reruns (the
+    widget value persists) — without the button click, no refinement
+    starts and the LLM is never called."""
+    sid = _make_story()
+    st = _FakeSt()
+    ui = _ui_with_fake_st(st)
+
+    called = []
+
+    def fake_llm(*a, **k):
+        called.append(True)
+        return "REFINED"
+
+    _orig_llm = ui.fine_tune.fine_tune_script
+    ui.fine_tune.fine_tune_script = fake_llm
+    try:
+        # Enter in the input: value set, render runs, button NOT clicked.
+        st.session_state[f"lib_ft_input_{sid}"] = "make it funnier"
+        story = lib.load_story(sid)
+        ui._render_fine_tune_section(sid, story["meta"],
+                                     story["script"].strip(), False)
+    finally:
+        ui.fine_tune.fine_tune_script = _orig_llm
+
+    assert called == []
+    assert st.session_state.get(f"lib_ft_running_{sid}") is None
+    assert st.session_state.get(f"lib_ft_output_{sid}") is None
+    assert st.errors == []
+
+
+def test_fine_tune_llm_failure_is_loud_and_leaves_nothing(libdir):
+    """#270: an LLM failure surfaces loudly; no output is parked and no
+    version is created — the old script is never presented as a result."""
+    sid = _make_story()
+    st = _FakeSt()
+    ui = _ui_with_fake_st(st)
+    _drive_two_phases(ui, st, sid, "make it funnier", "REFINED",
+                      llm_side_effect=Exception("model exploded"),
+                      expect_rerun=False)
+
+    assert len(st.errors) == 1
+    assert "Fine tune failed" in st.errors[0]
+    assert st.session_state.get(f"lib_ft_output_{sid}") is None
+    versions, default_n = lib.get_script_versions(sid)
+    assert [v["n"] for v in versions] == [1]
+    assert default_n == 1
+    assert lib.get_fine_tune_history(sid) == []
+
+
+def test_add_to_current_script_failure_is_loud_and_keeps_output(libdir):
+    """#270: if adopting the refined output fails, the error is loud and
+    the output panel is kept (not silently dropped)."""
+    sid = _make_story()
+    st = _FakeSt()
+    ui = _ui_with_fake_st(st)
+    output_key = _drive_two_phases(
+        ui, st, sid, "make it funnier", "BEAT 1:\nVIKRAM: \"REFINED\"")
+    assert st.errors == []
+
+    _orig_record = lib.record_fine_tune_turn
+    def _boom(*a, **k):
+        raise OSError("disk exploded")
+    monkeypatch_record = _orig_record
+    lib.record_fine_tune_turn = _boom
+    try:
+        st.click(f"lib_ft_add_{sid}")
+        story = lib.load_story(sid)
+        ui._render_fine_tune_section(sid, story["meta"],
+                                     story["script"].strip(), False)
+    finally:
+        lib.record_fine_tune_turn = monkeypatch_record
+
+    assert len(st.errors) == 1
+    assert "Could not add the refined script" in st.errors[0]
+    # Output retained for retry; versions untouched.
+    assert st.session_state.get(output_key)["refined"] == \
+        "BEAT 1:\nVIKRAM: \"REFINED\""
+    versions, default_n = lib.get_script_versions(sid)
+    assert [v["n"] for v in versions] == [1]
+    assert default_n == 1
+
+
+# ---------------------------------------------------------------------------
+# Layout (#270): fine-tune panel sits side-by-side (right) with the script
+# ---------------------------------------------------------------------------
+
+class _ColumnCtx:
+    def __enter__(self):
+        return None
+
+    def __exit__(self, *exc):
+        return False
+
+
+def _fake_st_with_columns():
+    st = _FakeSt()
+    st.column_calls = []
+
+    def columns(spec, vertical_alignment=None):
+        st.column_calls.append((spec, vertical_alignment))
+        n = spec if isinstance(spec, int) else len(spec)
+        return [_ColumnCtx() for _ in range(n)]
+
+    st.columns = columns
+    return st
+
+
+def _ui_with_columns(st):
+    import types as _types
+    saved = dict(sys.modules)
+    try:
+        fake_mod = _types.ModuleType("streamlit")
+        for _name in ("markdown", "caption", "error", "expander", "spinner",
+                      "text_input", "button", "rerun", "columns"):
+            setattr(fake_mod, _name, getattr(st, _name))
+        fake_mod.session_state = st.session_state
+        sys.modules["streamlit"] = fake_mod
+        tools_pkg = _types.ModuleType("tools")
+        tools_pkg.__path__ = [str(Path(__file__).resolve().parent.parent
+                                  / "tools")]
+        # Same registration as _ui_with_fake_st: real module as attribute
+        # AND sys.modules entry (never a None attribute).
+        tools_pkg.fine_tune = ft
+        sys.modules["tools"] = tools_pkg
+        sys.modules["tools.fine_tune"] = ft
+        sys.modules.pop("library_ui", None)
+        import library_ui
+        return library_ui
+    finally:
+        sys.modules.clear()
+        sys.modules.update(saved)
+
+
+def test_script_and_fine_tune_render_side_by_side(libdir):
+    """#270: with a script present, the versions list and the fine-tune
+    panel render in two side-by-side columns (script left, panel right)."""
+    sid = _make_story()
+    st = _fake_st_with_columns()
+    ui = _ui_with_columns(st)
+
+    rendered = []
+    ui._render_script_versions = lambda *a, **k: rendered.append("versions")
+    ui._render_fine_tune_section = lambda *a, **k: rendered.append("fine_tune")
+
+    story = lib.load_story(sid)
+    ui._render_script_and_fine_tune(sid, story["meta"],
+                                    story["script"].strip(), set(), False)
+
+    assert st.column_calls == [(2, "top")]
+    assert rendered == ["versions", "fine_tune"]
+
+
+def test_no_script_renders_versions_full_width(libdir):
+    """#270: without a script there is no fine-tune baseline — the
+    versions list renders full-width with no columns."""
+    sid = _make_story()
+    st = _fake_st_with_columns()
+    ui = _ui_with_columns(st)
+
+    rendered = []
+    ui._render_script_versions = lambda *a, **k: rendered.append("versions")
+    ui._render_fine_tune_section = lambda *a, **k: rendered.append("fine_tune")
+
+    story = lib.load_story(sid)
+    ui._render_script_and_fine_tune(sid, story["meta"], "   ", set(), False)
+
+    assert st.column_calls == []
+    assert rendered == ["versions"]
