@@ -57,8 +57,9 @@ jobs:
           for N in $CANDS; do
             [ "$N" = "$PR" ] && continue
             # gh issue view fails for PR numbers — only real issues pass.
-            if gh issue view "$N" --repo "$REPO" --json state \
-                 --jq -e 'select(.state=="OPEN")' >/dev/null 2>&1; then
+            # (The boolean must come from inside the --jq expression: gh
+            # parses `-e`/`-r` after --jq as its own arguments and errors.)
+            if [ "$(gh issue view "$N" --repo "$REPO" --json state --jq '.state == "OPEN"' 2>/dev/null)" = "true" ]; then
               if gh issue edit "$N" --repo "$REPO" --add-label "code completed"; then
                 echo "Tagged issue #$N as code completed (via PR #$PR)"
               else
@@ -103,9 +104,8 @@ jobs:
               ;;
           esac
           for PR in $PRS; do
-            if gh pr view "$PR" --repo "$REPO" \
-                 --json state,baseRefName \
-                 --jq -e 'select(.state=="MERGED" and .baseRefName=="develop")' >/dev/null 2>&1; then
+            if [ "$(gh pr view "$PR" --repo "$REPO" --json state,baseRefName \
+                 --jq '.state == "MERGED" and .baseRefName == "develop"' 2>/dev/null)" = "true" ]; then
               gh pr edit "$PR" --repo "$REPO" --remove-label "code completed" \
                 && echo "Removed 'code completed' from PR #$PR (bug #$ISSUE reported again)"
             fi
@@ -117,8 +117,7 @@ jobs:
             *[Rr][Ee][Oo][Pp][Ee][Nn]*)
               for N in $(printf '%s\n%s' "$TITLE" "$BODY" | grep -oE '#[0-9]+' | tr -d '#' | sort -u || true); do
                 [ "$N" = "$ISSUE" ] && continue
-                if gh issue view "$N" --repo "$REPO" --json state \
-                     --jq -e 'select(.state=="OPEN")' >/dev/null 2>&1; then
+                if [ "$(gh issue view "$N" --repo "$REPO" --json state --jq '.state == "OPEN"' 2>/dev/null)" = "true" ]; then
                   gh issue edit "$N" --repo "$REPO" --remove-label "code completed" 2>/dev/null \
                     && echo "Removed 'code completed' from issue #$N (reported again in #$ISSUE)"
                 fi
