@@ -61,11 +61,16 @@ if [ "${#ARGS[@]}" -eq 0 ]; then
 fi
 
 echo "━━━ runut: pytest ${ARGS[*]} ━━━"
-OUT="$("$VENV_PY" -m pytest "${ARGS[@]}" -q 2>&1)"
-CODE=$?
-# Print only the interesting tail: failures + summary.
-echo "$OUT" | grep -E "^(FAILED|ERROR)" || true
-echo "$OUT" | tail -3
+# Stream live with per-test percentage (-v shows "[ 42%]" per test).
+# Tee to a temp file so we can still print the concise failure summary.
+LOG="$(mktemp)"
+"$VENV_PY" -m pytest "${ARGS[@]}" -v 2>&1 | tee "$LOG"
+CODE=${PIPESTATUS[0]}
+echo ""
+echo "━━━ failures ━━━"
+grep -E "^(FAILED|ERROR)" "$LOG" || echo "(none)"
+tail -2 "$LOG"
+rm -f "$LOG"
 
 if [ "$BASELINE" -eq 1 ] && [ "$CODE" -ne 0 ]; then
     echo ""
