@@ -1,10 +1,20 @@
 # Hindi Reel Studio — direct Python dependencies.
 #
 # Used by HindiReelStudio.command to rebuild .venv when the environment is
-# broken. Versions are intentionally unpinned: pip resolves a working tree
-# and the launcher re-validates afterwards. Transitive deps (numpy, pandas,
-# protobuf, …) come in automatically via streamlit.
-streamlit        # UI framework (app.py)
+# broken. Transitive deps (numpy, pandas, protobuf, …) come in automatically
+# via streamlit.
+#
+# streamlit is PINNED (exact ==) — see #200. Every centering/alignment rule in
+# app.py / library_ui.py selects on Streamlit's exact DOM (data-testid=
+# "stElementContainer" + adjacent-sibling "stLayoutWrapper" > "stHorizontalBlock"
+# > "stColumn", marker divs, …). Past bugs #68 and #112 were selectors silently
+# not matching the real DOM after a Streamlit change; 1.51 even removed
+# stVerticalBlockBorderWrapper outright. An unpinned upgrade can silently
+# un-center every section row with zero errors. tests/test_streamlit_pin_v17.py
+# fails loudly if this pin is removed, relaxed, or if a DOM marker the CSS
+# depends on vanishes from the pinned bundle. Bump the pin only after
+# re-verifying the markers against the new version's shipped frontend.
+streamlit==1.64.0  # UI framework (app.py) — PINNED, see #200
 pydantic         # data models (core/models.py)
 httpx            # news fetching (tools/news_fetcher.py)
 feedparser       # RSS parsing (tools/news_fetcher.py)
