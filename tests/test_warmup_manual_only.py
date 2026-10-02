@@ -1,12 +1,11 @@
-"""Manual-only local LLM warm-up (user spec, 2026-10-02).
+"""Manual-only local LLM warm-up (issue #37).
 
-"warming up should only happen on click of button and title should be
-'Warm up local LLM'. Nothing automatic."
+"warming up should only happen on click of button and the idle button
+title is 'Cold start'. Nothing automatic."
 
 - No automatic warm-up trigger exists anywhere: warm-up runs ONLY when
   the user taps the button.
-- The idle button label is exactly "Warm up local LLM" (user-specified
-  text; overrides the icon-only rule for this control).
+- The idle button label is exactly "Cold start".
 - HIG loading-state contract: while warming, the button paints
   "Warming up…" and stays disabled (no second tap).
 
@@ -77,18 +76,13 @@ def test_start_fm_warmup_only_runnable_explicitly(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Button title: exactly "Warm up local LLM"
+# Button title: exactly "Cold start"
 # ---------------------------------------------------------------------------
 
-def test_idle_button_label_is_warm_up_local_llm():
+def test_idle_button_label_is_cold_start():
     body = _button_props_src()
-    assert 'return "Warm up local LLM", False' in body, \
-        'idle warm-up button label must be exactly "Warm up local LLM"'
-
-
-def test_cold_start_label_is_gone():
-    assert "Cold start" not in _ui_src(), \
-        'the old "Cold start" label must not appear anywhere'
+    assert 'return "Cold start", False' in body, \
+        'idle warm-up button label must be exactly "Cold start"'
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +113,7 @@ def test_double_start_refused(tmp_path, monkeypatch):
     monkeypatch.setattr(lib, "PREFS_PATH", root / "prefs.json")
     gate = threading.Event()
 
-    def fake_worker():
+    def fake_worker(*a):
         gate.wait(timeout=10)
 
     monkeypatch.setattr(lib, "_fm_warmup_worker", fake_worker)

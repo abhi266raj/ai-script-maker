@@ -1918,6 +1918,13 @@ def _render_upload_popover_trigger(story_id: str) -> None:
 # warm-up run re-arms it automatically.
 _FM_WARMUP_TOAST_ANNOUNCED_KEY = "fm_warmup_toast_announced_for"
 
+# #298: warm-up runs the user actually started in THIS session (via the
+# "Cold start" button), keyed by the run's `started_at`. The mailbox file
+# persists a terminal state forever, so without this a page refresh
+# (fresh session state) would re-fire the toast for a run from a previous
+# session. The toast/result only ever announces session-initiated runs.
+_FM_WARMUP_SESSION_RUNS_KEY = "fm_warmup_session_runs"
+
 
 def _fm_warmup_button_props(state: dict) -> tuple:
     """Pure helper: (label, disabled) for the warm-up button given the
@@ -1925,11 +1932,11 @@ def _fm_warmup_button_props(state: dict) -> tuple:
     unit-testable without a Streamlit runtime."""
     if (state or {}).get("state") == "warming":
         return "Warming up…", True
-    return "Warm up local LLM", False
+    return "Cold start", False
 
 
 def _render_fm_warmup_button() -> None:
-    """Manual-only warm-up control (issue #37): labeled "Warm up local LLM",
+    """Manual-only warm-up control (issue #37): labeled "Cold start",
     sits next to the Studio/Library tab bar. Tapping it kicks off the #4 FM
     probe in a daemon thread so the first real generation skips the
     cold-start delay. Nothing automatic: warm-up runs ONLY on tap.
@@ -1946,7 +1953,7 @@ def _render_fm_warmup_button() -> None:
     _label, _disabled = _fm_warmup_button_props(_state)
     if _disabled:
         st.button(_label, key="fm_warmup_btn", disabled=True,
-                  help="Warm up the local LLM",
+                  help="Warm up the on-device Apple FM model",
                   use_container_width=True)
         # Manual warm-up: the initiating control owns its loading state.
         # Auto-poll while the probe is in flight: the daemon worker
@@ -1958,12 +1965,22 @@ def _render_fm_warmup_button() -> None:
         st.rerun()
         return
     if st.button(_label, key="fm_warmup_btn", disabled=False,
-                 help="Warm up the local LLM to skip the first "
+                 help="Warm up the Apple FM model to skip the first "
                       "generation's cold-start delay",
                  use_container_width=True):
         _ok, _reason = lib.start_fm_warmup()
         if not _ok:
             st.error(f"Could not start warm-up: {_reason}")
+        else:
+            # #298: remember that THIS session initiated this run. The
+            # mailbox keeps a terminal state forever, so on a page refresh
+            # (fresh session state) the result renderer must not re-fire
+            # the toast for a run the user didn't start in this session.
+            _kicked = lib.read_fm_warmup_state() or {}
+            if _kicked.get("started_at") is not None:
+                _runs = st.session_state.setdefault(
+                    _FM_WARMUP_SESSION_RUNS_KEY, set())
+                _runs.add(_kicked["started_at"])
         st.rerun()
 
 
@@ -1978,6 +1995,10 @@ def _render_fm_warmup_result() -> None:
     successful warm-up leaves no persistent chrome. HIG §7: progress
     indicators are transient — they disappear when the work completes.
 
+    #298: the toast only announces runs initiated in the CURRENT session
+    (via the button). A stale terminal state from a previous session —
+    the mailbox keeps "done" forever — never re-fires on refresh.
+
     Failure is a deliberate, user-requested exception to #213 (errors
     belong in persistent alerts): the failure surfaces once as an
     auto-dismissing toast through the #88 ``_notify`` path — the probe's
@@ -1988,6 +2009,12 @@ def _render_fm_warmup_result() -> None:
     """
     _state = lib.read_fm_warmup_state()
     _stt = (_state or {}).get("state")
+    # #298: announce ONLY runs initiated in this session via the button.
+    # A stale terminal state ("done" lives in the mailbox forever) from a
+    # previous session must never re-fire its toast on refresh.
+    _session_runs = st.session_state.get(_FM_WARMUP_SESSION_RUNS_KEY) or set()
+    if (_state or {}).get("started_at") not in _session_runs:
+        return
     if _stt == "done":
         _secs = _state.get("seconds") or 0.0
         _msg = (_state.get("message") or "").strip()

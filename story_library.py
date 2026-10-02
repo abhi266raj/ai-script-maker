@@ -3164,8 +3164,15 @@ def _probe_fm_bounded(dual_engine, timeout_s: float) -> Dict[str, Any]:
     return box.get("status") or {}
 
 
-def _fm_warmup_worker() -> None:
+def _fm_warmup_worker(started_at=None) -> None:
     """Background worker: run the #4 FM availability probe. Never raises.
+
+    ``started_at`` is the kick-off timestamp written by
+    :func:`start_fm_warmup` — the worker reuses it for the terminal state
+    so the run keeps one stable identity from kick-off to completion
+    (#298: the UI keys its per-session "was this run started here" check
+    on it). Falls back to ``time.time()`` when the worker is invoked
+    directly (tests).
 
     Uses ``dual_engine.check_status(force=True)`` — the exact probe — but
     bounded by FM_WARMUP_TIMEOUT_SECONDS (#122), so a hung probe can never
@@ -3174,7 +3181,7 @@ def _fm_warmup_worker() -> None:
     "failed" with the probe's own message verbatim (same messaging as #4),
     or a timeout message when the probe exceeds its budget.
     """
-    started = time.time()
+    started = started_at if started_at is not None else time.time()
     try:
         from core.dual_engine import dual_engine
         status = _probe_fm_bounded(dual_engine, FM_WARMUP_TIMEOUT_SECONDS)
@@ -3211,7 +3218,7 @@ def start_fm_warmup() -> Tuple[bool, str]:
     (e.g. a warm-up is already running).
 
     Manual-only: warm-up is NEVER triggered automatically. It runs solely
-    when the user taps the "Warm up local LLM" button.
+    when the user taps the "Cold start" button.
     """
     try:
         state = read_fm_warmup_state()
@@ -3219,14 +3226,15 @@ def start_fm_warmup() -> Tuple[bool, str]:
             # The button disables while busy, but a double-kick can still
             # race here — refuse instead of starting a second worker.
             return False, "A warm-up is already running — try again shortly."
+        _started_at = time.time()
         _write_fm_warmup_state({
             "state": "warming",
             "message": "",
             "seconds": 0.0,
-            "started_at": time.time(),
+            "started_at": _started_at,
         })
         t = threading.Thread(target=_fm_warmup_worker, daemon=True,
-                             name="fm-warmup")
+                             name="fm-warmup", args=(_started_at,))
         t.start()
         return True, ""
     except Exception as e:
