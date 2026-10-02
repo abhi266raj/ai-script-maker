@@ -2513,7 +2513,9 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
     hands the share text to the installed WhatsApp Mac app (#28) via a
     server-side ``open`` of the whatsapp:// deep link (#139) — no browser
     tab involved (#95) — with a wa.me browser fallback when the app can't
-    be opened (#144).
+    be opened (#144). #209: the click owns its loading state (HIG §3) —
+    the handoff runs under an "Opening WhatsApp…" spinner, because a hung
+    ``open`` blocks up to 15s before the browser fallback fires.
 
     #150: if the story has a video attached, the video's file path is
     appended to the WhatsApp share text (the URL scheme cannot carry media,
@@ -2554,16 +2556,26 @@ def _render_share_popover(story_id: str, share_text: str, meta: dict) -> None:
                     use_container_width=True,
                 ):
                     try:
-                        # #150: include the video path if attached. The
-                        # URL scheme can't carry media, so the path goes
-                        # in the text and the user attaches it manually.
-                        # A missing video file fails loudly — we do NOT
-                        # send the text without the video.
-                        vpath = _whatsapp_video_path(story_id, meta)
-                        wa_text = share_text
-                        if vpath:
-                            wa_text = f"{wa_text}\n\nVideo: {vpath}"
-                        _how = _open_whatsapp_share(wa_text)
+                        # #209: the initiating control owns its loading
+                        # state (HIG §3). The handoff is usually instant,
+                        # but a hung macOS `open` blocks up to 15s
+                        # (_open_whatsapp_share's TimeoutExpired), leaving
+                        # the button live with no feedback — so the work
+                        # runs under a spinner, the same pattern as
+                        # "Share via Telegram" below. Streamlit reruns the
+                        # script for the whole handoff, so there is no
+                        # second click while the spinner is up.
+                        with st.spinner("Opening WhatsApp…"):
+                            # #150: include the video path if attached. The
+                            # URL scheme can't carry media, so the path goes
+                            # in the text and the user attaches it manually.
+                            # A missing video file fails loudly — we do NOT
+                            # send the text without the video.
+                            vpath = _whatsapp_video_path(story_id, meta)
+                            wa_text = share_text
+                            if vpath:
+                                wa_text = f"{wa_text}\n\nVideo: {vpath}"
+                            _how = _open_whatsapp_share(wa_text)
                     except RuntimeError as e:
                         st.error(f"Couldn't share via WhatsApp: {e}")
                     else:
