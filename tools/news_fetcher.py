@@ -1,6 +1,7 @@
 """Live India news: Google News/Trends, Reddit, Mastodon, Bing News, DuckDuckGo (free public APIs)."""
 
 import html
+import json
 import logging
 import random
 import re
@@ -548,6 +549,67 @@ class NewsFetcher:
                 break
         return articles
 
+    def _src_yahoo_news(self, query: str, limit: int) -> List[NewsArticle]:
+        """Yahoo News RSS — independent RSS index (#316).
+
+        Same shape as the Bing News RSS source; gives the 5-source chain
+        another independent index when Google/Bing/DDG all fail.
+        """
+        feed_url = ("https://news.search.yahoo.com/rss?p="
+                    + urllib.parse.quote(query.strip()))
+        return self._fetch_rss_or_raise(feed_url, limit,
+                                        fallback_source="Yahoo News",
+                                        max_age_hours=48.0)
+
+    def _src_gdelt(self, query: str, limit: int) -> List[NewsArticle]:
+        """GDELT DOC 2.1 API — free JSON news index, no key (#316).
+
+        Independent from the RSS/HTML sources above; GDELT monitors
+        global news in realtime. Fail loudly on transport/HTTP/JSON
+        errors so the multi-source report records exactly what happened.
+        """
+        api_url = ("https://api.gdeltproject.org/api/v2/doc/doc?query="
+                   + urllib.parse.quote(query.strip())
+                   + "&mode=artlist&format=json&maxrecords="
+                   + str(max(limit * 3, 10)))
+        r = self._http_get(api_url)
+        if r.status_code != 200:
+            raise RuntimeError(f"HTTP {r.status_code} for {api_url}")
+        try:
+            payload = json.loads(r.text or "")
+        except Exception as e:
+            raise RuntimeError(f"unparseable GDELT JSON: {e}") from e
+        raw_articles = payload.get("articles") if isinstance(payload, dict) else None
+        if not raw_articles:
+            return []
+        articles: List[NewsArticle] = []
+        for entry in raw_articles:
+            if not isinstance(entry, dict):
+                continue
+            title = clean_html(str(entry.get("title") or "")).strip()
+            link = str(entry.get("url") or "").strip()
+            if not title or not link:
+                continue
+            domain = str(entry.get("domain") or "").strip()
+            source = publisher_name_from_url("https://" + domain) if domain else ""
+            if not source:
+                source = "GDELT"
+            seen = str(entry.get("seendate") or "").strip()
+            articles.append(
+                NewsArticle(
+                    title=title,
+                    link=link,
+                    source=source,
+                    snippet="",
+                    published=seen,
+                    age_hours=None,
+                    time_label="",
+                )
+            )
+            if len(articles) >= limit:
+                break
+        return articles
+
     # -- #136/#143 aggregator redirect resolution ----------------------------
 
     # Hosts that are known to serve redirect/intermediate URLs rather than
@@ -730,9 +792,10 @@ class NewsFetcher:
                           limit: Optional[int] = None,
                           rng: Optional[random.Random] = None
                           ) -> Tuple[List[NewsArticle], List[Dict[str, object]]]:
-        """Aggressive multi-source news search (#121, #133, #135, #136).
+        """Aggressive multi-source news search (#121, #133, #135, #136, #316).
 
-        Source order is randomized on every call and each source
+        Five sources (google-news-rss, bing-news-rss, duckduckgo-html,
+        yahoo-news-rss, gdelt-doc-api). Source order is randomized on
         contributes at most 2 articles (round-robin) instead of draining
         one source first (#133). The merged set is deduped and ranked by
         query relevance. Aggregator redirect links (Google News) are
@@ -771,9 +834,23 @@ class NewsFetcher:
                            "outcome": "ok" if arts else "empty",
                            "count": len(arts), "detail": ""}]
 
+        def _yahoo():
+            arts = self._src_yahoo_news(q, per_source)
+            return arts, [{"source": "yahoo-news-rss",
+                           "outcome": "ok" if arts else "empty",
+                           "count": len(arts), "detail": ""}]
+
+        def _gdelt():
+            arts = self._src_gdelt(q, per_source)
+            return arts, [{"source": "gdelt-doc-api",
+                           "outcome": "ok" if arts else "empty",
+                           "count": len(arts), "detail": ""}]
+
         sources = [("google-news-rss", _google),
                    ("bing-news-rss", _bing),
-                   ("duckduckgo-html", _ddg)]
+                   ("duckduckgo-html", _ddg),
+                   ("yahoo-news-rss", _yahoo),
+                   ("gdelt-doc-api", _gdelt)]
         rnd.shuffle(sources)  # fresh random order on every call (#133)
 
         for name, fetch in sources:
