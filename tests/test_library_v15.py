@@ -745,7 +745,7 @@ def test_compose_news_tags_text_title_then_tags_then_links():
     }
     assert lui._compose_news_tags_text(meta, "My Story Title") == (
         "My Story Title\n#DogShowdown #Reel\n\n"
-        "S1: https://a.example/1\nb.example: https://b.example/2"
+        "S1: https://a.example/1\nB: https://b.example/2"  # #232: publisher name, not raw netloc
     )
 
 
@@ -761,7 +761,7 @@ def test_compose_news_tags_text_dedupes_and_skips_blanks():
         "hashtags": [],
     }
     assert lui._compose_news_tags_text(meta, "T") == (
-        "T\n\na.example: https://a.example/1\nb.example: https://b.example/2"
+        "T\n\nA: https://a.example/1\nB: https://b.example/2"  # #232: publisher names, not raw netlocs
     )
 
 
@@ -776,10 +776,43 @@ def test_compose_news_tags_text_source_fallback_never_blank():  # #151
     }
     assert lui._compose_news_tags_text(meta, "T") == (
         "T\n\n"
-        "www.mypunepulse.com: https://www.mypunepulse.com/story\n"
+        "MyPunePulse: https://www.mypunepulse.com/story\n"  # #232: publisher name, not raw netloc
         "Indian Express: https://indianexpress.com/story\n"
         "not-a-url: not-a-url"
     )
+
+
+def test_compose_news_tags_text_empty_source_prefers_publisher_name():  # #232
+    lui = _library_ui_module()
+    meta = {
+        "news_links": [
+            {"url": "https://timesofindia.indiatimes.com/india/x", "source": ""},
+            {"url": "https://unknown-news-site.co.in/y", "source": "  "},
+            # publisher_name_from_url finds no host here, but the netloc is
+            # usable: it stays as the last resort before the raw URL.
+            {"url": "https://---.example/z", "source": ""},
+            {"url": "not-a-url", "source": ""},
+        ],
+    }
+    assert lui._compose_news_tags_text(meta, "T") == (
+        "T\n\n"
+        "Times of India: https://timesofindia.indiatimes.com/india/x\n"
+        "Unknown News Site: https://unknown-news-site.co.in/y\n"
+        "---.example: https://---.example/z\n"
+        "not-a-url: not-a-url"
+    )
+
+
+def test_compose_news_tags_text_publisher_lookup_failure_raises_loudly(monkeypatch):  # #232
+    lui = _library_ui_module()
+
+    def _boom(url):
+        raise RuntimeError("name lookup blew up")
+
+    monkeypatch.setattr(lui, "publisher_name_from_url", _boom)
+    meta = {"news_links": [{"url": "https://a.example/1", "source": ""}]}
+    with pytest.raises(RuntimeError, match="name lookup blew up"):
+        lui._compose_news_tags_text(meta, "T")
 
 
 def test_compose_news_tags_text_tags_only_and_empty():
