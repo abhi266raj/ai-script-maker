@@ -17,6 +17,7 @@ import streamlit as st
 
 import story_library as lib
 import tools.fine_tune as fine_tune
+from tools.news_fetcher import publisher_name_from_url
 
 TAB_STUDIO = "Studio"
 TAB_LIBRARY = "Library"
@@ -2256,12 +2257,12 @@ def _compose_news_tags_text(meta: dict, title: str = "") -> str:
         seen_urls.add(url)
         source = (lk.get("source") or "").strip()
         if not source:
-            # Fail-loud-friendly: the prefix is never blank; the domain
-            # is the best available site name, the raw URL the last resort.
-            try:
-                source = _up.urlparse(url).netloc or url
-            except Exception:
-                source = url
+            # Publisher display name first ("Times of India"); the raw
+            # netloc, then the URL itself, stay as the last resorts (#232).
+            # Fail loud: exceptions from the name lookup are not swallowed.
+            source = (publisher_name_from_url(url)
+                      or _up.urlparse(url).netloc
+                      or url)
         link_lines.append(f"{source}: {url}")
     tags = [t for t in (meta.get("hashtags") or []) if t]
     head = []
@@ -2513,10 +2514,12 @@ def _telegram_share_parts(meta: dict):
         seen_urls.add(url)
         source = (lk.get("source") or "").strip()
         if not source:
-            try:
-                source = _up.urlparse(url).netloc or url
-            except Exception:
-                source = url
+            # Publisher display name first ("Times of India"); the raw
+            # netloc, then the URL itself, stay as the last resorts (#232).
+            # Fail loud: exceptions from the name lookup are not swallowed.
+            source = (publisher_name_from_url(url)
+                      or _up.urlparse(url).netloc
+                      or url)
         link_lines.append(f"{source}: {url}")
     return caption, "\n".join(link_lines)
 

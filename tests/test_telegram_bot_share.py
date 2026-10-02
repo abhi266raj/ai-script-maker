@@ -293,8 +293,41 @@ def test_telegram_share_parts_caption_then_links():
     }
     caption, links = lui._telegram_share_parts(meta)
     assert caption == "Big Story\n#One #Two"
-    # deduped, blank source falls back to the domain
-    assert links == "SiteA: https://a.example/1\nb.example: https://b.example/2"
+    # deduped, blank source falls back to the publisher name (#232)
+    assert links == "SiteA: https://a.example/1\nB: https://b.example/2"
+
+
+def test_telegram_share_parts_empty_source_prefers_publisher_name():  # #232
+    lui = _library_ui_module()
+    meta = {
+        "news_links": [
+            {"url": "https://timesofindia.indiatimes.com/india/x", "source": ""},
+            {"url": "https://unknown-news-site.co.in/y", "source": "  "},
+            # publisher_name_from_url finds no host here, but the netloc is
+            # usable: it stays as the last resort before the raw URL.
+            {"url": "https://---.example/z", "source": ""},
+            {"url": "not-a-url", "source": ""},
+        ],
+    }
+    _, links = lui._telegram_share_parts(meta)
+    assert links == (
+        "Times of India: https://timesofindia.indiatimes.com/india/x\n"
+        "Unknown News Site: https://unknown-news-site.co.in/y\n"
+        "---.example: https://---.example/z\n"
+        "not-a-url: not-a-url"
+    )
+
+
+def test_telegram_share_parts_publisher_lookup_failure_raises_loudly(monkeypatch):  # #232
+    lui = _library_ui_module()
+
+    def _boom(url):
+        raise RuntimeError("name lookup blew up")
+
+    monkeypatch.setattr(lui, "publisher_name_from_url", _boom)
+    meta = {"news_links": [{"url": "https://a.example/1", "source": ""}]}
+    with pytest.raises(RuntimeError, match="name lookup blew up"):
+        lui._telegram_share_parts(meta)
 
 
 def test_telegram_share_parts_empty_story():
