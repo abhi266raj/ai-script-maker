@@ -2148,7 +2148,10 @@ with col_settings:
             save_config("scene_style", st.session_state.chosen_scene_style)
             _vibe_ok, _vibe_reason = check_vibe_format_compatible()
             if not _vibe_ok:
-                st.error(f":material/warning: {_vibe_reason}")
+                # #217 (HIG §6): this is a WARNING, not an error — render it
+                # with st.warning, not st.error. Keeps the :material/warning:
+                # icon per the merged #199 icon-only convention (no emoji).
+                st.warning(f":material/warning: {_vibe_reason}")
 
 
         dur_val = int(st.session_state.chosen_duration)
