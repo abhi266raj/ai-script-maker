@@ -2427,6 +2427,30 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
         st.rerun()
 
 
+_LIST_TITLE_LIMIT = 38
+
+
+def _short_list_title(title: str, limit: int = _LIST_TITLE_LIMIT) -> str:
+    """Truncate a Library list title, always keeping the ``· v{n}``
+    version suffix visible (issue #338).
+
+    A plain ``[:38]`` chop hides the suffix on long headlines, so v1/v2
+    rows render byte-identically and read as "one story repeated
+    twice". The suffix is the only thing distinguishing same-topic
+    stories in the master list, so it is never truncated away.
+    """
+    title = (title or "").strip() or "Untitled"
+    if len(title) <= limit:
+        return title
+    m = _re.search(r"\s*·\s*v\d+\s*$", title)
+    suffix = m.group(0).strip() if m else ""
+    base = title[: m.start()].rstrip() if m else title
+    if suffix:
+        keep = limit - len(suffix) - 2  # "… "
+        return base[: max(keep, 0)].rstrip() + "… " + suffix
+    return base[: limit - 1].rstrip() + "…"
+
+
 # ---------------------------------------------------------------------------
 # Library page: master-detail
 # ---------------------------------------------------------------------------
@@ -2491,7 +2515,7 @@ def render_library_page() -> None:
     # accent-tinted selected row (like Mail/Finder). Newest first, so
     # the latest story is selected on entry.
     ids = [s.get("id", "") for s in stories]
-    titles = {s.get("id", ""): (s.get("title", "Untitled") or "Untitled")[:38]
+    titles = {s.get("id", ""): _short_list_title(s.get("title", "Untitled") or "Untitled")
               for s in stories}
     # #290: the collapsed master view keeps a two-item peek under the
     # header — never header-only. Newest first, same order as the list.
