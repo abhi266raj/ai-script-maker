@@ -3344,14 +3344,19 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
         if _topic:
             _ctx_parts.append(f"Topic: {_topic}")
         try:
-            with st.spinner("Fine-tuning the script…"):
-                _refined = fine_tune.fine_tune_script(
-                    current_script=script_md,
-                    instruction=_instruction,
-                    story_context="\n".join(_ctx_parts),
-                    history=_history,
-                    tone=(meta.get("tone") or "").strip(),
-                )
+            # #269: NO detached st.spinner(...) here. HIG §3 — the initiating
+            # button owns the loading state: it paints "Fine tuning…" with
+            # the native spinner icon and stays disabled for the whole
+            # blocking call. One indicator per operation, never two (the old
+            # st.spinner("Fine-tuning the script…") duplicated the button's
+            # own state and has been removed).
+            _refined = fine_tune.fine_tune_script(
+                current_script=script_md,
+                instruction=_instruction,
+                story_context="\n".join(_ctx_parts),
+                history=_history,
+                tone=(meta.get("tone") or "").strip(),
+            )
             lib.record_fine_tune_turn(story_id, _instruction, _refined)
         except Exception as e:
             st.error(f"Fine tune failed: {e}")

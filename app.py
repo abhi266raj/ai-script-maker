@@ -870,6 +870,22 @@ st.markdown(
         color: var(--on-accent) !important;
     }
 
+    /* #269: disabled primary buttons — the rule above forces --on-accent
+       (white) on ALL descendants of a primary button, including when it is
+       disabled. Without this override a disabled primary button (e.g. the
+       "Fine tuning…" loading state) renders white text on the light
+       --sunken background: unreadable. Disabled = --ink-3 on --sunken in
+       both modes (Khabarwaani spec: .btn:disabled). Specificity (0,2,1)
+       beats the (0,1,1) rule above. */
+    button[data-testid="stBaseButton-primary"]:disabled *,
+    button[data-testid="baseButton-primary"]:disabled *,
+    button[kind="primary"]:disabled *,
+    .stButton > button[kind="primary"]:disabled *,
+    .stButton > button[data-testid="stBaseButton-primary"]:disabled *,
+    .stButton > button[data-testid="baseButton-primary"]:disabled * {
+        color: var(--ink-3) !important;
+    }
+
     /* Secondary buttons — Khabarwaani spec: card fill, 1px line border,
        36px system, soft shadow; hover lifts border to line-strong. */
     button[data-testid="stBaseButton-secondary"],
