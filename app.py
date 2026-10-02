@@ -12,6 +12,56 @@ import copy
 import json
 import contextlib
 import streamlit as st
+
+
+def _streamlit_pin_from_requirements() -> str | None:
+    """Read the pinned streamlit version from requirements.txt.
+
+    Returns the version string after ``streamlit==``, or None when the
+    pin cannot be determined (missing/unreadable file). Pure file read —
+    never raises.
+    """
+    try:
+        req_path = os.path.join(_app_dir, "requirements.txt")
+        with open(req_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                stripped = line.strip()
+                if stripped.startswith("streamlit=="):
+                    # Drop inline comments/extras:
+                    # "1.64.0  # UI framework (app.py) — PINNED" -> "1.64.0"
+                    token = stripped.split("==", 1)[1].split("#", 1)[0].strip()
+                    return token.split()[0] if token else None
+    except OSError:
+        pass
+    return None
+
+
+def _check_streamlit_pin(installed: str | None, pin: str | None) -> None:
+    """Fail loudly when the installed Streamlit differs from the pin.
+
+    The entire UI contract — popover dismissal behavior, the DOM markers
+    the CSS selects on, the theme probes — is built and tested against the
+    pinned Streamlit (#200/#254). A different installed version silently
+    breaks UI behavior, so a mismatch raises instead of misbehaving.
+    Pure function (no I/O) so it is unit-testable.
+    """
+    if not pin:
+        raise RuntimeError(
+            "requirements.txt does not pin streamlit with 'streamlit==X' — "
+            "the UI contract cannot be verified (#200)."
+        )
+    if installed != pin:
+        raise RuntimeError(
+            f"Streamlit version mismatch: installed {installed!r}, "
+            f"required {pin!r}. Reinstall with "
+            "`pip install -r requirements.txt` — popovers, theming and "
+            "alignment are built against the pinned version and misbehave "
+            "otherwise."
+        )
+
+
+_check_streamlit_pin(getattr(st, "__version__", None),
+                     _streamlit_pin_from_requirements())
 from core.constants import (
     VIBE_DESI_SWAG, VIBE_HERITAGE, VIBE_VIRAL, VIBE_COMEDY, VIBE_BREAKING,
     VIBE_ANALYSIS, VIBE_CINEMATIC, VIBE_EMOTIONAL, VIBE_HEATED,
@@ -1539,6 +1589,62 @@ st.html(
 })();
 </script>
 """,
+    unsafe_allow_javascript=True,
+)
+
+# HIG §6: popovers are transient — they MUST dismiss on outside click.
+# Streamlit closes popovers natively through a document-level (bubble-phase)
+# click listener, but if anything in the page swallows that event the
+# popover stays open forever. This capture-phase guard guarantees the HIG
+# behavior: when a popover body is present and a click lands outside all
+# popover chrome, it dispatches a synthetic Escape keydown so Streamlit's
+# OWN popover close path runs (the same handler as a physical Escape key).
+# No timers — HIG popovers never auto-dismiss on a timer; a timed dismiss
+# would strand users mid-interaction with share/confirmation controls.
+st.html(
+    """
+<script>
+(function() {
+    if (window._studioPopoverDismissGuard) return;
+    window._studioPopoverDismissGuard = true;
+
+    function _studioPopoverClickIsInside(node) {
+        // Duck-typed on purpose: works for Elements from any realm and
+        // never throws on non-Element targets (e.g. document itself).
+        var el = (node && typeof node.closest === 'function')
+            ? node : (node ? node.parentElement : null);
+        if (!el || typeof el.closest !== 'function') return false;
+        // Mirrors Streamlit's own inside-check: the trigger button, the
+        // popover body, or any overlay root (e.g. a selectbox dropdown
+        // opened from inside a popover).
+        return !!(
+            el.closest('[data-testid="stPopover"]') ||
+            el.closest('[data-testid="stPopoverBody"]') ||
+            el.closest('[data-st-overlay-root="true"]')
+        );
+    }
+
+    function _studioPopoverDismissOnOutsideClick(e) {
+        var target = e && e.target ? e.target : null;
+        if (!target) return;
+        // Only act while a popover is actually open.
+        if (!document.querySelector('[data-testid="stPopoverBody"]')) return;
+        if (_studioPopoverClickIsInside(target)) return;
+        // Genuine outside click: close through Streamlit's own Escape
+        // path. Capture phase runs before any bubble-phase
+        // stopPropagation in the page can swallow the click.
+        try {
+            var ev = new KeyboardEvent('keydown', {
+                key: 'Escape', bubbles: true, cancelable: true,
+            });
+            document.dispatchEvent(ev);
+        } catch (err) {}
+    }
+
+    document.addEventListener('click', _studioPopoverDismissOnOutsideClick, true);
+})();
+</script>
+    """,
     unsafe_allow_javascript=True,
 )
 
