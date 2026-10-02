@@ -186,7 +186,7 @@ def test_ai_hashtag_rejects_unknown_engine(libdir):
 def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: (["#DogShowdown", "#ChubbyDogs"], ""))
+                        lambda story, topic, ai_engine=None, force_refresh=False: (["#DogShowdown", "#ChubbyDogs"], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
                                             ai_engine="codex_only")
     assert changed is True
@@ -199,7 +199,7 @@ def test_refresh_hashtags_merges_and_reports(libdir, monkeypatch):
 def test_refresh_hashtags_no_change_is_honest(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: (["#DogShowdown"], ""))
+                        lambda story, topic, ai_engine=None, force_refresh=False: (["#DogShowdown"], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
                                             ai_engine="codex_only")
     assert changed is False
@@ -213,7 +213,7 @@ def test_refresh_hashtags_removes_invalid_existing(libdir, monkeypatch):
     sid = _make_story(hashtags=["#DogShowdown", "#RussiaKillsFour",
                                "#FormatRequirementVertical", "bogus"])
     monkeypatch.setattr(lib, "_suggest_hashtags",
-                        lambda story, topic, ai_engine=None: ([], ""))
+                        lambda story, topic, ai_engine=None, force_refresh=False: ([], ""))
     changed, note = lib.refresh_hashtags(sid, "chubby dogs voting contest",
                                             ai_engine="codex_only")
     assert changed is True
@@ -277,7 +277,7 @@ def test_start_refresh_refuses_while_busy_new_format(libdir):
 def test_refresh_worker_writes_failure_note(libdir, monkeypatch):
     sid = _make_story()
 
-    def _boom(sid_, topic, ai_engine=None):
+    def _boom(sid_, topic, ai_engine=None, force_refresh=False):
         raise RuntimeError("network down")
 
     monkeypatch.setattr(lib, "refresh_hashtags", _boom)
@@ -630,13 +630,13 @@ def _fake_trending(monkeypatch, tags=None, boom=False):
     import tools.news_fetcher  # noqa: F401 (real submodule, not the instance)
     nf = sys.modules["tools.news_fetcher"]
     if boom:
-        def _raise(limit=12):
+        def _raise(limit=12, force_refresh=False):
             raise RuntimeError("net down")
         monkeypatch.setattr(nf.news_fetcher, "fetch_famous_english_hashtags",
                             _raise)
     else:
         monkeypatch.setattr(nf.news_fetcher, "fetch_famous_english_hashtags",
-                            lambda limit=12: tags or [])
+                            lambda limit=12, force_refresh=False: tags or [])
 
 
 def test_no_tag_from_raw_script_keywords(libdir, monkeypatch):

@@ -1493,11 +1493,13 @@ def recover_orphaned_refreshes() -> int:
     return recovered
 
 
-def _fetch_news_articles(topic: str, limit: int = 6):
+def _fetch_news_articles(topic: str, limit: int = 6,
+                         force_refresh: bool = False):
     """Best-effort news search; returns [] on any failure."""
     try:
         from tools.news_fetcher import news_fetcher
-        return news_fetcher.search_news(topic, limit=limit) or []
+        return news_fetcher.search_news(topic, limit=limit,
+                                       force_refresh=force_refresh) or []
     except Exception:
         return []
 
@@ -2180,7 +2182,8 @@ def _relevance_words(story: Optional[Dict[str, Any]], topic: str = "") -> set:
     return words - _HASHTAG_STOPWORDS
 
 
-def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None) -> Tuple[List[str], str]:
+def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None,
+                             force_refresh: bool = False) -> Tuple[List[str], str]:
     """Deterministic hashtag discovery: trending tags, then headline/topic fallback.
 
     Primary: hashtags trending on social media (X trends + Google Trends via
@@ -2202,7 +2205,8 @@ def _fetch_trending_hashtags(topic: str, story: Optional[Dict[str, Any]] = None)
     note = ""
     try:
         from tools.news_fetcher import news_fetcher
-        trending = news_fetcher.fetch_famous_english_hashtags(limit=12) or []
+        trending = news_fetcher.fetch_famous_english_hashtags(
+            limit=12, force_refresh=force_refresh) or []
     except Exception as e:
         trending = []
         note = (f"Trending-hashtag lookup failed ({type(e).__name__}: {e}); "
@@ -2339,7 +2343,8 @@ def _resolve_library_engine_mode(preferred: Optional[str] = None) -> str:
 
 
 def _suggest_hashtags(story: Dict[str, Any], topic: str,
-                      ai_engine: Optional[str] = None) -> Tuple[List[str], str]:
+                      ai_engine: Optional[str] = None,
+                      force_refresh: bool = False) -> Tuple[List[str], str]:
     """Hashtag candidates: AI-found trending first, deterministic fallback.
 
     The AI is always asked first (engine: explicit ``ai_engine``, else the
@@ -2372,7 +2377,8 @@ def _suggest_hashtags(story: Dict[str, Any], topic: str,
 
 
 def refresh_hashtags(story_id: str, topic: str = "",
-                     ai_engine: Optional[str] = None) -> Tuple[bool, str]:
+                     ai_engine: Optional[str] = None,
+                     force_refresh: bool = False) -> Tuple[bool, str]:
     """Validate every stored hashtag against the story's topic/headline/title,
     drop the ones that are not relevant, and merge in fresh suggestions.
 
@@ -2405,7 +2411,8 @@ def refresh_hashtags(story_id: str, topic: str = "",
     removed = [h for h in existing if h not in valid_existing]
 
     # 2. Fresh grounded suggestions (AI first when enabled, deterministic always).
-    new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine)
+    new_tags, ai_note = _suggest_hashtags(story, topic, ai_engine,
+                                         force_refresh=force_refresh)
 
     # 3. Merge: keep the validated existing tags, add genuinely new ones.
     merged: List[str] = []
@@ -2563,7 +2570,8 @@ def _news_query_variants(topic: str) -> List[str]:
 
 
 def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
-                                exclude_urls=()) -> List[Dict[str, str]]:
+                                exclude_urls=(),
+                                force_refresh: bool = False) -> List[Dict[str, str]]:
     """Fetch up to ``count`` NEW news links for ``topic`` (#82).
 
     Reusable "fetch up to N new links for topic T excluding existing
@@ -2598,7 +2606,8 @@ def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
             break
         try:
             articles = (news_fetcher.search_news(
-                variant, limit=max(count * 3, 12)) or [])
+                variant, limit=max(count * 3, 12),
+                force_refresh=force_refresh) or [])
         except Exception as e:  # noqa: BLE001 - collected, raised loudly below
             errors.append(f"{variant!r}: {type(e).__name__}: {e}")
             continue
@@ -2623,7 +2632,8 @@ def _fetch_news_link_candidates(topic: str, count: int = NEWS_LINKS_TARGET,
     return found
 
 
-def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+def refresh_news_links(story_id: str, topic: str = "",
+                       force_refresh: bool = False) -> Tuple[bool, str]:
     """Re-fetch news links (sources) and ADD the new ones to the story.
 
     Runs the same Google News search as save-time enrichment, then
@@ -2665,7 +2675,8 @@ def refresh_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
                        f"(at the {NEWS_LINKS_TARGET}-link cap).")
     added = _fetch_news_link_candidates(
         topic, count=room,
-        exclude_urls=[lk["url"] for lk in existing])
+        exclude_urls=[lk["url"] for lk in existing],
+        force_refresh=force_refresh)
     if added:
         update_story_fields(story_id, news_links=existing + added)
         total = len(existing) + len(added)
@@ -2886,7 +2897,8 @@ def load_more_images(story_id: str, topic: str = "") -> Tuple[bool, str]:
     return False, note
 
 
-def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
+def load_more_news_links(story_id: str, topic: str = "",
+                         force_refresh: bool = False) -> Tuple[bool, str]:
     """Fetch ONE more batch (up to 5) of genuinely new news links (#91).
 
     The sanctioned way past the #82 5-link target: this explicit user
@@ -2918,7 +2930,8 @@ def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
                 if isinstance(lk, dict) and lk.get("url")]
     added = _fetch_news_link_candidates(
         topic, count=_LOAD_MORE_BATCH,
-        exclude_urls=[lk["url"] for lk in existing])
+        exclude_urls=[lk["url"] for lk in existing],
+        force_refresh=force_refresh)
     if added:
         update_story_fields(story_id, news_links=existing + added)
         return True, (f"Added {len(added)} more news link(s); "
@@ -2928,7 +2941,8 @@ def load_more_news_links(story_id: str, topic: str = "") -> Tuple[bool, str]:
 
 
 def load_more_hashtags(story_id: str, topic: str = "",
-                       ai_engine: Optional[str] = None) -> Tuple[bool, str]:
+                       ai_engine: Optional[str] = None,
+                       force_refresh: bool = False) -> Tuple[bool, str]:
     """Fetch ONE more batch of genuinely new hashtag suggestions (#303).
 
     The hashtags panel's "Load more": runs the same suggestion pipeline
@@ -2952,7 +2966,8 @@ def load_more_hashtags(story_id: str, topic: str = "",
     if not topic:
         raise RuntimeError("No topic to find hashtags for.")
     existing = [h for h in (story["meta"].get("hashtags") or []) if h]
-    new_tags, _note = _suggest_hashtags(story, topic, ai_engine)
+    new_tags, _note = _suggest_hashtags(story, topic, ai_engine,
+                                       force_refresh=force_refresh)
     added = [t for t in new_tags if t not in existing]
     if added:
         update_story_fields(story_id, hashtags=existing + added)
@@ -2985,18 +3000,22 @@ def _refresh_worker(story_id: str, kind: str, topic: str,
     try:
         try:
             if kind == "hashtags":
-                changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine)
+                changed, note = refresh_hashtags(story_id, topic, ai_engine=ai_engine,
+                                                force_refresh=True)
             elif kind == "images":
                 changed, note = refresh_images(story_id, topic)
             elif kind == "news":
-                changed, note = refresh_news_links(story_id, topic)
+                changed, note = refresh_news_links(story_id, topic,
+                                                  force_refresh=True)
             elif kind == "more_images":
                 changed, note = load_more_images(story_id, topic)
             elif kind == "more_news":
-                changed, note = load_more_news_links(story_id, topic)
+                changed, note = load_more_news_links(story_id, topic,
+                                                    force_refresh=True)
             elif kind == "more_hashtags":
                 changed, note = load_more_hashtags(
-                    story_id, topic, ai_engine=ai_engine)
+                    story_id, topic, ai_engine=ai_engine,
+                    force_refresh=True)
             elif kind == "reset":
                 changed, note = _do_reset(story_id, topic, ai_engine=ai_engine)
             else:
