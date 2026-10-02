@@ -838,6 +838,21 @@ def inject_library_css() -> None:
         border: none !important;
         box-shadow: none !important;
     }
+    /* #293: cap the story-detail video preview height — a tall video
+       must not take the full screen. Only the height is constrained
+       (width stays auto / max 100%), so the aspect ratio is preserved.
+       Verified against the pinned Streamlit 1.64 DOM: st.video renders
+       <video class="stVideo" data-testid="stVideo"> (or an <iframe>
+       for YouTube embeds). Works in light and dark modes (no color
+       declarations here) and on narrow screens (max-width: 100%). */
+    video[data-testid="stVideo"],
+    iframe[data-testid="stVideo"] {
+        max-height: 420px !important;
+        width: auto !important;
+        max-width: 100% !important;
+        margin: 0 auto !important;
+        display: block !important;
+    }
     .lib-empty {
         text-align: center;
         padding: 48px 16px;
