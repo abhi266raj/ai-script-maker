@@ -1,16 +1,21 @@
-"""v1.6.2 (#156) — News Links renders through a reusable component.
+"""v1.6.3 (#303) — News Links renders as a two-panel card component.
 
-``_render_news_links_row`` owns the full row: "News Links" title + link
-chips + "Load more news", including its own alignment (column layout,
-markers, per-chip cells). The inline block in ``_render_story_detail``
-is now a single call to it — a pure refactor with no behavior change.
+``_render_news_links_panel`` (right half of ``_render_tag_link_panels``)
+replaces the old single-row chip layout (#283, #274):
+
+- bordered card; header = "News Links" title + Load more + Force fetch
+  (icon-only, no text labels, no emoji, no collapse chevron);
+- Load more (kind "more_news") appends one more batch of genuinely new
+  links via a real network fetch; Force fetch (kind "news") re-pulls
+  the full set; both own their loading state (native spinner + disabled
+  while running);
+- fixed 3-row list height with internal scroll (never resizes);
+- rows are read-only single-line headlines with ellipsis; each opens the
+  true article URL in a new tab; only the × remove control per row;
+- footer reads only "Showing X of Y".
 
 These tests drive the component directly with the recording fake
-streamlit from test_one_row_toolbar_v16 and assert the presentation
-contract: one columns() call whose spec is
-[title weight, *chip weights, load-more weight]; one native
-link_button per link; the × remove overlay per link; and the
-"Load more news" button as the last cell.
+streamlit from test_one_row_toolbar_v16 and assert that contract.
 
 Run: python -m pytest tests/test_news_links_component_v162.py -q
 """
@@ -30,156 +35,218 @@ from test_one_row_toolbar_v16 import (  # noqa: E402
 
 
 _LINKS = [
-    {"title": "Alpha headline", "source": "Alpha",
-     "url": "https://a.example/story-1"},
+    {"title": "Alpha headline that is quite long and must not wrap",
+     "source": "Alpha", "url": "https://a.example/story-1"},
     {"title": "Beta headline", "source": "Beta",
      "url": "https://b.example/story-2"},
 ]
 
 
 # ---------------------------------------------------------------------------
-# component contract: title + chips + load-more in ONE aligned row
+# panel contract: card + header (title + load more + force fetch)
 # ---------------------------------------------------------------------------
 
-def test_component_renders_single_row_with_all_cells(libdir):
+def test_panel_renders_bordered_card(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_news_links_row("sid1", _LINKS, set())
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
 
-    assert len(fake.column_specs) == 1, (
-        f"component must render exactly one columns() row; "
-        f"saw {len(fake.column_specs)}")
-    spec = fake.column_specs[0]
-    expected = ([lui._section_title_weight("News Links")]
-                + lui._chip_col_weights(["Alpha", "Beta"])
-                + [lui._load_more_weight()])
-    assert spec == expected, (
-        f"row spec must be [title, *chips, load-more]; "
-        f"saw {spec}, expected {expected}")
+    cards = [c for c in fake.containers if c["border"] is True]
+    assert cards, (
+        f"panel must render as a bordered card; saw {fake.containers}")
 
 
-def test_component_renders_one_link_button_per_link(libdir):
+def test_panel_header_has_title_load_more_and_force_fetch(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_news_links_row("sid1", _LINKS, set())
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
+
+    assert any("News Links" in m and "lib-panel-title" in m
+               for m in fake.markup), (
+        f"panel header must carry the title; saw {fake.markup}")
+    keys = [b[1] for b in fake.buttons]
+    assert "lib_panel_morenews_sid1" in keys, (
+        f"header must have the Load more button; saw {keys}")
+    assert "lib_panel_news_sid1" in keys, (
+        f"header must have the Force fetch button; saw {keys}")
+    # icon-only: empty text labels, no emoji anywhere on the buttons
+    for label, key in fake.buttons:
+        if key in ("lib_panel_morenews_sid1", "lib_panel_news_sid1"):
+            assert label == "", (
+                f"header buttons must be icon-only; saw {label!r}")
+
+
+def test_panel_header_buttons_have_help_tags(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
+
+    by_key = {k["key"]: k for k in fake.button_kwargs}
+    assert by_key["lib_panel_morenews_sid1"].get("help"), (
+        "Load more needs a help tag")
+    assert by_key["lib_panel_news_sid1"].get("help"), (
+        "Force fetch needs a help tag")
+
+
+def test_panel_has_no_collapse_chevron(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
+
+    assert fake.expanders == [], (
+        f"panels do not collapse; saw expanders {fake.expanders}")
+    assert not any("chevron" in (m or "").lower() for m in fake.markup), (
+        "no collapse chevron in the panel")
+
+
+# ---------------------------------------------------------------------------
+# rows: read-only single-line headlines, true article URLs, × remove only
+# ---------------------------------------------------------------------------
+
+def test_panel_link_buttons_open_article_urls(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
 
     assert fake.link_buttons == [
-        ("Alpha", "https://a.example/story-1"),
-        ("Beta", "https://b.example/story-2"),
-    ], f"each link must be a native link_button; saw {fake.link_buttons}"
+        ("Alpha headline that is quite long and must not wrap",
+         "https://a.example/story-1"),
+        ("Beta headline", "https://b.example/story-2"),
+    ], f"each row must open its true article URL; saw {fake.link_buttons}"
 
 
-def test_component_has_load_more_last(libdir):
+def test_panel_rows_show_headlines_not_sources(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_news_links_row("sid1", _LINKS, set())
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
 
-    assert ("", "lib_morenews_sid1") in fake.buttons, (
-        f"icon-only load-more button must render; saw {fake.buttons}")
+    labels = [lb[0] for lb in fake.link_buttons]
+    assert "Alpha" not in labels and "Beta" not in labels, (
+        f"rows must show headlines, not source names; saw {labels}")
 
 
-def test_component_has_remove_overlay_per_link(libdir):
+def test_panel_has_remove_x_per_link_only(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_news_links_row("sid1", _LINKS, set())
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
 
     x_buttons = [b for b in fake.buttons if b[0] == "×"]
     assert [b[1] for b in x_buttons] == [
-        "lib_xlink_sid1_0", "lib_xlink_sid1_1"], (
-        f"each chip needs its × remove button; saw {fake.buttons}")
+        "lib_panel_xlink_sid1_0", "lib_panel_xlink_sid1_1"], (
+        f"each row needs exactly its × remove button; saw {fake.buttons}")
+    # read-only: no editable widgets anywhere in the panel
+    assert not any("Add" in (b[0] or "") for b in fake.buttons), (
+        "no Add buttons in the panel")
 
 
-def test_component_invalid_url_fails_loudly(libdir):
+def test_panel_invalid_url_fails_loudly(libdir):
     lui, fake = _ui_with_recording_st()
     bad = [{"title": "Bad link", "source": "Bad",
             "url": "javascript:alert(1)"}]
-    lui._render_news_links_row("sid1", bad, set())
+    lui._render_news_links_panel(
+        story_id="sid1", links=bad, busy_kinds=set())
 
     assert fake.link_buttons == [], (
         f"invalid URL must not render a link button; saw {fake.link_buttons}")
     assert any("invalid URL" in e for e in fake.errors), (
         f"invalid URL must surface an error; saw {fake.errors}")
-
-
-# ---------------------------------------------------------------------------
-# #205 — malformed URL renders a compact inline marker (warning pill +
-# help tag), NOT a full st.error, inside the scroll row; the full error
-# surfaces BELOW the row so the one-line geometry holds.
-# ---------------------------------------------------------------------------
-
-def test_component_invalid_url_compact_inline_marker(libdir):
-    lui, fake = _ui_with_recording_st()
-    bad = [{"title": "Bad link", "source": "Bad",
-            "url": "javascript:alert(1)"}]
-    lui._render_news_links_row("sid1", bad, set())
-
-    # still exactly one columns() row — geometry preserved with a bad link
-    assert len(fake.column_specs) == 1, (
-        f"component must render exactly one columns() row; "
-        f"saw {len(fake.column_specs)}")
-    assert any('data-marker="lib-link-invalid"' in m for m in fake.markup), (
-        f"invalid URL must render the compact inline marker; "
-        f"saw {fake.markup}")
-    warn = [k for k in fake.button_kwargs
-            if k.get("key") == "lib_newslink_invalid_sid1_0"]
-    assert warn, (
-        f"invalid URL must render a warning marker button; "
-        f"saw {fake.button_kwargs}")
-    w = warn[0]
-    assert w["label"] == "", "marker button must be icon-only (no text label)"
-    assert w.get("icon") == ":material/warning:", (
-        f"marker must use the warning icon; saw {w}")
-    assert "invalid URL" in w.get("help", ""), (
-        f"marker help tag must name the problem; saw {w}")
-    assert fake.link_buttons == [], (
-        f"invalid URL must not render a link button; saw {fake.link_buttons}")
-
-
-def test_component_invalid_url_keeps_remove_overlay(libdir):
-    lui, fake = _ui_with_recording_st()
-    bad = [{"title": "Bad link", "source": "Bad",
-            "url": "javascript:alert(1)"}]
-    lui._render_news_links_row("sid1", bad, set())
-
-    assert "lib_xlink_sid1_0" in [b[1] for b in fake.buttons], (
+    assert "lib_panel_xlink_sid1_0" in [b[1] for b in fake.buttons], (
         f"bad link must keep its × remove button; saw {fake.buttons}")
 
 
-def test_invalid_link_help_names_problem_and_stays_compact(libdir):
-    lui, _ = _ui_with_recording_st()
-    h = lui._invalid_link_help("javascript:alert(1)")
-    assert "invalid URL" in h, f"help tag must name the problem; saw {h!r}"
-    assert "javascript:alert(1)" in h, f"help tag must show the URL; saw {h!r}"
-    assert len(h) <= 75, f"help tag must stay <=75 chars (HIG §2); saw {h!r}"
+# ---------------------------------------------------------------------------
+# fixed 3-row list height + footer contract
+# ---------------------------------------------------------------------------
+
+def test_panel_list_has_fixed_height(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
+
+    lists = [c for c in fake.containers if c["height"] is not None]
+    assert lists, (
+        f"panel list must use a fixed-height container; saw {fake.containers}")
+    assert lists[0]["height"] == lui._PANEL_LIST_HEIGHT_PX, (
+        f"list height must be the 3-row constant; saw {lists[0]['height']}")
+    assert lists[0]["border"] is False, (
+        "the scroll list itself is borderless inside the card")
 
 
-def test_invalid_link_help_truncates_long_url(libdir):
-    lui, _ = _ui_with_recording_st()
-    h = lui._invalid_link_help("https://example.com/" + "x" * 200)
-    assert len(h) <= 75, f"help tag must stay <=75 chars (HIG §2); saw {h!r}"
-    assert h.endswith("…)"), (
-        f"truncated URL must show the ellipsis; saw {h!r}")
-    assert "invalid URL" in h, f"help tag must name the problem; saw {h!r}"
+def test_panel_footer_shows_only_counts(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
+
+    assert "Showing 2 of 2" in fake.captions, (
+        f"footer must read only 'Showing X of Y'; saw {fake.captions}")
+    assert len(fake.captions) == 1, (
+        f"footer is the ONLY caption in the panel; saw {fake.captions}")
+
+
+def test_panel_empty_shows_zero_counts(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=[], busy_kinds=set())
+
+    assert "Showing 0 of 0" in fake.captions, (
+        f"empty panel footer must read 'Showing 0 of 0'; saw {fake.captions}")
+    assert fake.link_buttons == []
 
 
 # ---------------------------------------------------------------------------
-# integration: story detail renders the same row through the component
+# loading states: the tapped button owns the spinner, sibling blocks
 # ---------------------------------------------------------------------------
 
-def test_story_detail_news_row_unchanged(libdir, monkeypatch):
+def test_panel_load_more_spins_while_running(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds={"more_news"})
+
+    by_key = {k["key"]: k for k in fake.button_kwargs}
+    btn = by_key["lib_panel_morenews_sid1"]
+    assert btn.get("icon") == "spinner", (
+        f"Load more must show the spinner while running; saw {btn}")
+    assert btn.get("disabled") is True
+
+
+def test_panel_force_fetch_blocked_while_load_more_runs(libdir):
+    lui, fake = _ui_with_recording_st()
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds={"more_news"})
+
+    by_key = {k["key"]: k for k in fake.button_kwargs}
+    btn = by_key["lib_panel_news_sid1"]
+    assert btn.get("disabled") is True, (
+        "Force fetch must block while Load more runs (same field)")
+    assert btn.get("icon") != "spinner", (
+        "blocked is not working — no spinner on the blocked button")
+
+
+# ---------------------------------------------------------------------------
+# integration: story detail renders the panels through the section
+# ---------------------------------------------------------------------------
+
+def test_story_detail_renders_news_panel(libdir, monkeypatch):
     lui, fake = _ui_with_recording_st()
     _story(monkeypatch, lui, news_links=_LINKS)
     lui._render_story_detail("sid1")
 
     assert fake.link_buttons == [
-        ("Alpha", "https://a.example/story-1"),
-        ("Beta", "https://b.example/story-2"),
-    ], f"story detail must render the same chips; saw {fake.link_buttons}"
-    assert ("", "lib_morenews_sid1") in fake.buttons
+        ("Alpha headline that is quite long and must not wrap",
+         "https://a.example/story-1"),
+        ("Beta headline", "https://b.example/story-2"),
+    ], f"story detail must render the panel rows; saw {fake.link_buttons}"
+    assert ("", "lib_panel_morenews_sid1") in fake.buttons
+    assert "Showing 2 of 2" in fake.captions
 
 
-def test_story_detail_no_links_caption_unchanged(libdir, monkeypatch):
+def test_story_detail_empty_links_panel(libdir, monkeypatch):
     lui, fake = _ui_with_recording_st()
     _story(monkeypatch, lui, news_links=[])
     lui._render_story_detail("sid1")
 
     assert fake.link_buttons == []
-    assert "No news links yet." in fake.captions, (
-        f"empty-links caption must survive the refactor; "
-        f"saw {fake.captions}")
+    assert "Showing 0 of 0" in fake.captions, (
+        f"empty panel must show zero counts; saw {fake.captions}")
+    assert "No news links yet." not in fake.captions, (
+        "the old hint caption is gone — the footer is the only text")

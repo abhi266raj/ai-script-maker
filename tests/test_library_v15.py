@@ -1142,6 +1142,7 @@ class _FakeSt:
         self.dividers = []  # st.divider kwargs, in render order (#78)
         self.spinners = []  # spinner text shown, in render order (#209)
         self.radios = []  # {"label", "options", "key"} per radio, in order
+        self.containers = []  # st.container kwargs, in render order (#303)
 
     def markdown(self, *a, **k):
         self.markup.append(a[0] if a else "")
@@ -1181,6 +1182,15 @@ class _FakeSt:
     def popover(self, label, **k):
         self.popover_kwargs = {"label": label, **k}
         self.popovers.append(self.popover_kwargs)
+        return _FakeCtx()
+
+    def container(self, border=None, key=None, height=None, **k):
+        # #303: Hashtags/News Links panels use st.container(border=True)
+        # for the card and st.container(height=N) for the fixed-height
+        # scroll list. Records kwargs so panel tests can assert the
+        # card/list contract; returns a no-op context manager.
+        self.containers.append(
+            {"border": border, "key": key, "height": height, **k})
         return _FakeCtx()
 
     def selectbox(self, label, options, index=0, key=None, **k):
@@ -1253,7 +1263,7 @@ def _ui_with_fake_st(clicks=()):
         for name in ("markdown", "caption", "success", "error", "rerun",
                      "button", "columns", "popover", "dialog", "expander",
                      "link_button", "code", "toast", "divider",
-                     "text_input", "spinner", "selectbox",
+                     "text_input", "spinner", "selectbox", "container",
                      "radio", "file_uploader"):  # #159 Telegram setup/share
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
@@ -2444,25 +2454,25 @@ def test_detail_toolbar_weights_fit_full_labels():
     state. #46: Share/Copy joined the same row. #220: the row is grouped
     refresh ×3 | share+copy | destructive (reset + delete) with hairline
     separator columns between groups. The upload trigger and the AI engine
-    dropdown joined the middle group beside Share/Copy (total 13.34);
-    every action keeps its own weight, and the #24 baseline alignment is
-    preserved."""
+    dropdown joined the middle group beside Share/Copy; every action keeps
+    its own weight, and the #24 baseline alignment is preserved.
+    #303: the hashtag/news refresh buttons moved into the Hashtags/News
+    Links panel headers — only the Images refresh stays in the toolbar
+    (10 slots, total 11.54)."""
     lui, _fake = _ui_with_fake_st()
-    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 13.34
+    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 11.54
     assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.1
     # Icon columns fit the glyph + spinner (generous headroom); text
     # columns unchanged from the #38 fit.
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # hashtag icon button
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 0.8  # image icon button
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 0.8  # news icon button (#80)
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] <= 0.2  # #220 separator
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Share popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[5] >= 1.0  # Copy popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] >= 1.0  # Upload popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[7] >= 1.5  # AI engine dropdown
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[8] <= 0.2  # #220 separator
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[10] >= 1.3  # Reset popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[11] >= 1.5  # Delete popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # image icon button
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[1] <= 0.2  # #220 separator
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 1.0  # Share popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.0  # Copy popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Upload popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[5] >= 1.5  # AI engine dropdown
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] <= 0.2  # #220 separator
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[8] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[9] >= 1.5  # Delete popover trigger
     assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
 
 

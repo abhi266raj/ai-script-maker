@@ -70,7 +70,7 @@ def _ui_with_recording_st(clicks=()):
                      "button", "columns", "popover", "dialog", "expander",
                      "link_button", "code", "image", "video", "text_area",
                      "text_input", "file_uploader", "radio", "divider",
-                     "selectbox"):
+                     "selectbox", "container"):
             setattr(fake_mod, name, getattr(fake, name))
         fake_mod.session_state = fake.session_state
         sys.modules["streamlit"] = fake_mod
@@ -113,25 +113,25 @@ def _story(monkeypatch, lui, **meta_over):
 def test_detail_toolbar_weights_single_row():
     lui, _fake = _ui_with_fake_st()
     w = lui._DETAIL_TOOLBAR_WEIGHTS
-    # #220: 12 columns — the 9 actions + 2 hairline separators + spacer:
-    # refresh ×3 | sep | share+copy+upload+engine | sep | spacer |
+    # #220: the 9 actions + 2 hairline separators + spacer, grouped:
+    # refresh (images) | sep | share+copy+upload+engine | sep | spacer |
     # destructive (reset, delete). The separators are thin slots; the
     # upload trigger (1.1) and engine dropdown (2.0) are the additions.
-    assert len(w) == 12
-    assert abs(sum(w) - 13.34) < 1e-9
-    assert w[0] >= 0.8  # tag icon button (#90)
-    assert w[1] >= 0.8  # image icon button (#90)
-    assert w[2] >= 0.8  # newspaper icon button (#80, #90)
-    assert w[3] <= 0.2  # #220: hairline separator after the refresh group
-    assert w[4] >= 1.0  # share icon + native chevron (#90)
-    assert w[5] >= 1.0  # copy icon + native chevron (#90)
-    assert w[6] >= 1.0  # upload icon + native chevron (toolbar trigger)
-    assert w[7] >= 1.5  # AI engine dropdown
-    assert w[8] <= 0.2  # #220: hairline separator after the action group
-    assert w[9] > 1.0   # #71/#80: spacer absorbs the freed icon-column weight
-    assert w[10] >= 1.3  # reset icon + native chevron (#90), #220: moved
+    # #303: the hashtag/news refresh buttons moved into the panel
+    # headers — 10 slots, total 11.54.
+    assert len(w) == 10
+    assert abs(sum(w) - 11.54) < 1e-9
+    assert w[0] >= 0.8  # image icon button (#90)
+    assert w[1] <= 0.2  # #220: hairline separator after the refresh group
+    assert w[2] >= 1.0  # share icon + native chevron (#90)
+    assert w[3] >= 1.0  # copy icon + native chevron (#90)
+    assert w[4] >= 1.0  # upload icon + native chevron (toolbar trigger)
+    assert w[5] >= 1.5  # AI engine dropdown
+    assert w[6] <= 0.2  # #220: hairline separator after the action group
+    assert w[7] > 1.0   # #71/#80: spacer absorbs the freed icon-column weight
+    assert w[8] >= 1.3  # reset icon + native chevron (#90), #220: moved
     # into the trailing destructive group with delete
-    assert w[11] >= 1.5  # delete icon stays trailing (#90)
+    assert w[9] >= 1.5  # delete icon stays trailing (#90)
     # #119: delete is a direct button now — no native chevron.
 
 
@@ -148,9 +148,9 @@ def test_toolbar_renders_share_copy_in_same_row(monkeypatch):
     _story(monkeypatch, lui)
     lui._render_story_detail("sid1")
     toolbars = [s for s in fake.column_specs
-                if isinstance(s, list) and len(s) == 12
-                and abs(sum(s) - 13.34) < 1e-9]
-    assert len(toolbars) == 1  # exactly one 12-column toolbar row
+                if isinstance(s, list) and len(s) == 10
+                and abs(sum(s) - 11.54) < 1e-9]
+    assert len(toolbars) == 1  # exactly one 10-column toolbar row (#303)
     # Render order inside that row: the three refresh buttons, separator,
     # Share, Copy, Upload, the AI engine dropdown, separator, Reset,
     # Delete.

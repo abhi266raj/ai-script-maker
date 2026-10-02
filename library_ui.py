@@ -104,9 +104,7 @@ def _render_ai_engine_selectbox() -> None:
 # refresh runs (#53 HIG: the button that starts work owns its loading
 # state). Glyphs follow the light/dark theme via Streamlit's theming —
 # no hard-coded colors. Tooltips (``help=``) keep the text labels.
-_TB_ICON_TAG = ":material/tag:"              # Update Hashtags
 _TB_ICON_IMAGE = ":material/image:"          # Update Images
-_TB_ICON_NEWS = ":material/newspaper:"       # Update News
 _TB_ICON_RESET = ":material/refresh:"        # Reset
 _TB_ICON_SHARE = ":material/ios_share:"      # Share (iOS metaphor, #216)
 _TB_ICON_COPY = ":material/content_copy:"    # Copy
@@ -120,6 +118,13 @@ _TB_ICON_ADD = ":material/add:"              # New script version (#104)
 _TB_ICON_DEFAULT = ":material/star:"         # Make default version (#104)
 _TB_ICON_WARN = ":material/warning:"         # Invalid news-link URL (#205)
 _TB_ICON_SPINNER = "spinner"                 # native animated spinner
+_TB_ICON_SYNC = ":material/sync:"            # Force fetch — re-pull full set (#303)
+
+# #303: fixed list height for the Hashtags / News Links panels — three
+# rows at the 44pt HIG hit height plus two small gaps. st.container
+# scrolls internally past this height, so loading more never resizes
+# the panel.
+_PANEL_LIST_HEIGHT_PX = 150
 
 
 def inject_library_css() -> None:
@@ -765,6 +770,43 @@ def inject_library_css() -> None:
         font-weight: 600;
         margin: var(--lib-row-space) 0 8px 0;
     }
+    /* #303: Hashtags / News Links two-panel cards. The card itself is a
+       native st.container(border=True); the list is a native
+       st.container(height=_PANEL_LIST_HEIGHT_PX) with internal scroll,
+       so these rules only handle typography and the single-line
+       ellipsis contract — no layout fragile selectors.
+       HIG §2: icon-only header buttons carry verb-first help tags
+       (added in Python); HIG §3: the tapped button owns its loading
+       state via the native spinner icon (Python). Theme: palette
+       tokens only — currentColor / inherit, never hard-coded. */
+    .lib-panel-title {
+        font-size: 15px;
+        font-weight: 600;
+        margin: 0;
+        white-space: nowrap;
+    }
+    /* #303: panel rows are read-only single-line text. Long content
+       (headlines, tags) truncates with an ellipsis — never wraps. */
+    .lib-panel-row {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        line-height: 1.5;
+    }
+    /* #303: news headlines inside the panel list — the native
+       st.link_button anchor keeps one line with an ellipsis. Scoped by
+       the container key (st-key-*) so no other link button is touched. */
+    div.st-key-lib-panel-newslist a {
+        white-space: nowrap !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+    }
+    /* #303: the panel × remove buttons stay small and quiet; the
+       tappable area keeps the 44pt HIG minimum via padding. */
+    div[data-testid="stElementContainer"]:has([data-marker="lib-panel-x"])
+        + div[data-testid="stElementContainer"] button {
+        min-width: 44px !important;
+    }
     /* #107: section titles that share their row with the content
        (Hashtags / News Links). The title rides in the first column of
        the chip row so it always sits on the same line as the chips.
@@ -1372,7 +1414,7 @@ def _delete_popover(*, trigger_label: str, popover_key: str, title: str,
 
 def _render_kind_button(*, story_id: str, kind: str, label: str,
                        button_key: str, help_text: str, kick_label: str,
-                       busy_kinds, ai_engine) -> None:
+                       busy_kinds, ai_engine, sibling_blocked: bool = False) -> None:
     """One toolbar refresh button (#53/#54, #71, #80, #90, #111).
 
     #71/#80/#90/#111: the button is ICON-ONLY — ``label`` is a native
@@ -1389,11 +1431,17 @@ def _render_kind_button(*, story_id: str, kind: str, label: str,
     nothing shoves its neighbours. Each kind disables only while IT
     runs: hashtags, images and news are independent and stay clickable
     while the others run (#54, #80).
+
+    #303 ``sibling_blocked``: the sibling kind writes the same story
+    field (panel "Force fetch" while its "Load more" runs, or vice
+    versa) — the button is then merely blocked, not working: disabled
+    with NO spinner, mirroring the load-more sibling rule.
     """
     running = kind in busy_kinds
     if st.button("", icon=_TB_ICON_SPINNER if running else label,
                  key=button_key, help=help_text,
-                 disabled=running, use_container_width=True):
+                 disabled=running or sibling_blocked,
+                 use_container_width=True):
         ok, reason = lib.start_refresh(story_id, kind, ai_engine=ai_engine)
         if ok:
             st.rerun()
@@ -1404,7 +1452,7 @@ def _render_kind_button(*, story_id: str, kind: str, label: str,
 
 def _render_load_more_button(*, story_id: str, kind: str,
                              button_key: str, help_text: str,
-                             busy_kinds) -> None:
+                             busy_kinds, ai_engine=None) -> None:
     """Section-level "Load more" button (#91).
 
     #202: the button is ICON-ONLY — a native Streamlit material ``add``
@@ -1417,15 +1465,19 @@ def _render_load_more_button(*, story_id: str, kind: str,
     ``kind`` runs the button shows Streamlit's native animated spinner
     (``icon="spinner"``, #111) and stays disabled — no second click.
     The outcome toasts via the existing outcome path. ``kind`` is
-    "more_images" or "more_news".
+    "more_images", "more_news" or "more_hashtags" (#303).
 
     Disable scope: the button disables while ITS kind runs, and while its
-    SIBLING kind runs ("images"↔"more_images", "news"↔"more_news" — the
-    sibling writes the same story field, so running together would
-    silently clobber the other's appended batch; start_refresh refuses
-    the kick too). While the sibling runs the button is merely blocked,
-    not working — no spinner then. Other kinds (hashtags, the other
-    pair) stay independent.
+    SIBLING kind runs ("images"↔"more_images", "news"↔"more_news",
+    "hashtags"↔"more_hashtags" — the sibling writes the same story field,
+    so running together would silently clobber the other's appended
+    batch; start_refresh refuses the kick too). While the sibling runs
+    the button is merely blocked, not working — no spinner then. Other
+    kinds stay independent.
+
+    ``ai_engine`` is forwarded to start_refresh — the "more_hashtags"
+    kind needs it (trending hashtags require the AI); image/news kinds
+    ignore it.
     """
     running = kind in busy_kinds
     # #91: the sibling kind writes the same story field — blocked (not
@@ -1435,12 +1487,168 @@ def _render_load_more_button(*, story_id: str, kind: str,
     if st.button("", icon=_TB_ICON_SPINNER if running else _TB_ICON_ADD,
                  key=button_key, help=help_text,
                  disabled=running or blocked):
-        ok, reason = lib.start_refresh(story_id, kind)
+        ok, reason = lib.start_refresh(story_id, kind, ai_engine=ai_engine)
         if ok:
             st.rerun()
         else:
             st.error(f"Could not start: {reason}" if reason
                      else "Could not start.")
+
+
+def _panel_remove_button(*, key: str, help: str) -> bool:
+    """#303: inline × remove button for panel list rows.
+
+    NOT the overlay variant (``_overlay_button``): panel rows are
+    vertical lists, so the button stays in flow in the row's trailing
+    column. Marker-scoped CSS keeps the 44pt HIG hit width while the
+    glyph stays small and quiet.
+    """
+    st.markdown('<div data-marker="lib-panel-x" style="display:none"></div>',
+                unsafe_allow_html=True)
+    return st.button("×", key=key, help=help)
+
+
+def _render_hashtags_panel(*, story_id: str, tags: list,
+                           busy_kinds, ai_engine) -> None:
+    """#303: the Hashtags panel — left half of the two-panel card layout.
+
+    Header = title + Load more + Force fetch (icon-only, no text labels,
+    no emoji, no collapse chevron). Load more (kind "more_hashtags")
+    fetches one more batch of genuinely new suggestions and APPENDS
+    them; Force fetch (kind "hashtags") re-pulls the full set. Both own
+    their loading state (native spinner + disabled while running, #53);
+    each is blocked (no spinner) while its sibling runs. Rows are
+    read-only single-line text with only the × remove control — no
+    inline edit, no reorder. The list has a fixed 3-row height with
+    internal scroll (never resizes on load-more); the footer reads only
+    "Showing X of Y".
+    """
+    with st.container(border=True):
+        _h1, _h2, _h3 = st.columns([10, 1, 1], vertical_alignment="center")
+        with _h1:
+            st.markdown('<div class="lib-panel-title">Hashtags</div>',
+                        unsafe_allow_html=True)
+        with _h2:
+            _render_load_more_button(
+                story_id=story_id, kind="more_hashtags",
+                button_key=f"lib_panel_moretags_{story_id}",
+                help_text="Fetch more hashtag suggestions",
+                busy_kinds=busy_kinds, ai_engine=ai_engine)
+        with _h3:
+            _sib = lib._SIBLING_KINDS.get("hashtags")
+            _render_kind_button(
+                story_id=story_id, kind="hashtags", label=_TB_ICON_SYNC,
+                button_key=f"lib_panel_tags_{story_id}",
+                kick_label="hashtag",
+                help_text="Re-fetch all hashtags",
+                busy_kinds=busy_kinds, ai_engine=ai_engine,
+                sibling_blocked=bool(_sib and _sib in busy_kinds))
+        with st.container(height=_PANEL_LIST_HEIGHT_PX, border=False):
+            for _i, _tag in enumerate(tags):
+                _c1, _c2 = st.columns([11, 1], vertical_alignment="center")
+                with _c1:
+                    st.markdown(
+                        f'<div class="lib-panel-row">{_html.escape(_tag)}</div>',
+                        unsafe_allow_html=True)
+                with _c2:
+                    if _panel_remove_button(
+                            key=f"lib_panel_xtag_{story_id}_{_i}",
+                            help=f"Remove {_tag}"):
+                        try:
+                            lib.remove_hashtag(story_id, _tag)
+                        except ValueError as e:
+                            st.error(str(e))
+                        else:
+                            st.rerun()
+        st.caption(f"Showing {len(tags)} of {len(tags)}")
+
+
+def _render_news_links_panel(*, story_id: str, links: list,
+                             busy_kinds) -> None:
+    """#303: the News Links panel — right half of the two-panel card layout.
+
+    Same contract as the Hashtags panel: header = title + Load more +
+    Force fetch (icon-only). Load more (kind "more_news") appends one
+    more batch of genuinely new links; Force fetch (kind "news")
+    re-pulls the full set. Each row shows the HEADLINE on a single line
+    with an ellipsis (never wraps) and opens the true article URL in a
+    new tab via native st.link_button (#134); the publisher source stays
+    in the tooltip. Rows are read-only — only the × remove control.
+    Invalid URLs fail loudly instead of rendering a dead row, and the ×
+    still removes the bad link.
+    """
+    with st.container(border=True):
+        _h1, _h2, _h3 = st.columns([10, 1, 1], vertical_alignment="center")
+        with _h1:
+            st.markdown('<div class="lib-panel-title">News Links</div>',
+                        unsafe_allow_html=True)
+        with _h2:
+            _render_load_more_button(
+                story_id=story_id, kind="more_news",
+                button_key=f"lib_panel_morenews_{story_id}",
+                help_text="Fetch up to 5 more news links",
+                busy_kinds=busy_kinds)
+        with _h3:
+            _sib = lib._SIBLING_KINDS.get("news")
+            _render_kind_button(
+                story_id=story_id, kind="news", label=_TB_ICON_SYNC,
+                button_key=f"lib_panel_news_{story_id}",
+                kick_label="news",
+                help_text="Re-fetch news links",
+                busy_kinds=busy_kinds, ai_engine=None,
+                sibling_blocked=bool(_sib and _sib in busy_kinds))
+        with st.container(height=_PANEL_LIST_HEIGHT_PX, border=False,
+                          key="lib-panel-newslist"):
+            for _i, _lk in enumerate(links):
+                _ltitle = _lk.get("title", "News link") or "News link"
+                _lsource = (_lk.get("source") or "").strip()
+                _lurl = (_lk.get("url") or "").strip()
+                _c1, _c2 = st.columns([11, 1], vertical_alignment="center")
+                with _c1:
+                    if not _is_openable_article_url(_lurl):
+                        st.error(
+                            f"News link \u201c{_ltitle}\u201d has an invalid URL "
+                            f"and was not rendered as a link.")
+                    else:
+                        st.link_button(
+                            _ltitle,
+                            _lurl,
+                            help=_lsource or _ltitle,
+                            key=f"lib_panel_newslink_{story_id}_{_i}",
+                            use_container_width=True,
+                        )
+                with _c2:
+                    if _panel_remove_button(
+                            key=f"lib_panel_xlink_{story_id}_{_i}",
+                            help="Remove this news link"):
+                        try:
+                            lib.remove_news_link(story_id, _lurl)
+                        except ValueError as e:
+                            st.error(str(e))
+                        else:
+                            st.rerun()
+        st.caption(f"Showing {len(links)} of {len(links)}")
+
+
+def _render_tag_link_panels(*, story_id: str, tags: list, links: list,
+                            busy_kinds, ai_engine) -> None:
+    """#303: the Hashtags + News Links two-panel section.
+
+    Replaces the old single-row chip layouts (#283, #274): two separate
+    cards side by side — Hashtags left, News Links right. Each panel
+    owns its header (title + Load more + Force fetch), its fixed-height
+    scroll list, and its "Showing X of Y" footer. Panels always render,
+    even when empty ("Showing 0 of 0") — no hint captions inside the
+    cards (the footer is the only text).
+    """
+    st.divider()
+    _pc1, _pc2 = st.columns(2)
+    with _pc1:
+        _render_hashtags_panel(story_id=story_id, tags=tags,
+                               busy_kinds=busy_kinds, ai_engine=ai_engine)
+    with _pc2:
+        _render_news_links_panel(story_id=story_id, links=links,
+                                 busy_kinds=busy_kinds)
 
 
 def _render_reset_popover(story_id: str, busy_kinds, ai_engine) -> None:
@@ -1523,6 +1731,7 @@ def _refresh_toast_text(kind: str, status: str, note: str) -> str:
     """
     label = {"hashtags": "Hashtags", "images": "Images", "news": "News",
              "more_images": "More images", "more_news": "More news",
+             "more_hashtags": "More hashtags",
              "reset": "Reset", "enrich": "Enrichment"}.get(kind, kind)
     head = {"succeeded": f"{label} updated",
             "no_change": f"{label}: nothing new",
@@ -1583,17 +1792,6 @@ def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
     return st.button(label, key=key, help=help)
 
 
-def _news_chip_label(title: str, source: str) -> str:
-    """#26: a news-link chip shows the source website name when known
-    (e.g. "The Times of India") instead of the full headline. The
-    headline remains available as the link's title tooltip. Empty or
-    missing values fall back honestly to "News link", never to an
-    empty chip."""
-    title = (title or "").strip() or "News link"
-    source = (source or "").strip()
-    return source if source else title
-
-
 def _is_openable_article_url(url: str) -> bool:
     """#134: fail-loud gate for news-link chips.
 
@@ -1611,51 +1809,6 @@ def _is_openable_article_url(url: str) -> bool:
         return False
 
 
-def _invalid_link_help(url: str) -> str:
-    """#205: help tag for the compact invalid-URL marker chip.
-
-    Names the problem inline (HIG §2: help tags describe the hovered
-    element; sentence case, <=75 chars) so the malformed URL is
-    reported without breaking the scroll row's geometry. The full
-    error still renders below the row (fail loudly). Pure (no
-    Streamlit) so it is unit-testable.
-    """
-    _u = (url or "").strip()
-    if len(_u) > 40:
-        _u = _u[:39] + "…"
-    return f"Link not opened: invalid URL ({_u})"
-
-
-def _chip_col_weights(labels) -> list:
-    """Proportional ``st.columns`` weights for chip rows (#56).
-
-    Chip columns used to be equal-weighted (``st.columns(len(tags))``), so
-    every column was as wide as the longest label and short pills floated
-    in dead space whenever the CSS shrink-wrap chain missed (the
-    ``stLayoutWrapper``-adjacent selectors assume one exact Streamlit DOM,
-    and requirements.txt leaves Streamlit unpinned). The CSS shrink-wrap
-    (``flex: 0 0 auto`` + ``width: fit-content``) remains the primary
-    sizer; these weights are the fallback so a missed selector can only
-    ever produce a *proportionally* sized column, never a full-width one.
-
-    Weight tracks the rendered pill width: label length plus ~7 chars for
-    the pill's fixed horizontal padding (12px left + 44px × clearance ≈
-    56px at ~7.5px/char). The floor keeps degenerate labels tappable.
-    Pure (no Streamlit) so it is unit-testable.
-    """
-    return [max(len(str(_l)), 4) + 7 for _l in labels]
-
-
-def _section_title_weight(title: str) -> int:
-    """#107: ``st.columns`` weight for a section title sharing its row
-    with chips (Hashtags / News Links). Compact — the CSS shrink-wrap
-    (``flex: 0 0 auto`` + ``width: fit-content`` on hscroll columns) is
-    the primary sizer; this is the proportional fallback so a missed
-    selector can only ever produce a proportionally sized column.
-    Pure (no Streamlit) so it is unit-testable."""
-    return max(len(str(title)), 4) + 2
-
-
 def _load_more_weight() -> int:
     """#113: ``st.columns`` weight for the inline Load more button that
     rides as the last column of a section's scroll row. #202: the button
@@ -1667,108 +1820,6 @@ def _load_more_weight() -> int:
     selector can only ever produce a proportionally sized column.
     Pure (no Streamlit) so it is unit-testable."""
     return 6
-
-
-def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
-    """#156: the News Links section as ONE reusable component.
-
-    Renders the full row — "News Links" title + link chips + "Load more
-    news" — and OWNS its alignment: the hscroll marker, the column
-    layout (title weight + per-chip weights + load-more weight), the
-    title cell, every chip cell (link button or compact warning marker +
-    × remove overlay), and the load-more cell all live inside this
-    function. Malformed URLs are reported BELOW the scroll row so the
-    row's one-line geometry holds. Alignment can no longer drift one
-    call site at a time — any fix lands here and applies everywhere.
-
-    Pure refactor of the inline block in ``_render_story_detail``
-    (#156): no behavior change. ``links`` are the story's ``news_links``
-    dicts (non-empty); callers render the "No news links yet." caption
-    themselves when ``links`` is empty.
-    """
-    st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
-                unsafe_allow_html=True)
-    # #107: "News Links" title and link chips share ONE row — same
-    # pattern as Hashtags.
-    # #233: chip labels show the publisher name, never a stale
-    # fetch-time engine/aggregator label ("DuckDuckGo", "Bing News",
-    # ...). Normalized here at render — the same offline-safe refresh
-    # the share paths apply (#231) — so chips are correct even when no
-    # refresh/repair ran between story creation and render.
-    _labels = [_news_chip_label((_lk.get("title") or "News link"),
-                                lib.refresh_stale_news_link_source(
-                                    _lk.get("source"), _lk.get("url")))
-               for _lk in links]
-    _lcols = st.columns([_section_title_weight("News Links")]
-                        + _chip_col_weights(_labels)
-                        + [_load_more_weight()],
-                        # #162: vertically center title, chips and the
-                        # Load more button (columns top-align by default).
-                        vertical_alignment="center")
-    with _lcols[0]:
-        st.markdown('<div class="lib-section lib-section-inline">News Links</div>',
-                    unsafe_allow_html=True)
-    # #205: malformed URLs are collected here and reported BELOW the
-    # scroll row — a full st.error inside the row breaks its one-line
-    # geometry. Never silently dropped (fail loudly).
-    _invalid_links = []
-    for _i, (_lc, _lk, _label) in enumerate(zip(_lcols[1:-1], links, _labels)):
-        _ltitle = _lk.get("title", "News link") or "News link"
-        _lurl = (_lk.get("url") or "").strip()
-        with _lc:
-            # #134: news links are NATIVE st.link_button, not raw-HTML
-            # <a> inside st.markdown — Streamlit's markdown pipeline
-            # neuters the anchor (clicks do nothing). st.link_button
-            # forces a new browser tab (the same guarantee the #95
-            # WhatsApp comment relies on) and is styled as the chip
-            # pill by the marker-scoped CSS.
-            if not _is_openable_article_url(_lurl):
-                # #205: compact inline marker INSTEAD of st.error inside
-                # the row — an icon-only warning pill (marker-scoped
-                # CSS keeps the standard chip height) whose help tag
-                # names the problem; the row's geometry is preserved.
-                # The full error renders below the row; the × still
-                # removes the bad link.
-                st.markdown('<div data-marker="lib-link-invalid" '
-                            'style="display:none"></div>',
-                            unsafe_allow_html=True)
-                st.button("", icon=_TB_ICON_WARN,
-                          key=f"lib_newslink_invalid_{story_id}_{_i}",
-                          help=_invalid_link_help(_lurl))
-                _invalid_links.append((_ltitle, _lurl))
-            else:
-                st.link_button(
-                    _label,
-                    _lurl,
-                    help=_ltitle,
-                    key=f"lib_newslink_{story_id}_{_i}",
-                )
-            if _overlay_button("lib-x-r", f"lib_xlink_{story_id}_{_i}", "×",
-                               help="Remove this news link"):
-                try:
-                    lib.remove_news_link(story_id, _lurl)
-                except ValueError as e:
-                    st.error(str(e))
-                else:
-                    st.rerun()
-    # #205: full error detail BELOW the scroll row — malformed URLs fail
-    # loudly (never silently dropped) without breaking the row's
-    # one-line geometry.
-    for _bad_title, _bad_url in _invalid_links:
-        st.error(
-            f"News link \u201c{_bad_title}\u201d has an invalid URL "
-            f"and was not rendered as a link.")
-    # #113: inline Load more — last column of the scroll row. The button
-    # owns its loading state (spinner + disabled while more_news runs,
-    # #91/#53).
-    with _lcols[-1]:
-        st.markdown('<div data-marker="lib-load-more" style="display:none"></div>',
-                    unsafe_allow_html=True)
-        _render_load_more_button(
-            story_id=story_id, kind="more_news",
-            button_key=f"lib_morenews_{story_id}",
-            help_text="Fetch up to 5 more news links",
-            busy_kinds=busy_kinds)
 
 
 def _render_title_row(story_id: str, title: str, editing: bool, busy: bool) -> None:
@@ -1802,43 +1853,6 @@ def _render_title_row(story_id: str, title: str, editing: bool, busy: bool) -> N
                          help="Edit title", disabled=busy):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
                 st.rerun()
-
-
-def _render_hashtags_row(story_id: str, tags: list) -> None:
-    """#154: the Hashtags section as ONE reusable component.
-
-    Renders the full row — "Hashtags" title + tag chips, each with a ×
-    that removes exactly that tag — and OWNS its alignment: the hscroll
-    marker, the column layout (title weight + per-chip weights), the
-    title cell, and every chip cell (chip + × remove overlay) all live
-    inside this function. Same pattern as ``_render_news_links_row``.
-
-    Pure refactor of the inline block in ``_render_story_detail``
-    (#154): no behavior change. ``tags`` are non-empty; callers skip
-    the row entirely when there are no tags.
-    """
-    st.markdown('<div data-marker="lib-hscroll" style="display:none"></div>',
-                unsafe_allow_html=True)
-    _tcols = st.columns([_section_title_weight("Hashtags")]
-                        + _chip_col_weights(tags),
-                        # #162: vertically center title and chips
-                        # (columns top-align by default).
-                        vertical_alignment="center")
-    with _tcols[0]:
-        st.markdown('<div class="lib-section lib-section-inline">Hashtags</div>',
-                    unsafe_allow_html=True)
-    for _i, (_tc, _tag) in enumerate(zip(_tcols[1:], tags)):
-        with _tc:
-            st.markdown(f'<span class="lib-chip">{_html.escape(_tag)}</span>',
-                        unsafe_allow_html=True)
-            if _overlay_button("lib-x-r", f"lib_xtag_{story_id}_{_i}", "×",
-                               help=f"Remove {_tag}"):
-                try:
-                    lib.remove_hashtag(story_id, _tag)
-                except ValueError as e:
-                    st.error(str(e))
-                else:
-                    st.rerun()
 
 
 def _render_images_row(story_id: str, img_urls: list, uploaded: list,
@@ -3293,8 +3307,6 @@ def _render_copy_popover(story_id: str, meta: dict, script_md: str) -> None:
             st.caption("No script to copy yet.")
 
 
-
-
 # Shared with --lib-act-h in inject_library_css: the copy button renders
 # inside an isolated iframe (components.html) so page CSS cannot reach it —
 # the value is mirrored here to keep ONE alignment system.
@@ -3434,8 +3446,11 @@ def _copy_button(label: str, text: str, key: str, icon: str) -> None:
 # trigger (icon-only popover, 1.1) and the AI engine dropdown (2.0) join
 # the middle group beside Share/Copy — the standalone Upload row and the
 # "Enable AI processing" toggle are gone.
+# #303: the hashtag/news refresh buttons moved into the Hashtags/News
+# Links panel headers — only the Images refresh keeps a toolbar slot,
+# so the leading group shrinks by two 0.9 slots.
 _TB_SEP_W = 0.12
-_DETAIL_TOOLBAR_WEIGHTS = [0.9, 0.9, 0.9, _TB_SEP_W, 1.1, 1.1, 1.1, 2.0,
+_DETAIL_TOOLBAR_WEIGHTS = [0.9, _TB_SEP_W, 1.1, 1.1, 1.1, 2.0,
                            _TB_SEP_W, 2.0, 1.4, 1.7]
 _TITLE_EDIT_TOOLBAR_WEIGHTS = [1.0, 1.1, 1.1, 1.1, 1.1, 3.2, 1.5]
 
@@ -3789,6 +3804,7 @@ def _render_script_versions(story_id: str, busy_kinds: Set[str]) -> None:
         _kind_names = {"enrich": "enrichment", "hashtags": "hashtag refresh",
                        "images": "image refresh", "news": "news refresh",
                        "more_images": "image refresh", "more_news": "news refresh",
+                       "more_hashtags": "hashtag refresh",
                        "reset": "reset"}
         _names = ", ".join(sorted({_kind_names.get(_k, _k) for _k in busy_kinds}))
         st.caption(f"Version actions are paused while {_names} runs…")
@@ -3858,12 +3874,14 @@ def _render_story_detail(story_id: str) -> None:
         meta, meta.get("title", "Untitled Story") or "Untitled Story")
 
     # Detail toolbar (macOS HIG): every primary action lives in ONE top
-    # toolbar — hashtag/image/news refresh icons (#71, #80, #90), Reset,
-    # Share, Copy — with Delete trailing (#46). #90: all seven are
-    # icon-only, drawn from Streamlit's native material icons (#111);
+    # toolbar — the Images refresh icon (#71, #80, #90), Reset,
+    # Share, Copy — with Delete trailing (#46). #303: the hashtag/news
+    # refresh buttons moved into the Hashtags/News Links panel headers.
+    # #90: all are icon-only, drawn from Streamlit's native material
+    # icons (#111);
     # the title carries its own quiet borderless edit icon hugging the
     # left-aligned title text (#120). #220 (HIG §1: max three toolbar
-    # groups): the seven controls are grouped refresh ×3 | share+copy |
+    # groups): the controls are grouped refresh | share+copy |
     # destructive (reset + delete), with a hairline separator column
     # between groups — Reset moved next to Delete so the destructive
     # actions share one group.
@@ -3929,35 +3947,20 @@ def _render_story_detail(story_id: str) -> None:
         with ec5:
             _story_delete_popover()
     else:
-        # #220: three visually separated groups (HIG §1) — refresh ×3 |
+        # #220: three visually separated groups (HIG §1) — refresh |
         # share+copy+upload+engine | destructive (reset + delete). The
         # separator columns are thin slots only; all action weights are
         # unchanged. #206: the row stays vertically centered.
-        (tc1, tc2, tc3, _sep1, tc5, tc6, tc8, tcEng, _sep2, _tsp, tc4, tc7
+        # #303: the hashtag/news refresh buttons moved into the
+        # Hashtags/News Links panel headers (Load more + Force fetch) —
+        # only the Images refresh stays in the toolbar.
+        (tc2, _sep1, tc5, tc6, tc8, tcEng, _sep2, _tsp, tc4, tc7
          ) = st.columns(_DETAIL_TOOLBAR_WEIGHTS, vertical_alignment="center")
-        with tc1:
-            _render_kind_button(
-                story_id=story_id, kind="hashtags", label=_TB_ICON_TAG,
-                button_key=f"lib_tags_{story_id}", kick_label="hashtag",
-                help_text="Update Hashtags",
-                busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with tc2:
             _render_kind_button(
                 story_id=story_id, kind="images", label=_TB_ICON_IMAGE,
                 button_key=f"lib_imgs_{story_id}", kick_label="image",
                 help_text="Update Images",
-                busy_kinds=_busy_kinds, ai_engine=_ai_engine)
-        with tc3:
-            # #80: re-fetch news links (sources) for the story's topic.
-            # Icon-only like #71 (native material icon + tooltip); the
-            # #53/#54 contract is identical to the hashtag/image buttons —
-            # empty text label, native spinner icon while running,
-            # disables only while its own kind runs, concurrent with
-            # hashtags/images.
-            _render_kind_button(
-                story_id=story_id, kind="news", label=_TB_ICON_NEWS,
-                button_key=f"lib_news_{story_id}", kick_label="news",
-                help_text="Update News",
                 busy_kinds=_busy_kinds, ai_engine=_ai_engine)
         with _sep1:
             _render_toolbar_separator()
@@ -4007,18 +4010,14 @@ def _render_story_detail(story_id: str) -> None:
     # #154: the title row is the reusable _render_title_row component —
     # it owns its own alignment, so layout fixes land there, not here.
     _render_title_row(story_id, title, _editing, _busy)
-    # Hashtags: ONE horizontal scroll row. Every tag is a chip with a ×
-    # that removes exactly that tag (fail loudly, rerun after).
-    # #107: the "Hashtags" title and the chips share ONE row — the title
-    # rides in the first column so it always sits on the same line as
-    # the chips. Chip rendering (weights, × overlay, clearance) is
-    # untouched.
+    # #303: Hashtags + News Links as two side-by-side panels — replaces
+    # the old single-row chip layouts (#283, #274). Panels always
+    # render (even empty); each owns its header, list and footer.
     tags = [t for t in (meta.get("hashtags") or []) if t]
-    if tags:
-        # #154: the whole row is the reusable _render_hashtags_row
-        # component — it owns its own alignment, so layout fixes land
-        # there, not here.
-        _render_hashtags_row(story_id, tags)
+    links = [lk for lk in (meta.get("news_links") or [])
+             if isinstance(lk, dict)]
+    _render_tag_link_panels(story_id=story_id, tags=tags, links=links,
+                            busy_kinds=_busy_kinds, ai_engine=_ai_engine)
 
     # Images: ONE horizontal scroll row of cards (fetched + uploaded). Each
     # card shows the image with a × at its top; fetched cards keep a discreet
@@ -4061,19 +4060,6 @@ def _render_story_detail(story_id: str) -> None:
         # #54: only kinds that (re-)fetch images suppress the hint — a
         # concurrent hashtag run leaves it visible.
         st.caption("No images yet — try Reset or upload manually below.")
-
-    # News links: ONE horizontal scroll row. Each verified link is a chip
-    # (title + source, opens the article) with a × that removes it.
-    # Update Hashtags/Images never touch these — individual removal is
-    # manual only (×). Reset re-runs the link verifier fresh for the topic.
-    # #156: the whole row is the reusable _render_news_links_row component —
-    # it owns its own alignment, so layout fixes land there, not here.
-    links = [lk for lk in (meta.get("news_links") or []) if isinstance(lk, dict)]
-    if links:
-        _render_news_links_row(story_id, links, _busy_kinds)
-    elif not (_busy_kinds & {"news", "more_news", "reset", "enrich"}):
-        # #54/#80: only kinds that re-fetch links suppress the hint.
-        st.caption("No news links yet.")
 
     # Whole script — versioned (#104): collapsible per-version list, latest
     # on top, latest expanded. The story's ## Script section always mirrors
