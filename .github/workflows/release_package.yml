@@ -54,10 +54,72 @@ jobs:
           .venv/bin/pip install -r requirements.txt
           .venv/bin/pip install pyinstaller pillow
 
+      - name: Import Developer ID certificate
+        # Release only: makes CODESIGN_IDENTITY available to the build script
+        # so the .app is signed with the hardened runtime (notarization-ready).
+        # Skips gracefully when secrets aren't configured — the build then
+        # falls back to ad-hoc signing and keeps working.
+        if: matrix.variant == 'release'
+        run: |
+          if [ -z "${{ secrets.APPLE_DEV_ID_P12_B64 }}" ]; then
+            echo "::warning::APPLE_DEV_ID_P12_B64 is not configured — the DMG will be ad-hoc signed only and Gatekeeper will warn on first launch."
+            exit 0
+          fi
+          KEYCHAIN="$RUNNER_TEMP/build.keychain-db"
+          KEYCHAIN_PW="$(openssl rand -base64 32)"
+          P12="$RUNNER_TEMP/devid.p12"
+          echo "${{ secrets.APPLE_DEV_ID_P12_B64 }}" | base64 --decode > "$P12"
+          security create-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PW" "$KEYCHAIN"
+          security import "$P12" -k "$KEYCHAIN" -P "${{ secrets.APPLE_DEV_ID_P12_PASSWORD }}" -T /usr/bin/codesign
+          rm -f "$P12"
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PW" "$KEYCHAIN"
+          IDENTITY="$(security find-identity -v -p codesigning "$KEYCHAIN" | grep 'Developer ID Application' | head -1 | sed -E 's/.*"([^"]+)".*/\1/')"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::Developer ID Application identity not found in the imported certificate."
+            exit 1
+          fi
+          echo "CODESIGN_IDENTITY=$IDENTITY" >> "$GITHUB_ENV"
+          echo "Imported signing identity: $IDENTITY"
+
       - name: Build ${{ matrix.variant }} app
         run: |
           chmod +x scripts/build_macos_app.sh
           ./scripts/build_macos_app.sh --${{ matrix.variant }}
+
+      - name: Notarize DMG
+        # Release only: submits the DMG to Apple and staples the ticket.
+        # Fails loudly on notarization failure. Skips gracefully when the
+        # notary secrets aren't configured yet.
+        if: matrix.variant == 'release'
+        run: |
+          if [ -z "${{ secrets.APPLE_NOTARY_KEY_ID }}" ] || [ -z "${{ secrets.APPLE_NOTARY_ISSUER_ID }}" ] || [ -z "${{ secrets.APPLE_NOTARY_KEY_P8 }}" ]; then
+            echo "::warning::Notarization secrets (APPLE_NOTARY_KEY_ID / APPLE_NOTARY_ISSUER_ID / APPLE_NOTARY_KEY_P8) are not configured — skipping notarization. The DMG will trigger a Gatekeeper warning on first launch."
+            exit 0
+          fi
+          DMG="$(ls dist/v*/*.dmg 2>/dev/null | head -1)"
+          if [ -z "$DMG" ] || [ ! -f "$DMG" ]; then
+            echo "::error::No DMG found under dist/v*/ — cannot notarize."
+            exit 1
+          fi
+          echo "Notarizing $DMG ..."
+          KEYFILE="$RUNNER_TEMP/notary_key.p8"
+          printf '%s' "${{ secrets.APPLE_NOTARY_KEY_P8 }}" > "$KEYFILE"
+          chmod 600 "$KEYFILE"
+          if ! xcrun notarytool submit "$DMG" \
+              --key "$KEYFILE" \
+              --key-id "${{ secrets.APPLE_NOTARY_KEY_ID }}" \
+              --issuer "${{ secrets.APPLE_NOTARY_ISSUER_ID }}" \
+              --wait; then
+            echo "::error::Apple notarization FAILED for $DMG."
+            rm -f "$KEYFILE"
+            exit 1
+          fi
+          rm -f "$KEYFILE"
+          xcrun stapler staple "$DMG"
+          echo "Notarization complete and ticket stapled: $DMG"
 
       - name: Upload DMG artifact
         uses: actions/upload-artifact@v4

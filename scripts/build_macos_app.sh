@@ -252,9 +252,19 @@ PLIST
 # 5. Validate Info.plist
 plutil -lint "${APP_BUNDLE}/Contents/Info.plist" >/dev/null
 
-# 6. Ad-hoc code sign the entire bundle
-echo "   Code signing app bundle (ad-hoc)..."
-codesign --force --deep -s - "${APP_BUNDLE}"
+# 6. Code sign the entire bundle
+# CODESIGN_IDENTITY (env): when set to a "Developer ID Application: ..."
+# identity, sign with the hardened runtime so the bundle can be notarized.
+# Otherwise fall back to ad-hoc signing (local builds keep working).
+if [ -n "${CODESIGN_IDENTITY:-}" ]; then
+    echo "   Code signing app bundle with Developer ID (hardened runtime)..."
+    codesign --force --deep --options runtime --timestamp -s "${CODESIGN_IDENTITY}" "${APP_BUNDLE}"
+else
+    echo "   Code signing app bundle (ad-hoc)..."
+    codesign --force --deep -s - "${APP_BUNDLE}"
+fi
+codesign --verify --deep --strict "${APP_BUNDLE}"
+echo "   Signature verified."
 
 echo "✅ App bundle assembled: ${APP_BUNDLE}"
 
