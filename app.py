@@ -1377,6 +1377,51 @@ st.markdown(
     [data-testid="stCheckbox"] label[data-focused] div[class*="e15oan335"] {
         box-shadow: 0 0 0 3px var(--accent-tint) !important;
     }
+    /* #292: structural fallbacks for toggle/radio/checkbox. The hash
+       selectors above (e15oan337/338, e1mpz0hj4/5, e15oan335) are verified
+       against the 1.64.0 bundle, but emotion hashes are build-fragile: if
+       they ever change, these structural selectors (verified against the
+       same bundle's component tree) still theme the controls, so no
+       orphaned white circles. Toggle is scoped by input[role="switch"];
+       the track directly contains the leaf thumb div; the radio outer
+       directly contains the leaf inner dot; the checkbox box directly
+       contains the check svg. */
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label div:has(> div:not(:has(*))) {
+        background-color: var(--line-strong) !important;
+        border-color: var(--line-strong) !important;
+    }
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label[data-selected] div:has(> div:not(:has(*))) {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--ink) !important;
+    }
+    [data-testid="stCheckbox"]:has(input[role="switch"]) label[data-selected] div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--on-accent) !important;
+    }
+    [data-testid="stCheckbox"]:not(:has(input[role="switch"])) label div:has(> svg) {
+        background-color: var(--sunken) !important;
+        border-color: var(--line) !important;
+    }
+    [data-testid="stCheckbox"]:not(:has(input[role="switch"])) label[data-selected] div:has(> svg) {
+        background-color: var(--accent) !important;
+        border-color: var(--accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div:has(> div:not(:has(*))) {
+        background-color: var(--line) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div:has(> div:not(:has(*))),
+    [data-testid="stRadioOption"][data-selected] div:has(> div:not(:has(*))) {
+        background-color: var(--accent) !important;
+    }
+    [data-testid="stRadio"] [data-testid="stRadioOption"] div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--paper) !important;
+    }
+    [data-testid="stRadio"] [data-selected] div:has(> div:not(:has(*))) > div:not(:has(*)),
+    [data-testid="stRadioOption"][data-selected] div:has(> div:not(:has(*))) > div:not(:has(*)) {
+        background-color: var(--on-accent) !important;
+    }
 
     /* Dividers: one consistent 1px line style, consistent height. */
     hr,
