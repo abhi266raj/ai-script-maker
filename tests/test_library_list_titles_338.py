@@ -43,3 +43,33 @@ def test_long_title_without_suffix_truncates():
 def test_empty_title():
     assert lui._short_list_title("") == "Untitled"
     assert lui._short_list_title(None) == "Untitled"
+
+
+# ---------------------------------------------------------------------------
+# Detail page: the immutable script id as a quiet caption under the title
+# ---------------------------------------------------------------------------
+
+def test_script_id_caption_empty_when_no_id():
+    assert lui._script_id_caption_html("") == ""
+    assert lui._script_id_caption_html(None) == ""
+
+
+def test_script_id_caption_shows_short_id():
+    cid = "9f3a1c4d2e5b789012345678901234567890123456789012345678901234"
+    html = lui._script_id_caption_html(cid)
+    assert "script id 9f3a1c4d2e5b…" in html
+    assert 'class=\'lib-script-id\'' in html
+    # full id available on hover
+    assert f"title='{cid}'" in html
+
+
+def test_script_id_caption_short_id_untouched():
+    html = lui._script_id_caption_html("abc123")
+    assert "script id abc123" in html
+    assert "…" not in html
+
+
+def test_script_id_caption_escapes_html():
+    html = lui._script_id_caption_html("<script>alert(1)</script>")
+    assert "<script>" not in html
+    assert "&lt;script&gt;" in html

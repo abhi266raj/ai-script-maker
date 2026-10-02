@@ -904,6 +904,18 @@ def inject_library_css() -> None:
     .lib-doc-title a {
         display: none !important;
     }
+    /* #338: the content-derived script id as a quiet caption under the
+       detail-page title — small, muted, theme-safe via opacity on
+       inherited ink; monospace since it's a hash. The title stays
+       fully visible above; the id is internal identity made
+       inspectable, never a replacement for the title. */
+    .lib-script-id {
+        font-size: 12px;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        opacity: 0.55;
+        margin: 0 0 10px 0;
+        overflow-wrap: anywhere;
+    }
     /* #120: the title edit button is a quiet icon action hugging the
        title — NOT a bordered box. Borderless, transparent, ink-2 icon
        beside the title; ink on hover. If the selector ever misses it
@@ -1822,7 +1834,25 @@ def _load_more_weight() -> int:
     return 6
 
 
-def _render_title_row(story_id: str, title: str, editing: bool, busy: bool) -> None:
+def _script_id_caption_html(content_id: str) -> str:
+    """Small caption HTML for the content-derived script id shown under
+    the detail-page title (issue #338).
+
+    The title is presentation and can be edited; the script id is the
+    immutable dedup identity. Showing it (short form, full id on hover)
+    makes the internal logic inspectable. Returns "" when the story has
+    no recorded id (saved before dedup ids existed) — no caption then.
+    """
+    cid = (content_id or "").strip()
+    if not cid:
+        return ""
+    short = cid[:12] + "…" if len(cid) > 12 else cid
+    return (f"<div class='lib-script-id' title='{_html.escape(cid)}'>"
+            f"script id {_html.escape(short)}</div>")
+
+
+def _render_title_row(story_id: str, title: str, editing: bool, busy: bool,
+                      content_id: str = "") -> None:
     """#154: the story title as ONE reusable component.
 
     Renders the title row — big left-aligned h2 + borderless edit icon
@@ -1833,6 +1863,9 @@ def _render_title_row(story_id: str, title: str, editing: bool, busy: bool) -> N
 
     Pure refactor of the inline block in ``_render_story_detail``
     (#154): no behavior change.
+
+    #338: when ``content_id`` is given, a quiet caption with the
+    content-derived script id renders directly under the title bar.
     """
     if editing:
         st.text_area("", value=title, key=f"lib_title_{story_id}",
@@ -1853,6 +1886,12 @@ def _render_title_row(story_id: str, title: str, editing: bool, busy: bool) -> N
                          help="Edit title", disabled=busy):
                 st.session_state[f"lib_edit_title_{story_id}"] = True
                 st.rerun()
+    # #338: the immutable script id as a quiet caption under the title
+    # bar — visible even while the title itself is being edited, which
+    # is exactly the point: the title can change, the id cannot.
+    _caption = _script_id_caption_html(content_id)
+    if _caption:
+        st.markdown(_caption, unsafe_allow_html=True)
 
 
 def _render_images_row(story_id: str, img_urls: list, uploaded: list,
@@ -4082,7 +4121,10 @@ def _render_story_detail(story_id: str) -> None:
     title = meta.get("title", "Untitled Story") or "Untitled Story"
     # #154: the title row is the reusable _render_title_row component —
     # it owns its own alignment, so layout fixes land there, not here.
-    _render_title_row(story_id, title, _editing, _busy)
+    # #338: the content-derived script id rides under the title bar as
+    # a quiet caption (the dedup identity, immutable once stored).
+    _render_title_row(story_id, title, _editing, _busy,
+                      content_id=meta.get("dedup_id") or "")
     # #303: Hashtags + News Links as two side-by-side panels — replaces
     # the old single-row chip layouts (#283, #274). Panels always
     # render (even empty); each owns its header, list and footer.
