@@ -1188,7 +1188,7 @@ def test_confirm_delete_story_deletes_and_cleans_session(libdir):
     lui._confirm_delete_story(sid)
     assert not (libdir / "stories" / f"{sid}.md").exists()
     assert "lib_selected_story" not in fake.session_state
-    assert fake.toasts == [("Story deleted.", "✅")]
+    assert fake.toasts == [("Story deleted.", ":material/check_circle:")]
 
 
 def test_confirm_delete_story_missing_file_fails_loudly(libdir):
@@ -1204,7 +1204,7 @@ def test_confirm_delete_all_removes_everything(libdir):
     _make_story(title="Story B")
     lui._confirm_delete_all()
     assert list((libdir / "stories").glob("*.md")) == []
-    assert fake.toasts == [("Deleted 2 stories.", "✅")]
+    assert fake.toasts == [("Deleted 2 stories.", ":material/check_circle:")]
 # remove_hashtag / remove_news_link: manual per-item removal (fail loudly)
 # ---------------------------------------------------------------------------
 

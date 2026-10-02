@@ -120,7 +120,7 @@ def test_video_upload_stored_once_across_runs(lui, libdir):
     assert _run_popover(lui_mod, fake, sid) is False
     st = lib.load_story(sid)
     assert st["meta"]["video_file"] == sid + ".mp4"
-    assert ("toast", f"Video attached: {sid}.mp4", "✅") in fake.events
+    assert ("toast", f"Video attached: {sid}.mp4", ":material/check_circle:") in fake.events
     assert sum(e[0] == "toast" for e in fake.events) == 1
 
 

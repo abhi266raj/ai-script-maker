@@ -343,13 +343,13 @@ def test_fire_refresh_toasts_fires_once(libdir):
     meta = lib.load_story(sid)["meta"]
 
     lui._fire_refresh_toasts(sid, meta)
-    assert fake.toasts == [("Hashtags updated — added 3 tags", "✅")]
+    assert fake.toasts == [("Hashtags updated — added 3 tags", ":material/check_circle:")]
 
     # Drained from the file: a second render toasts nothing.
     meta = lib.load_story(sid)["meta"]
     assert meta.get("refresh_outcome_pending") == []
     lui._fire_refresh_toasts(sid, meta)
-    assert fake.toasts == [("Hashtags updated — added 3 tags", "✅")]
+    assert fake.toasts == [("Hashtags updated — added 3 tags", ":material/check_circle:")]
 
 
 def test_fire_refresh_toasts_failure_outcomes_alert_not_toast(libdir):
@@ -369,7 +369,8 @@ def test_fire_refresh_toasts_failure_outcomes_alert_not_toast(libdir):
     lui._fire_refresh_toasts(sid, lib.load_story(sid)["meta"])
 
     # Success/no-change still toast; failures never do.
-    assert fake.toasts == [("Images: nothing new — nothing new", "ℹ️")]
+    assert fake.toasts == [("Images: nothing new — nothing new",
+                            ":material/info:")]
 
     # Loud failures go to the persistent inline alert path, note intact.
     assert fake.errors == [
@@ -382,7 +383,8 @@ def test_fire_refresh_toasts_failure_outcomes_alert_not_toast(libdir):
     meta = lib.load_story(sid)["meta"]
     assert meta.get("refresh_outcome_pending") == []
     lui._fire_refresh_toasts(sid, meta)
-    assert fake.toasts == [("Images: nothing new — nothing new", "ℹ️")]
+    assert fake.toasts == [("Images: nothing new — nothing new",
+                            ":material/info:")]
     assert len(fake.errors) == 3
 
 
@@ -399,7 +401,7 @@ def test_fire_refresh_toasts_malformed_drops_loudly(libdir):
     assert len(fake.errors) == 1
     assert "dropped" in fake.errors[0]
     # The malformed entry is dropped; the good one still toasts.
-    assert fake.toasts == [("Images updated — fresh", "✅")]
+    assert fake.toasts == [("Images updated — fresh", ":material/check_circle:")]
     assert lib.load_story(sid)["meta"].get("refresh_outcome_pending") == []
 
 
