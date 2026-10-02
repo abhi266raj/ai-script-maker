@@ -133,7 +133,8 @@ class TestGeneratePromptsBypass:
             bypass_no_facts=True,
         )
         assert len(prompts) == 1
-        assert prompts[0].visual_prompt_ai  # ungrounded, but generated
+        assert prompts[0].visual_prompt_ai  # generated, but marked honestly
+        assert prompts[0].verification_status == "need verification"
 
     def test_facts_present_needs_no_bypass(self, monkeypatch):
         _install_mocks(monkeypatch)
@@ -143,6 +144,7 @@ class TestGeneratePromptsBypass:
             verified_facts=["Metro line approved"],
         )
         assert len(prompts) == 1
+        assert prompts[0].verification_status == "verified"
 
 
 class TestExecuteStage5HonorsBypass:

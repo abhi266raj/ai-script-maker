@@ -71,6 +71,9 @@ class AIVideoPromptAgent(BaseAgent):
 
         sub_directive = f"\nChief Editor Directive for AI Video Prompts:\n{sub_instruction}\n" if sub_instruction else ""
         facts_text = "\n".join([f"- {f}" for f in (verified_facts or [])[:4]])
+        # #335: True only when the gate was bypassed — every prompt built
+        # below is then marked "need verification" instead of "verified".
+        _ungrounded = not facts_text.strip() and bypass_no_facts
         # Fail loudly: video prompts must be grounded in Stage 1 verified facts.
         # Generating anyway without facts would produce ungrounded visuals.
         if not facts_text.strip():
@@ -163,6 +166,9 @@ class AIVideoPromptAgent(BaseAgent):
                         aspect_ratio="9:16",
                         motion_level=motion,
                         ai_engine="Google Flow / Veo",
+                        # #335: mark bypassed prompts honestly — the script
+                        # shows "verified" or "need verification" per prompt.
+                        verification_status="need verification" if _ungrounded else "verified",
                     )
                 )
 

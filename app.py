@@ -3813,6 +3813,13 @@ def _render_storyboard_cards(scripts, *, key_prefix=""):
                     # the live streaming loop (st.empty().container()), causing DuplicateWidgetID.
                     st.caption("🎬 AI video prompt (Veo):")
                     st.code(str(_vpa), language="text")
+                    # #335: per-prompt grounding status — "verified" or
+                    # "need verification", never a silent ungrounded prompt.
+                    _vstat = _model_field(_svp, "verification_status", "") or "verified"
+                    if _vstat == "need verification":
+                        st.caption("⚠️ need verification")
+                    else:
+                        st.caption("✓ verified")
     _render_raw_json(scripts, label="Raw JSON — storyboards", key_prefix=key_prefix)
 
 
@@ -4314,10 +4321,6 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             with st.expander("5.1 Generate Storyboards — 🤖 AI generation", expanded=True):
                 st.markdown("**📥 Input:**")
                 st.caption(f"{_s5_nsc} derived scene(s) → scene director + video prompt engineer")
-                # #335: LOUD bypass marker — the user explicitly overrode the
-                # no-facts gate, so these visuals are ungrounded. Never silent.
-                if step_state.get("verification_bypassed") or step_state.get("bypass_stage5_no_facts"):
-                    st.warning("⚠️ Bypassed: video prompts were generated WITHOUT Stage 1 verified facts (your override). These visuals are ungrounded — treat every depicted detail as unverified.")
                 st.markdown("**📤 Output (Storyboarded Scenes & AI Video Prompts):**")
                 if _s5_scripts:
                     s0 = _s5_scripts[0]
@@ -4331,6 +4334,13 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                         if sc.video_prompt and getattr(sc.video_prompt, "visual_prompt_ai", ""):
                             st.caption("🎬 Veo 9:16 Cinematic Prompt:")
                             st.code(sc.video_prompt.visual_prompt_ai, language="text")
+                            # #335: per-prompt grounding status — "verified" or
+                            # "need verification", never a silent ungrounded prompt.
+                            _vp_stat = getattr(sc.video_prompt, "verification_status", "") or "verified"
+                            if _vp_stat == "need verification":
+                                st.caption("⚠️ need verification")
+                            else:
+                                st.caption("✓ verified")
                 _render_raw_json(_s5_scripts, label="Raw JSON — storyboards", key_prefix=f"{key_prefix}s5_")
 
             # 5.2 Validation
