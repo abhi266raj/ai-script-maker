@@ -95,6 +95,12 @@ class _FakeSt(types.ModuleType):
     def video(self, *args, **kwargs):
         self.events.append(("video",))
 
+    def container(self, border=None, key=None, height=None, **kwargs):
+        # #303: panel cards (border=True) and fixed-height scroll lists
+        # (height=N); record kwargs for assertions.
+        self.events.append(("container", border, key, height, kwargs))
+        return _Ctx(self, "container", (), kwargs)
+
     def __getattr__(self, name):
         if name.startswith("__"):
             raise AttributeError(name)
@@ -160,16 +166,17 @@ def _capture_library_css(lui):
 
 
 # ---------------------------------------------------------------------------
-# #107 — pure helper
+# #303 — panel title helper/CSS
 # ---------------------------------------------------------------------------
 
-def test_section_title_weight_is_compact(lui_st):
+def test_panel_title_css_exists(lui_st):
+    """#303 replaced the inline chip-row title with panel cards — the
+    panel title class must exist and carry no margins."""
     lui, _ = lui_st()
-    assert lui._section_title_weight("Hashtags") == len("Hashtags") + 2
-    assert lui._section_title_weight("News Links") == len("News Links") + 2
-    # Floor keeps degenerate titles usable; always slimmer than a chip.
-    assert lui._section_title_weight("X") == 6
-    assert lui._section_title_weight("Hashtags") < min(lui._chip_col_weights(["#DogShowdown"]))
+    css = _capture_library_css(lui)
+    clean = re.sub(r"/\*.*?\*/", "", css, flags=re.S)
+    assert ".lib-panel-title" in clean, "panel title CSS must exist"
+    assert "margin: 0" in clean
 
 
 # ---------------------------------------------------------------------------
@@ -192,59 +199,45 @@ def test_inline_section_css_zeroes_margins_and_centers(lui_st):
 # #107 — title + chips share one st.columns row
 # ---------------------------------------------------------------------------
 
-def test_hashtags_title_and_chips_share_one_row(libdir, lui_st):
+def test_hashtags_panel_renders_in_story_detail(libdir, lui_st):
+    """#303: the story detail renders the Hashtags panel card — title +
+    Load more + Force fetch in the header, no stacked section title."""
     lui, fake = lui_st()
     sid = _make_story()
     lui._render_story_detail(sid)
 
-    tags = ["#DogShowdown", "#ReelLife"]
-    expected = [lui._section_title_weight("Hashtags")] + lui._chip_col_weights(tags)
-    col_specs = [e[1] for e in fake.events if e[0] == "columns"]
-    assert expected in col_specs, (
-        f"Hashtags title+chips must be one st.columns row; saw {col_specs}")
-
-    # The standalone (stacked) title div is gone — only the inline one.
-    standalone = [e[1] for e in fake.events
-                  if e[0] == "markdown" and e[1] == '<div class="lib-section">Hashtags</div>']
-    assert not standalone, "Hashtags title must not render as a stacked section header"
-    inline = [e[1] for e in fake.events
-              if e[0] == "markdown" and "lib-section-inline" in e[1] and "Hashtags" in e[1]]
-    assert len(inline) == 1
+    titles = [e[1] for e in fake.events
+              if e[0] == "markdown" and "lib-panel-title" in e[1]
+              and "Hashtags" in e[1]]
+    assert len(titles) == 1, f"exactly one Hashtags panel title; saw {titles}"
+    cards = [e for e in fake.events
+             if e[0] == "container" and e[1] is True]
+    assert cards, "panels must render as bordered cards"
 
 
-def test_news_links_title_and_chips_share_one_row(libdir, lui_st):
+def test_news_links_panel_renders_in_story_detail(libdir, lui_st):
+    """#303: the story detail renders the News Links panel card."""
     lui, fake = lui_st()
     sid = _make_story()
     lui._render_story_detail(sid)
 
-    labels = ["Alpha", "Beta"]
-    # #113: the Load more button rides as the last column of the row.
-    expected = ([lui._section_title_weight("News Links")]
-                + lui._chip_col_weights(labels)
-                + [lui._load_more_weight()])
-    col_specs = [e[1] for e in fake.events if e[0] == "columns"]
-    assert expected in col_specs, (
-        f"News Links title+chips+load-more must be one st.columns row; saw {col_specs}")
-
-    standalone = [e[1] for e in fake.events
-                  if e[0] == "markdown" and e[1] == '<div class="lib-section">News Links</div>']
-    assert not standalone, "News Links title must not render as a stacked section header"
-    inline = [e[1] for e in fake.events
-              if e[0] == "markdown" and "lib-section-inline" in e[1] and "News Links" in e[1]]
-    assert len(inline) == 1
+    titles = [e[1] for e in fake.events
+              if e[0] == "markdown" and "lib-panel-title" in e[1]
+              and "News Links" in e[1]]
+    assert len(titles) == 1, f"exactly one News Links panel title; saw {titles}"
 
 
-def test_chip_markup_and_weights_unchanged(libdir, lui_st):
-    """#107 must not alter chip rendering — same pills, same weights."""
+def test_panel_row_markup_uses_single_line_rows(libdir, lui_st):
+    """#303: panel rows are single-line read-only text (lib-panel-row),
+    not chips."""
     lui, fake = lui_st()
     sid = _make_story()
     lui._render_story_detail(sid)
 
-    chips = [e[1] for e in fake.events
-             if e[0] == "markdown" and 'class="lib-chip"' in e[1]
-             and "<a href" not in e[1]]
-    assert len(chips) == 2
-    assert "#DogShowdown" in chips[0] and "#ReelLife" in chips[1]
+    rows = [e[1] for e in fake.events
+            if e[0] == "markdown" and 'class="lib-panel-row"' in e[1]]
+    assert len(rows) == 2, f"two hashtag rows expected; saw {rows}"
+    assert "#DogShowdown" in rows[0] and "#ReelLife" in rows[1]
 
 
 # ---------------------------------------------------------------------------

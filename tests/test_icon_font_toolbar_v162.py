@@ -1,14 +1,16 @@
 """v1.6.2 (#111) — story-detail toolbar uses Streamlit NATIVE icons.
 
 #111 killed the #90 self-hosted icon font: the bundled woff2 + data-URI
-@font-face never loaded in the browser (tofu boxes), so all seven toolbar
-controls (Update Hashtags / Images / News, Reset, Share, Copy, Delete)
-now use Streamlit's native Material Symbols support
+@font-face never loaded in the browser (tofu boxes), so the toolbar
+controls now use Streamlit's native Material Symbols support
 (``icon=":material/<name>:"``) with an empty text label — icon-only, no
-text, no emoji. The spinner is also native: ``icon="spinner"`` renders
-Streamlit's animated spinner while a refresh runs (#53 HIG: the button
-that starts work owns its loading state). Tooltips keep the text labels
-for discoverability and accessibility (#71 pattern).
+text, no emoji. #303 moved the hashtag/news refresh buttons into the
+Hashtags/News Links panel headers; the toolbar keeps Update Images,
+Reset, Share, Copy and Delete. The spinner is also native:
+``icon="spinner"`` renders Streamlit's animated spinner while a refresh
+runs (#53 HIG: the button that starts work owns its loading state).
+Tooltips keep the text labels for discoverability and accessibility
+(#71 pattern).
 
 Run: python -m pytest tests/test_icon_font_toolbar_v162.py -q
 """
@@ -60,18 +62,19 @@ def _is_material_icon(s):
 
 
 # ---------------------------------------------------------------------------
-# All seven controls are icon-only — native material icons, no text/emoji
+# All toolbar controls are icon-only — native material icons, no text/emoji
+# (#303: the hashtag/news refresh buttons moved into the panel headers;
+# only the Images refresh stays in the toolbar)
 # ---------------------------------------------------------------------------
 
-def test_all_seven_toolbar_controls_are_icon_only(monkeypatch):
+def test_all_toolbar_controls_are_icon_only(monkeypatch):
     lui, fake = _ui_with_recording_st()
     _story(monkeypatch, lui)
     lui._render_story_detail("sid1")
-    # The three refresh buttons render first, in toolbar order: empty
-    # text label, native material icon via icon=.
-    assert [b[0] for b in fake.buttons[:3]] == ["", "", ""]
-    assert [k.get("icon") for k in fake.button_kwargs[:3]] == [
-        lui._TB_ICON_TAG, lui._TB_ICON_IMAGE, lui._TB_ICON_NEWS]
+    # The toolbar's only refresh button: empty text label, native
+    # material icon via icon=.
+    assert fake.buttons[0][0] == ""
+    assert fake.button_kwargs[0].get("icon") == lui._TB_ICON_IMAGE
     # Popovers: Share, Copy, Reset (#220: Reset moved after Copy so it
     # shares the trailing destructive group with Delete; #84 reverted the
     # title popover — every popover here is a toolbar action). #114: the upload popover
@@ -90,7 +93,7 @@ def test_all_seven_toolbar_controls_are_icon_only(monkeypatch):
     assert len(_del_trig) == 1
     assert _del_trig[0]["label"] == ""
     assert _del_trig[0]["icon"] == lui._TB_ICON_DELETE
-    for icon in ([k.get("icon") for k in fake.button_kwargs[:3]]
+    for icon in ([fake.button_kwargs[0].get("icon")]
                  + [p.get("icon") for p in toolbar_pops]
                  + [_del_trig[0]["icon"]]):
         assert _is_material_icon(icon), f"not a material icon: {icon!r}"
@@ -98,9 +101,10 @@ def test_all_seven_toolbar_controls_are_icon_only(monkeypatch):
 
 def test_material_icon_constants_match_expected_names():
     lui, _ = _ui_with_fake_st()
-    assert lui._TB_ICON_TAG == _MATERIAL_ICONS["tags"]
+    # #303: _TB_ICON_TAG/_TB_ICON_NEWS died with the toolbar buttons;
+    # the panels use _TB_ICON_SYNC (force fetch) + ":material/add:" (load more).
+    assert lui._TB_ICON_SYNC == ":material/sync:"
     assert lui._TB_ICON_IMAGE == _MATERIAL_ICONS["images"]
-    assert lui._TB_ICON_NEWS == _MATERIAL_ICONS["news"]
     assert lui._TB_ICON_RESET == _MATERIAL_ICONS["reset"]
     assert lui._TB_ICON_SHARE == _MATERIAL_ICONS["share"]
     assert lui._TB_ICON_COPY == _MATERIAL_ICONS["copy"]
@@ -112,7 +116,9 @@ def test_no_text_or_emoji_labels_remain_in_toolbar(monkeypatch):
     lui, fake = _ui_with_recording_st()
     _story(monkeypatch, lui)
     lui._render_story_detail("sid1")
-    labels = ([b[0] for b in fake.buttons[:3]]
+    # The toolbar's only refresh button is Images now (#303); the hashtag/
+    # news refresh buttons moved into the panel headers.
+    labels = ([fake.buttons[0][0]]
               + [p["label"] for p in fake.popovers])
     for banned in ("Reset", "Share", "Copy", "Delete", "#",
                    "\U0001F5BC", "\U0001F4F0"):
@@ -132,9 +138,9 @@ def test_toolbar_tooltips_keep_text_labels(monkeypatch):
     lui, fake = _ui_with_recording_st()
     _story(monkeypatch, lui)
     lui._render_story_detail("sid1")
-    helps = [k.get("help") for k in fake.button_kwargs[:3]]
-    assert helps == [_TOOLTIP_TEXT["tags"], _TOOLTIP_TEXT["images"],
-                     _TOOLTIP_TEXT["news"]]
+    # #303: only the Images refresh button remains in the toolbar; the
+    # hashtag/news refresh tooltips live on the panel Force-fetch buttons.
+    assert fake.button_kwargs[0].get("help") == _TOOLTIP_TEXT["images"]
     pop_helps = {(p["label"], p.get("icon")): p.get("help")
                  for p in fake.popovers}
     assert pop_helps[("", lui._TB_ICON_RESET)] == _TOOLTIP_TEXT["reset"]
@@ -154,10 +160,13 @@ def test_toolbar_tooltips_keep_text_labels(monkeypatch):
 
 def test_kind_button_shows_native_spinner_while_running():
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(story_id="sid1", kind="hashtags",
-                            label=lui._TB_ICON_TAG, button_key="lib_tags_sid1",
-                            kick_label="hashtag", help_text="Update Hashtags",
-                            busy_kinds={"hashtags"}, ai_engine=None)
+    # #303: the Images kind keeps the toolbar slot; hashtags/news moved
+    # to the panel headers (same helper, same contract).
+    lui._render_kind_button(story_id="sid1", kind="images",
+                            label=lui._TB_ICON_IMAGE,
+                            button_key="lib_imgs_sid1",
+                            kick_label="image", help_text="Update Images",
+                            busy_kinds={"images"}, ai_engine=None)
     assert fake.button_kwargs[0]["icon"] == "spinner"
     assert fake.button_kwargs[0]["label"] == ""  # text label never changes
     assert fake.button_kwargs[0]["disabled"] is True

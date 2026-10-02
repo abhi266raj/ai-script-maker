@@ -1,7 +1,9 @@
 """v1.6.2 (#80) — "Update News" refresh kind.
 
-The story-detail toolbar has Update Hashtags / Update Images but no way
-to re-fetch news links. #80 adds a "news" refresh kind end-to-end:
+The story-detail toolbar had Update Hashtags / Update Images but no way
+to re-fetch news links. #80 adds a "news" refresh kind end-to-end.
+#303 moved the toolbar button into the News Links panel header as
+"Force fetch" (sync icon) — the kind contract is unchanged.
 
 - story_library: "news" is a first-class refresh kind — independent of
   hashtags/images (all three run concurrently, #54/#80), refused while
@@ -10,9 +12,10 @@ to re-fetch news links. #80 adds a "news" refresh kind end-to-end:
   (the same source as save-time enrichment) and merges genuinely new
   links in — the stored list is never wiped. Fetch failures raise
   loudly; they are never reported as "nothing new".
-- library_ui: icon-only "📰" toolbar button (#71 pattern — glyph +
-  "Update News" tooltip), native spinner icon while running,
-  stable label, per-kind disable, toast via the existing outcome path.
+- library_ui: icon-only panel "Force fetch" button (#71 pattern —
+  glyph + "Re-fetch news links" tooltip), native spinner icon while
+  running, stable label, per-kind disable, toast via the existing
+  outcome path.
 
 Run: python -m pytest tests/test_update_news_v162.py -q
 """
@@ -251,33 +254,37 @@ def test_news_worker_failure_outcome_is_loud(libdir, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def _news_button_kwargs(lui, **kw):
-    d = dict(story_id="sid1", kind="news", label=lui._TB_ICON_NEWS,
-             button_key="lib_news_sid1", kick_label="news",
-             help_text="Update News", busy_kinds=set(), ai_engine=None)
+    # #303: the toolbar "Update News" button moved into the News Links
+    # panel header as "Force fetch" (sync icon) — the helper contract is
+    # exercised through the panel's button.
+    d = dict(story_id="sid1", kind="news", label=lui._TB_ICON_SYNC,
+             button_key="lib_panel_news_sid1", kick_label="news",
+             help_text="Re-fetch news links", busy_kinds=set(),
+             ai_engine=None)
     d.update(kw)
     return d
 
 
 def test_news_button_icon_only_and_stable_while_running():
     """#71/#80/#111: icon-only button — native material icon via icon=,
-    empty text label, tooltip keeps "Update News", disabled + native
+    empty text label, tooltip keeps the label, disabled + native
     spinner while running."""
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_news_button_kwargs(lui, busy_kinds={"news"}))
-    assert fake.buttons == [("", "lib_news_sid1")]
+    assert fake.buttons == [("", "lib_panel_news_sid1")]
     kw = fake.button_kwargs[0]
     assert kw["icon"] == "spinner"
     assert kw["disabled"] is True
     assert kw["use_container_width"] is True
-    assert kw["help"] == "Update News"
+    assert kw["help"] == "Re-fetch news links"
     assert "lib-spin-news" not in "".join(fake.markup)
 
 
 def test_news_button_idle_state():
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_news_button_kwargs(lui))
-    assert fake.buttons == [("", "lib_news_sid1")]
-    assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_NEWS
+    assert fake.buttons == [("", "lib_panel_news_sid1")]
+    assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_SYNC
     assert fake.button_kwargs[0]["disabled"] is False
     assert "lib-spin-news" not in "".join(fake.markup)
 
@@ -291,7 +298,7 @@ def test_news_button_independent_while_sibling_runs():
 
 
 def test_news_button_click_kicks_news_refresh(monkeypatch):
-    lui, fake = _ui_with_fake_st(clicks=("lib_news_sid1",))
+    lui, fake = _ui_with_fake_st(clicks=("lib_panel_news_sid1",))
     calls = []
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (
@@ -303,7 +310,7 @@ def test_news_button_click_kicks_news_refresh(monkeypatch):
 
 
 def test_news_button_kick_failure_is_loud(monkeypatch):
-    lui, fake = _ui_with_fake_st(clicks=("lib_news_sid1",))
+    lui, fake = _ui_with_fake_st(clicks=("lib_panel_news_sid1",))
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (False, "boom"))
     lui._render_kind_button(**_news_button_kwargs(lui))
@@ -352,9 +359,10 @@ def test_news_toast_text():
 
 
 def test_news_hint_suppressed_while_running():
-    """The 'No news links yet.' caption hides while a news refresh runs."""
+    """#303: the 'No news links yet.' hint caption is gone — the News
+    Links panel always renders (even empty, "Showing 0 of 0"), so there
+    is no hint left to suppress."""
     import inspect
     lui, _fake = _ui_with_fake_st()
     src = inspect.getsource(lui._render_story_detail)
-    # #91: more_news also re-fetches links, so it joins the set.
-    assert '{"news", "more_news", "reset", "enrich"}' in src
+    assert "No news links yet." not in src

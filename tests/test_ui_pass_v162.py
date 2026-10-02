@@ -73,6 +73,12 @@ class _FakeSt(types.ModuleType):
         self.events.append(("link_button", label, url, kwargs))
         return False
 
+    def container(self, border=None, key=None, height=None, **kwargs):
+        # #303: panel cards (border=True) and fixed-height scroll lists
+        # (height=N); record kwargs for assertions.
+        self.events.append(("container", border, key, height, kwargs))
+        return _Ctx(self, "container", (), kwargs)
+
     def radio(self, label, options, key=None, **kwargs):
         self.events.append(("radio", label, list(options), key))
         return options[0]
@@ -199,27 +205,18 @@ def test_112_load_more_column_centering_css(lui_st):
 # ---------------------------------------------------------------------------
 
 def test_113_news_load_more_is_last_column(libdir, lui_st):
+    """#303: the news panel header carries the icon-only Load more
+    button (material add icon + help tag) — no longer the last column
+    of a chip row."""
     lui, fake = lui_st()
     sid = _make_story()
     lui._render_story_detail(sid)
 
-    labels = ["Alpha", "Beta"]
-    expected = ([lui._section_title_weight("News Links")]
-                + lui._chip_col_weights(labels)
-                + [lui._load_more_weight()])
-    col_specs = [e[1] for e in fake.events if e[0] == "columns"]
-    assert expected in col_specs
-
-    markers = [e[1] for e in fake.events
-               if e[0] == "markdown" and 'data-marker="lib-load-more"' in e[1]]
-    assert len(markers) >= 1
-
-    # #202: the news load-more is icon-only — empty text label, material
-    # add icon, help tag as the accessibility label.
     buttons = [e for e in fake.events if e[0] == "button"]
-    assert any(e[1] == "" and e[3].get("icon") == lui._TB_ICON_ADD
+    assert any(e[1] == "" and e[2] == "lib_panel_morenews_" + sid
+               and e[3].get("icon") == lui._TB_ICON_ADD
                and e[3].get("help") for e in buttons), (
-        f"news load-more must be icon-only with a help tag; saw {buttons}")
+        f"news panel load-more must be icon-only with a help tag; saw {buttons}")
 
 
 def test_113_images_load_more_is_last_column(libdir, lui_st):

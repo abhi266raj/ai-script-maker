@@ -1,11 +1,11 @@
 """v1.6.2 (#154) — all section rows render through dedicated reusable components.
 
-``_render_title_row``, ``_render_hashtags_row``, ``_render_images_row`` and
-``_render_upload_row`` (plus the earlier ``_render_news_links_row`` #156)
-each own their full row: title + chips/controls including alignment
-(column layout, markers, per-cell content). The inline blocks in
-``_render_story_detail`` are now single calls — pure refactors with no
-behavior change.
+``_render_title_row``, ``_render_images_row`` and ``_render_upload_popover_trigger``
+each own their row; since #303 the hashtags/news-links sections render as
+two side-by-side panel cards (``_render_hashtags_panel`` /
+``_render_news_links_panel``) instead of single chip rows.
+The inline blocks in ``_render_story_detail`` are now single calls —
+pure refactors with no behavior change.
 
 These tests drive each component directly with the recording fake
 streamlit and assert the presentation contract: one columns() call per
@@ -65,39 +65,47 @@ def test_title_row_editing_renders_text_area(libdir):
 
 
 # ---------------------------------------------------------------------------
-# _render_hashtags_row: title + chips with × in one row
+# _render_hashtags_panel: card with header (title + load more + force
+# fetch), fixed-height list, read-only rows with ×, "Showing X of Y"
 # ---------------------------------------------------------------------------
 
 _TAGS = ["#Alpha", "#Beta"]
 
 
-def test_hashtags_row_renders_single_row(libdir):
+def test_hashtags_panel_renders_card_with_header(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_hashtags_row("teststory1", _TAGS)
+    lui._render_hashtags_panel(
+        story_id="teststory1", tags=_TAGS, busy_kinds=set(),
+        ai_engine="Dummy")
 
-    assert len(fake.column_specs) == 1, (
-        f"hashtags must render exactly one columns() row; "
-        f"saw {len(fake.column_specs)}")
-    spec = fake.column_specs[0]
-    expected = ([lui._section_title_weight("Hashtags")]
-                + lui._chip_col_weights(_TAGS))
-    assert spec == expected, (
-        f"row spec must be [title, *chips]; saw {spec}, expected {expected}")
+    cards = [c for c in fake.containers if c["border"] is True]
+    assert cards, (
+        f"panel must render as a bordered card; saw {fake.containers}")
+    assert any("Hashtags" in m and "lib-panel-title" in m
+               for m in fake.markup), (
+        f"'Hashtags' panel title must render; saw {fake.markup}")
+    keys = [b[1] for b in fake.buttons]
+    assert "lib_panel_moretags_teststory1" in keys, (
+        f"Load more button must render; saw {keys}")
+    assert "lib_panel_tags_teststory1" in keys, (
+        f"Force fetch button must render; saw {keys}")
 
 
-def test_hashtags_row_renders_chips_and_remove_overlays(libdir):
+def test_hashtags_panel_renders_rows_and_remove_buttons(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_hashtags_row("teststory1", _TAGS)
+    lui._render_hashtags_panel(
+        story_id="teststory1", tags=_TAGS, busy_kinds=set(),
+        ai_engine="Dummy")
 
-    assert any("Hashtags" in m for m in fake.markup), (
-        f"'Hashtags' title must render; saw {fake.markup}")
     for tag in _TAGS:
-        assert any(tag in m and "lib-chip" in m for m in fake.markup), (
-            f"chip for {tag} must render; saw {fake.markup}")
+        assert any(tag in m and "lib-panel-row" in m for m in fake.markup), (
+            f"row for {tag} must render; saw {fake.markup}")
     x_buttons = [b for b in fake.buttons if b[0] == "×"]
     assert [b[1] for b in x_buttons] == [
-        "lib_xtag_teststory1_0", "lib_xtag_teststory1_1"], (
-        f"each chip needs its × remove button; saw {fake.buttons}")
+        "lib_panel_xtag_teststory1_0", "lib_panel_xtag_teststory1_1"], (
+        f"each row needs its × remove button; saw {fake.buttons}")
+    assert "Showing 2 of 2" in fake.captions, (
+        f"footer must read 'Showing 2 of 2'; saw {fake.captions}")
 
 
 # ---------------------------------------------------------------------------
@@ -187,9 +195,10 @@ def test_story_detail_rows_unchanged(libdir, monkeypatch):
     # Title row
     assert any("lib-doc-title" in m for m in fake.markup)
     assert ("", "lib_title_edit_teststory1") in fake.buttons
-    # Hashtag chips
+    # Hashtag panel rows
     for tag in _TAGS:
-        assert any(tag in m and "lib-chip" in m for m in fake.markup)
+        assert any(tag in m and "lib-panel-row" in m for m in fake.markup)
+    assert "Showing 2 of 2" in fake.captions
     # Upload popover (by its help text — the detail also renders reset/share/copy)
     assert any(p.get("help") == "Upload video or image" for p in fake.popovers), (
         f"upload popover must render; saw {fake.popovers}")

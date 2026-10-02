@@ -1,10 +1,11 @@
 """v1.6.2 (#162) — all section row components vertically center content.
 
-``_render_title_row``, ``_render_hashtags_row``, ``_render_images_row``,
-``_render_upload_row`` and ``_render_news_links_row`` must each pass
-``vertical_alignment="center"`` to their ``st.columns()`` call, so the
-section title and chips/controls are vertically centered relative to
-each other (Streamlit columns top-align by default).
+``_render_title_row``, ``_render_images_row`` and (since #303) the
+``_render_hashtags_panel`` / ``_render_news_links_panel`` header and row
+columns must each pass ``vertical_alignment="center"`` to their
+``st.columns()`` call, so the section title and controls/rows are
+vertically centered relative to each other (Streamlit columns
+top-align by default).
 
 These tests drive each component with the recording fake streamlit and
 assert the vertical_alignment contract. Visual verification (screenshots
@@ -45,16 +46,26 @@ def test_title_row_is_vertically_centered(libdir):
     _assert_single_centered_row(fake, "_render_title_row")
 
 
-def test_hashtags_row_is_vertically_centered(libdir):
+def test_hashtags_panel_is_vertically_centered(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_hashtags_row("sid1", ["#Alpha", "#Beta"])
-    _assert_single_centered_row(fake, "_render_hashtags_row")
+    lui._render_hashtags_panel(
+        story_id="sid1", tags=["#Alpha", "#Beta"], busy_kinds=set(),
+        ai_engine="Dummy")
+    # header [10, 1, 1] + one [11, 1] per row: all vertically centered
+    assert fake.column_specs, "panel must render columns"
+    assert all(v == "center" for v in fake.column_valigns), (
+        f"panel header and rows must pass vertical_alignment='center'; "
+        f"saw {fake.column_valigns}")
 
 
-def test_news_links_row_is_vertically_centered(libdir):
+def test_news_links_panel_is_vertically_centered(libdir):
     lui, fake = _ui_with_recording_st()
-    lui._render_news_links_row("sid1", _LINKS, set())
-    _assert_single_centered_row(fake, "_render_news_links_row")
+    lui._render_news_links_panel(
+        story_id="sid1", links=_LINKS, busy_kinds=set())
+    assert fake.column_specs, "panel must render columns"
+    assert all(v == "center" for v in fake.column_valigns), (
+        f"panel header and rows must pass vertical_alignment='center'; "
+        f"saw {fake.column_valigns}")
 
 
 def test_images_row_is_vertically_centered(libdir):

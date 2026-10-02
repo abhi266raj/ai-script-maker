@@ -250,47 +250,36 @@ def test_parse_refresh_outcome():
 # ---------------------------------------------------------------------------
 
 def _kind_button_kwargs(lui, **kw):
-    d = dict(story_id="sid1", kind="hashtags", label=lui._TB_ICON_TAG,
-             button_key="lib_tags_sid1", kick_label="hashtag",
-             help_text="Update Hashtags",
+    # #303: the hashtag/news toolbar buttons moved into the panel
+    # headers — the helper is now exercised via the Images kind, which
+    # keeps its toolbar slot.
+    d = dict(story_id="sid1", kind="images", label=lui._TB_ICON_IMAGE,
+             button_key="lib_imgs_sid1", kick_label="image",
+             help_text="Update Images",
              busy_kinds=set(), ai_engine=None)
     d.update(kw)
     return d
 
 
 def test_kind_button_label_stable_while_running():
-    """#53/#71/#111: while hashtags runs the icon button shows Streamlit's
-    native spinner (never "Updating Hashtags…"), is disabled, keeps full
+    """#53/#71/#111: while images runs the icon button shows Streamlit's
+    native spinner (never "Updating Images…"), is disabled, keeps full
     width, and the text label stays empty. The tooltip keeps the
-    "Update Hashtags" label for discoverability."""
+    "Update Images" label for discoverability."""
     lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_kind_button_kwargs(lui, busy_kinds={"hashtags"}))
-    assert fake.buttons == [("", "lib_tags_sid1")]
+    lui._render_kind_button(**_kind_button_kwargs(lui, busy_kinds={"images"}))
+    assert fake.buttons == [("", "lib_imgs_sid1")]
     kw = fake.button_kwargs[0]
     assert kw["icon"] == "spinner"
     assert kw["disabled"] is True
     assert kw["use_container_width"] is True
-    assert kw["help"] == "Update Hashtags"
-    assert "lib-spin-hashtags" not in "".join(fake.markup)
+    assert kw["help"] == "Update Images"
+    assert "lib-spin-images" not in "".join(fake.markup)
 
 
 def test_kind_button_idle_state():
     lui, fake = _ui_with_fake_st()
     lui._render_kind_button(**_kind_button_kwargs(lui))
-    assert fake.buttons == [("", "lib_tags_sid1")]
-    assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_TAG
-    assert fake.button_kwargs[0]["disabled"] is False
-    assert fake.button_kwargs[0]["help"] == "Update Hashtags"
-    assert "lib-spin-hashtags" not in "".join(fake.markup)
-
-
-def test_kind_button_independent_while_sibling_runs():
-    """#54: the images icon button stays enabled while hashtags runs."""
-    lui, fake = _ui_with_fake_st()
-    lui._render_kind_button(**_kind_button_kwargs(lui,
-        kind="images", label=lui._TB_ICON_IMAGE, button_key="lib_imgs_sid1",
-        kick_label="image", help_text="Update Images",
-        busy_kinds={"hashtags"}))
     assert fake.buttons == [("", "lib_imgs_sid1")]
     assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_IMAGE
     assert fake.button_kwargs[0]["disabled"] is False
@@ -298,24 +287,50 @@ def test_kind_button_independent_while_sibling_runs():
     assert "lib-spin-images" not in "".join(fake.markup)
 
 
+def test_kind_button_independent_while_sibling_runs():
+    """#54: the images icon button stays enabled while news runs."""
+    lui, fake = _ui_with_fake_st()
+    lui._render_kind_button(**_kind_button_kwargs(lui, busy_kinds={"news"}))
+    assert fake.buttons == [("", "lib_imgs_sid1")]
+    assert fake.button_kwargs[0]["icon"] == lui._TB_ICON_IMAGE
+    assert fake.button_kwargs[0]["disabled"] is False
+    assert fake.button_kwargs[0]["help"] == "Update Images"
+    assert "lib-spin-images" not in "".join(fake.markup)
+
+
+def test_kind_button_sibling_blocked_no_spinner():
+    """#303: a force-fetch button whose sibling (load more) runs is
+    blocked — disabled with NO spinner (blocked, not working)."""
+    lui, fake = _ui_with_fake_st()
+    lui._render_kind_button(**_kind_button_kwargs(
+        lui, kind="hashtags", label=lui._TB_ICON_SYNC,
+        button_key="lib_panel_tags_sid1", kick_label="hashtag",
+        help_text="Re-fetch all hashtags", busy_kinds={"more_hashtags"},
+        sibling_blocked=True))
+    kw = fake.button_kwargs[0]
+    assert kw["disabled"] is True
+    assert kw["icon"] == lui._TB_ICON_SYNC, (
+        f"blocked button must not show the spinner; saw {kw['icon']}")
+
+
 def test_kind_button_click_kicks_refresh(monkeypatch):
-    lui, fake = _ui_with_fake_st(clicks=("lib_tags_sid1",))
+    lui, fake = _ui_with_fake_st(clicks=("lib_imgs_sid1",))
     calls = []
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (
                             calls.append((sid, kind, ai_engine)) or (True, "")))
     lui._render_kind_button(**_kind_button_kwargs(lui))
-    assert calls == [("sid1", "hashtags", None)]
+    assert calls == [("sid1", "images", None)]
     assert fake.reran is True
     assert fake.errors == []
 
 
 def test_kind_button_kick_failure_is_loud(monkeypatch):
-    lui, fake = _ui_with_fake_st(clicks=("lib_tags_sid1",))
+    lui, fake = _ui_with_fake_st(clicks=("lib_imgs_sid1",))
     monkeypatch.setattr(lui.lib, "start_refresh",
                         lambda sid, kind, ai_engine=None: (False, "boom"))
     lui._render_kind_button(**_kind_button_kwargs(lui))
-    assert fake.errors == ["Could not start the hashtag refresh: boom"]
+    assert fake.errors == ["Could not start the image refresh: boom"]
     assert fake.reran is False
 
 

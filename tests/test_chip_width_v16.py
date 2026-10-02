@@ -136,55 +136,29 @@ def test_chip_theme_colors_preserved():
 
 
 # ---------------------------------------------------------------------------
-# Python: proportional column weights (#56)
+# #303: proportional chip column weights are gone with the chip rows.
+# Panels use vertical rows inside a fixed-height scroll container —
+# there is nothing left to weight.
 # ---------------------------------------------------------------------------
 
-def test_chip_col_weights_proportional_to_label_length():
+def test_chip_col_weights_helper_removed():
     lui, _ = _load_lui()
-    short = lui._chip_col_weights(["#NiftyFall"])
-    long_ = lui._chip_col_weights(["#IndianStockMarket"])
-    assert long_[0] > short[0], "longer label must get a wider column"
+    assert not hasattr(lui, "_chip_col_weights"), (
+        "proportional chip weights died with the chip rows")
 
 
-def test_chip_col_weights_include_padding_allowance():
-    lui, _ = _load_lui()
-    # 6-char label + ~7 chars for the pill's fixed 56px horizontal padding
-    # (#68 follow-up: clearance grew 34px → 44px for more × breathing room).
-    assert lui._chip_col_weights(["#abcde"]) == [13]
-
-
-def test_chip_col_weights_floor_keeps_tiny_labels_tappable():
-    lui, _ = _load_lui()
-    assert lui._chip_col_weights(["#a"]) == [11]
-    assert lui._chip_col_weights([]) == []
-
-
-def test_chip_col_weights_monotonic():
-    lui, _ = _load_lui()
-    labels = ["#a", "#abcd", "#abcdefgh", "#abcdefghijklmnop"]
-    weights = lui._chip_col_weights(labels)
-    assert weights == sorted(weights), f"not monotonic: {weights}"
-    assert len(weights) == len(labels)
-
-
-def test_hashtag_row_uses_proportional_weights():
+def test_hashtag_row_replaced_by_panel():
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    # #107: the title rides in the first column; chips keep proportional
-    # weights (never equal-weighted).
-    assert '_tcols = st.columns([_section_title_weight("Hashtags")]' in src
-    assert "_chip_col_weights(tags)" in src
-    assert "_tcols = st.columns(len(tags))" not in src
+    assert "_chip_col_weights(tags)" not in src
+    assert "_render_hashtags_panel" in src
 
 
-def test_newslink_row_uses_proportional_weights():
+def test_newslink_row_replaced_by_panel():
     src = Path(__file__).resolve().parent.parent.joinpath(
         "library_ui.py").read_text()
-    # #107: the title rides in the first column; chips keep proportional
-    # weights (never equal-weighted).
-    assert '_lcols = st.columns([_section_title_weight("News Links")]' in src
-    assert "_chip_col_weights(_labels)" in src
-    assert "_lcols = st.columns(len(links))" not in src
+    assert "_chip_col_weights(_labels)" not in src
+    assert "_render_news_links_panel" in src
 
 
 def test_image_row_keeps_equal_columns():
