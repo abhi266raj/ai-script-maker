@@ -679,7 +679,23 @@ class NewsFetcher:
                 skipped += 1
             else:
                 # Fail-open: probably a direct link whose server blocks
-                # bots; it still works in the user's browser.
+                # bots; it still works in the user's browser. The URL is
+                # kept as-is, but a stale aggregator label is still
+                # refreshed from the URL's domain (#227/#230) — the
+                # publisher is fully determined by the domain, no network
+                # call needed. Fail-open applies to the URL, never the
+                # label: a wrong "DuckDuckGo"/"Bing News" stamp must not
+                # survive just because resolution failed.
+                _old_source = (art.source or "").strip()
+                if _old_source in _STALE_AGGREGATOR_SOURCES:
+                    _fresh = publisher_name_from_url(link)
+                    if _fresh:
+                        art.source = _fresh
+                    else:
+                        logger.warning(
+                            "could not derive publisher name from "
+                            "unresolvable URL %r; keeping source %r",
+                            link, art.source)
                 kept.append(art)
         return kept, skipped
 

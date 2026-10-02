@@ -1690,8 +1690,14 @@ def _render_news_links_row(story_id: str, links: list, busy_kinds) -> None:
                 unsafe_allow_html=True)
     # #107: "News Links" title and link chips share ONE row — same
     # pattern as Hashtags.
+    # #233: chip labels show the publisher name, never a stale
+    # fetch-time engine/aggregator label ("DuckDuckGo", "Bing News",
+    # ...). Normalized here at render — the same offline-safe refresh
+    # the share paths apply (#231) — so chips are correct even when no
+    # refresh/repair ran between story creation and render.
     _labels = [_news_chip_label((_lk.get("title") or "News link"),
-                                (_lk.get("source") or ""))
+                                lib.refresh_stale_news_link_source(
+                                    _lk.get("source"), _lk.get("url")))
                for _lk in links]
     _lcols = st.columns([_section_title_weight("News Links")]
                         + _chip_col_weights(_labels)
@@ -2605,7 +2611,12 @@ def _compose_news_tags_text(meta: dict, title: str = "") -> str:
         if not url or url in seen_urls:
             continue
         seen_urls.add(url)
-        source = (lk.get("source") or "").strip()
+        # #231/#233: normalize stale fetch-time labels ("DuckDuckGo",
+        # "Bing News", ...) to the publisher name derived from the URL —
+        # the same treatment the Telegram share path gets. A stale label
+        # must never reach user-facing share text.
+        source = lib.refresh_stale_news_link_source(
+            lk.get("source"), url).strip()
         if not source:
             # Publisher display name first ("Times of India"); the raw
             # netloc, then the URL itself, stay as the last resorts (#232).

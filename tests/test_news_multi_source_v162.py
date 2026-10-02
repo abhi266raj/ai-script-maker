@@ -262,7 +262,11 @@ def test_chain_uses_ddg_when_rss_empty(monkeypatch):
         return _resp(content=b'<?xml version="1.0"?><rss version="2.0"><channel></channel></rss>')
     _fake_http(monkeypatch, handler)
     arts, report = NewsFetcher().search_news_multi("gurugram metro", 8)
-    assert any(a.source == "DuckDuckGo" for a in arts)
+    # #227: DDG articles carry the publisher name derived from their URL's
+    # domain — never the "DuckDuckGo" engine stamp. (This assertion
+    # previously expected the stale stamp; the stale label was the bug.)
+    assert {a.source for a in arts} == {"Example", "Direct"}
+    assert not any(a.source == "DuckDuckGo" for a in arts)
     assert any(r["source"] == "duckduckgo-html" and r["outcome"] == "ok" for r in report)
 
 
