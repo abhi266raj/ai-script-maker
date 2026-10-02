@@ -72,6 +72,10 @@ class VideoScenePrompt(BaseModel):
     aspect_ratio: str
     motion_level: str
     ai_engine: str
+    # #335: per-prompt grounding status shown in the script — "verified" when
+    # built from Stage 1 facts, "need verification" when the user bypassed
+    # the no-facts gate. Set explicitly on bypass, never left ambiguous.
+    verification_status: str = "verified"
 
 
 class VideoPassVerification(BaseModel):

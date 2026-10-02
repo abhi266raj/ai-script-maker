@@ -585,6 +585,9 @@ class ChiefEditorCoordinatorAgent:
             "sub_instructions": sub_instructions,
             "verification": verification,
             "verification_from_cache": verification_from_cache,
+            # #335: True when the user bypassed Stage 1 verification (#316).
+            # Downstream gates must honor it — never re-refuse (#334).
+            "verification_bypassed": was_bypassed,
             "cache_age_hours": round(cache_age_hours, 1),
             "agent_audits": agent_audits,
             "start_time": start_time,
@@ -1456,6 +1459,12 @@ class ChiefEditorCoordinatorAgent:
                 verified_facts=verification.verified_facts if verification else [],
                 sub_instruction=sub_instructions.get("video_prompt_engineer"),
                 engine_mode=engine_mode,
+                # #335: honor an explicit user bypass — never double-check
+                # a gate the user already overrode (#334).
+                bypass_no_facts=bool(
+                    state.get("verification_bypassed")
+                    or state.get("bypass_stage5_no_facts")
+                ),
             )
 
             for sc, vp in zip(scenes, video_prompts):
@@ -2187,6 +2196,11 @@ class ChiefEditorCoordinatorAgent:
             **kwargs,
         )
 
+        # #335: one-shot Stage 5 bypass from the failure UI (continuous mode).
+        # Carried on pipeline state so execute_stage_5 honors it — the gate
+        # is never re-checked after the user overrides it (#334).
+        state["bypass_stage5_no_facts"] = bool(kwargs.get("bypass_stage5_no_facts", False))
+
         yield {
             "step": 1,
             "total_steps": 6,
@@ -2339,6 +2353,9 @@ class ChiefEditorCoordinatorAgent:
                     "video_prompt_engineer": state.get("sub_instructions", {}).get("video_prompt_engineer", ""),
                 },
                 "scripts": state.get("scripts", []),
+                # #335: bypass markers so the UI loudly flags ungrounded visuals.
+                "verification_bypassed": bool(state.get("verification_bypassed")),
+                "bypass_stage5_no_facts": bool(state.get("bypass_stage5_no_facts")),
             },
         }
 
