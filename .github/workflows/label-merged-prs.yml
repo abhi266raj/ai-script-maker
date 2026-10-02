@@ -1,20 +1,25 @@
-name: Label merged PRs as code completed
+name: Code-completed labeling
 
-# When a PR is squash-merged into develop, tag it with the
-# "code completed" label so merged work is easy to spot.
+# 1. When a PR is squash-merged into develop, tag it "code completed".
+# 2. When the same bug is reported again, remove the tag — the work
+#    wasn't actually complete. That covers both shapes of "again":
+#      - an issue REOPENED (finds PRs that referenced it via Closes #N), and
+#      - a new issue whose title/body says "reopen" and names the PR (e.g. "PR #272").
 # (Issues stay open until the v1.7 release PR to main closes them.)
 
 on:
   pull_request_target:
     types: [closed]
     branches: [develop]
+  issues:
+    types: [opened, reopened]
 
 permissions:
   pull-requests: write
 
 jobs:
   label-merged:
-    if: github.event.pull_request.merged == true
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     steps:
       - name: Add "code completed" label
@@ -28,3 +33,39 @@ jobs:
           gh pr edit "${{ github.event.pull_request.number }}" \
             --add-label "code completed" \
             --repo "${{ github.repository }}"
+
+  unlabel-reopened:
+    if: github.event_name == 'issues'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Remove "code completed" from the PR that claimed the fix
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          REPO="${{ github.repository }}"
+          ISSUE="${{ github.event.issue.number }}"
+          ACTION="${{ github.event.action }}"
+          PRS=""
+
+          if [ "$ACTION" = "reopened" ]; then
+            # PRs that referenced this issue (e.g. via "Closes #N" in the body)
+            PRS=$(gh api "repos/$REPO/issues/$ISSUE/timeline" --paginate \
+              -q '[.[] | select(.event=="cross-referenced") | .source.issue | select(.pull_request != null) | .number] | unique | .[]' 2>/dev/null || true)
+          else
+            TITLE="${{ github.event.issue.title }}"
+            BODY="${{ github.event.issue.body }}"
+            case "$TITLE $BODY" in
+              *[Rr][Ee][Oo][Pp][Ee][Nn]*)
+                PRS=$(printf '%s\n%s' "$TITLE" "$BODY" | grep -oiE '(PR|pull request) #[0-9]+' | grep -oE '[0-9]+' | sort -u || true)
+                ;;
+            esac
+          fi
+
+          for PR in $PRS; do
+            if gh pr view "$PR" --repo "$REPO" \
+                 --json state,baseRefName \
+                 --jq -e 'select(.state=="MERGED" and .baseRefName=="develop")' >/dev/null 2>&1; then
+              gh pr edit "$PR" --repo "$REPO" --remove-label "code completed" \
+                && echo "Removed 'code completed' from PR #$PR (bug #$ISSUE reported again)"
+            fi
+          done
