@@ -2629,14 +2629,13 @@ with col_settings:
         with story_heading:
             st.markdown('<div class="ios-section-label">Story &amp; Topic</div>', unsafe_allow_html=True)
         with story_refresh:
-            # HIG §3 (#196): the Refresh button owns its loading state — it
-            # renders disabled while a fetch it kicked off is in flight, and
-            # the activity indicator appears here, next to the button.
+            # HIG §3 (#196, #325): the Refresh button owns its loading state —
+            # it swaps to a spinner icon and stays disabled while a fetch it
+            # kicked off is in flight. No detached spinner.
             # #264: icon-only (house rule) — no text label; the hover help
             # tag carries the description.
             _refresh_busy = is_refresh_busy(st.session_state)
-            refresh_news = st.button("", icon=":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
-            refresh_indicator = st.empty()
+            refresh_news = st.button("", icon=":material/progress_activity:" if _refresh_busy else ":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
         # Claim the click once per fragment run: the first fetch site below
         # takes the claim; stacked re-clicks (busy or inside the cooldown
         # window) are ignored — no second fetch, ever.
@@ -2728,13 +2727,10 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196): the Refresh button owns this fetch —
-                            # the activity indicator renders next to the button
-                            # (refresh_indicator), never detached below.
-                            # Unlabeled spinner per HIG: don't label a spinning indicator.
-                            with refresh_indicator:
-                                with st.spinner(""):
-                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
+                            # it shows the spinner icon while busy. No detached
+                            # spinner.
+                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2787,13 +2783,10 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196): the Refresh button owns this fetch —
-                            # the activity indicator renders next to the button
-                            # (refresh_indicator), never detached below.
-                            # Unlabeled spinner per HIG: don't label a spinning indicator.
-                            with refresh_indicator:
-                                with st.spinner(""):
-                                    _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
+                            # it shows the spinner icon while busy. No detached
+                            # spinner.
+                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2847,51 +2840,48 @@ with col_settings:
                     if _need_headlines and (not refresh_news or _claim_refresh_once() or not st.session_state.live_news_articles):
                         articles = []
                         try:
-                            # HIG §3 (#196): the Refresh button owns this fetch —
-                            # the activity indicator renders next to the button
-                            # (refresh_indicator), never detached below.
-                            # Unlabeled spinner per HIG: don't label a spinning indicator.
-                            with refresh_indicator:
-                                with st.spinner(""):
-                                    _ht = (st.session_state.get("active_hashtag") or "").strip()
-                                    if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
-                                        # Hashtag mode: every hashtag carries its own headline —
-                                        # use it directly, no extra search needed.
-                                        # Normalize the hashtag dict entry to a NewsArticle-like object
-                                        # (dicts have "headline", articles need "title").
-                                        if active_hashtag_article:
-                                            if isinstance(active_hashtag_article, dict):
-                                                from types import SimpleNamespace
-                                                articles = [SimpleNamespace(
-                                                    title=active_hashtag_article.get("headline", ""),
-                                                    link=active_hashtag_article.get("link", ""),
-                                                    source=active_hashtag_article.get("source", ""),
-                                                    time_label="",
-                                                )]
-                                            else:
-                                                articles = [active_hashtag_article]
-                                        else:
-                                            # Custom typed hashtag: search news about the topic.
-                                            _query = _ht.lstrip("#").replace("#", " ")
-                                            articles = news_fetcher.search_news(_query, limit=16)
-                                    elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
-                                            articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
-                                    elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                                            articles = news_fetcher.get_india_trending(limit=16)
-                                    elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                                            articles = news_fetcher.get_top_indian_politics_news(limit=16)
-                                    elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                                            articles = news_fetcher.get_top_indian_culture_news(limit=16)
-                                    elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                                            articles = news_fetcher.get_top_india_tech_news(limit=16)
-                                    elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                                            articles = news_fetcher.get_top_tech_news(limit=16)
-                                    elif "World" in selected_news_cat:
-                                            articles = news_fetcher.get_top_world_news(limit=16)
-                                    elif "Business" in selected_news_cat:
-                                            articles = news_fetcher.get_top_business_news(limit=16)
+                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
+                            # it shows the spinner icon while busy. No detached
+                            # spinner.
+                            _ht = (st.session_state.get("active_hashtag") or "").strip()
+                            if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
+                                # Hashtag mode: every hashtag carries its own headline —
+                                # use it directly, no extra search needed.
+                                # Normalize the hashtag dict entry to a NewsArticle-like object
+                                # (dicts have "headline", articles need "title").
+                                if active_hashtag_article:
+                                    if isinstance(active_hashtag_article, dict):
+                                        from types import SimpleNamespace
+                                        articles = [SimpleNamespace(
+                                            title=active_hashtag_article.get("headline", ""),
+                                            link=active_hashtag_article.get("link", ""),
+                                            source=active_hashtag_article.get("source", ""),
+                                            time_label="",
+                                        )]
                                     else:
-                                            articles = news_fetcher.get_top_india_news(limit=16)
+                                        articles = [active_hashtag_article]
+                                else:
+                                    # Custom typed hashtag: search news about the topic.
+                                    _query = _ht.lstrip("#").replace("#", " ")
+                                    articles = news_fetcher.search_news(_query, limit=16)
+                            elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                                    articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                            elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                                    articles = news_fetcher.get_india_trending(limit=16)
+                            elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
+                                    articles = news_fetcher.get_top_indian_politics_news(limit=16)
+                            elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
+                                    articles = news_fetcher.get_top_indian_culture_news(limit=16)
+                            elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
+                                    articles = news_fetcher.get_top_india_tech_news(limit=16)
+                            elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
+                                    articles = news_fetcher.get_top_tech_news(limit=16)
+                            elif "World" in selected_news_cat:
+                                    articles = news_fetcher.get_top_world_news(limit=16)
+                            elif "Business" in selected_news_cat:
+                                    articles = news_fetcher.get_top_business_news(limit=16)
+                            else:
+                                    articles = news_fetcher.get_top_india_news(limit=16)
                         except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
                             # Loud failure: visible error banner, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
