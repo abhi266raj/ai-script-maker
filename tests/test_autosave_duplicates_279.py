@@ -65,9 +65,17 @@ class _Script:
 def ui(monkeypatch, tmp_path):
     """library_ui with `st` stubbed; `_save_current_story` replaced by a
     fake that writes one marker file per script id into tmp_path (the
-    "on disk" assertion), and `start_enrichment` neutralized."""
+    "on disk" assertion), and `start_enrichment` neutralized.
+
+    #138: prefs are redirected to tmp_path so the cross-run content-hash
+    dedup starts from a clean slate (test isolation — the real prefs file
+    must not leak hashes between tests)."""
     fake = _FakeSt()
     monkeypatch.setattr(lui, "st", fake)
+    import story_library as _lib
+    _prefs_dir = tmp_path / "prefsdir"
+    _prefs_dir.mkdir(exist_ok=True)
+    monkeypatch.setattr(_lib, "PREFS_PATH", _prefs_dir / "prefs.json")
     saved = []
 
     def fake_save(batch_result, script, pro_screenplay=""):
@@ -105,7 +113,7 @@ def test_browsing_a_b_a_c_b_saves_each_script_once(ui):
 
     assert saved == ["A", "B", "C"], \
         f"#279: browsing re-saved scripts, save order was {saved}"
-    files = sorted(p.name for p in tmp_path.iterdir())
+    files = sorted(p.name for p in tmp_path.iterdir() if p.is_file())
     assert files == ["story-A.md", "story-B.md", "story-C.md"], \
         f"#279: duplicate entries on disk: {files}"
 
@@ -120,7 +128,7 @@ def test_repeat_reruns_of_same_script_save_once(ui):
         _view(fake, batch, a, 0)
 
     assert saved == ["A"], saved
-    assert [p.name for p in tmp_path.iterdir()] == ["story-A.md"]
+    assert [p.name for p in tmp_path.iterdir() if p.is_file()] == ["story-A.md"]
 
 
 def test_empty_screenplay_fails_loudly_without_saving(ui):
@@ -131,7 +139,7 @@ def test_empty_screenplay_fails_loudly_without_saving(ui):
     _view(fake, batch, _Script("A"), 0, text="")
 
     assert saved == [], "nothing may be saved without the final-stage text"
-    assert list(tmp_path.iterdir()) == []
+    assert [p for p in tmp_path.iterdir() if p.is_file()] == []
     assert any("Auto-save to library failed" in e for e in fake.errors), \
         f"failure must surface loudly, got errors={fake.errors}"
     assert "Save to Library" in fake.buttons, \

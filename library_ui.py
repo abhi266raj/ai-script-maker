@@ -8,6 +8,7 @@ the script (st.stop()) before any Studio code runs.
 from __future__ import annotations
 
 import html as _html
+import hashlib as _hashlib
 import re as _re
 import time as _time
 from collections.abc import Callable, Set
@@ -2140,6 +2141,61 @@ def _autosave_completed_guards() -> set:
     return guards
 
 
+# ---------------------------------------------------------------------------
+# Cross-run autosave dedup (#138 save-phase root cause).
+#
+# The session-state guard set above (#279) dedupes within one session, but
+# its guard string is id()-based: every NEW generation run mints a new
+# batch_result object, so all guards are fresh and the landing version (v1,
+# selected_script_idx=0) autosaves AGAIN. Same topic + same first angle ->
+# near-identical script 1 -> the Library accumulates same-content stories
+# with indistinguishable titles. #147's gates only check within one batch.
+#
+# Fix: persist a set of saved screenplay content-hashes in prefs.json (not
+# session state) and skip the autosave when the hash already exists.
+# ---------------------------------------------------------------------------
+_AUTOSAVED_HASHES_PREF_KEY = "autosaved_screenplay_hashes"
+_AUTOSAVED_HASHES_CAP = 1000
+
+
+def _screenplay_content_hash(text: str) -> str:
+    """Stable identity for a screenplay: sha256 of whitespace/case
+    normalized text. Two runs producing the same script hash equal even
+    when the Python objects differ (id()-based guards cannot do this)."""
+    norm = _re.sub(r"\s+", " ", (text or "").lower()).strip()
+    return _hashlib.sha256(norm.encode("utf-8")).hexdigest()
+
+
+def _autosaved_content_hashes() -> set:
+    """Content-hashes of screenplays already saved to the library,
+    persisted in prefs.json so dedup works ACROSS runs/sessions."""
+    try:
+        stored = lib.load_prefs().get(_AUTOSAVED_HASHES_PREF_KEY) or []
+        return set(stored) if isinstance(stored, list) else set()
+    except Exception:
+        return set()
+
+
+def _record_autosaved_content_hash(content_hash: str) -> None:
+    """Persist ``content_hash``; fail loudly if the record did not stick
+    (a lost record means the next run would save a duplicate)."""
+    hashes = _autosaved_content_hashes()
+    hashes.add(content_hash)
+    ordered = sorted(hashes)
+    # Cap growth: keep the newest entries (sorted hex has no time order,
+    # so keep it simple — drop from the front deterministically).
+    if len(ordered) > _AUTOSAVED_HASHES_CAP:
+        ordered = ordered[-_AUTOSAVED_HASHES_CAP:]
+    lib.save_prefs({_AUTOSAVED_HASHES_PREF_KEY: ordered})
+    if content_hash not in _autosaved_content_hashes():
+        # save_prefs swallows errors by design; verify the write here so a
+        # silent persistence failure cannot silently reintroduce duplicates.
+        st.error(
+            "Auto-save dedup record could not be persisted: the same "
+            "screenplay may save again on the next run."
+        )
+
+
 def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None:
     """Auto-save the finished story once (guarded against Streamlit reruns).
 
@@ -2152,6 +2208,11 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
     ``_autosave_completed_guards``): each (batch result, script) pair
     saves at most once per session, no matter how the user navigates
     between scripts (#279).
+
+    Cross-run dedup (#138 save phase): the screenplay's content-hash is
+    checked against the persisted set (prefs.json). A re-generated
+    identical script — e.g. v1 landing again on a fresh run — is skipped
+    silently because the story already exists in the Library.
     """
     res_id = id(batch_result)
     script_id = getattr(script, "id", "?")
@@ -2169,6 +2230,12 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         st.error("Auto-save to library failed: the final-stage screenplay text was not provided.")
         _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
+    content_hash = _screenplay_content_hash(pro_screenplay)
+    if content_hash in _autosaved_content_hashes():
+        # Already in the Library from an earlier run — skip silently.
+        # Recording the session guard too keeps reruns cheap.
+        _autosave_completed_guards().add(guard)
+        return
     try:
         story_id = _save_current_story(batch_result, script, pro_screenplay)
     except Exception as e:  # fail loudly, offer manual fallback
@@ -2177,6 +2244,7 @@ def maybe_autosave_story(batch_result, script, pro_screenplay: str = "") -> None
         _render_manual_save_fallback(batch_result, script, guard, pro_screenplay)
         return
     _autosave_completed_guards().add(guard)
+    _record_autosaved_content_hash(content_hash)
     st.session_state.pop("lib_save_failed_for", None)
     topic = st.session_state.get("run_topic", "") or ""
     _ok, _why = lib.start_enrichment(story_id, topic)
@@ -2244,6 +2312,15 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
     headline = st.session_state.get("selected_headline_title", "") or ""
     # The story title is the news headline it was built from.
     title = headline or topic or getattr(script, "title", "") or "Untitled Story"
+    # #138 save phase: autosaves from one batch shared the identical
+    # headline title, making duplicate rows indistinguishable in the
+    # Library. Suffix the viewed version so each saved script is
+    # distinguishable (v1 = first script, v2 = second, ...).
+    try:
+        _vnum = int(st.session_state.get("selected_script_idx", 0)) + 1
+    except (TypeError, ValueError):
+        _vnum = 1
+    title = f"{title} · v{_vnum}"
     if not hashtags:
         # Never save hashtag-less: derive story-specific tags locally
         # (instant, no network) — the background enrichment adds trending
@@ -2271,6 +2348,9 @@ def _render_manual_save_fallback(batch_result, script, guard: str, pro_screenpla
             st.error(f"Save to library failed: {e}")
             return
         _autosave_completed_guards().add(guard)
+        # Cross-run dedup (#138): a manual save counts — a later autosave
+        # of the same screenplay must skip.
+        _record_autosaved_content_hash(_screenplay_content_hash(pro_screenplay))
         st.session_state.pop("lib_save_failed_for", None)
         topic = st.session_state.get("run_topic", "") or ""
         _ok, _why = lib.start_enrichment(story_id, topic)
