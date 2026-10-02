@@ -137,7 +137,12 @@ def inject_library_css() -> None:
     :root {
         --lib-chip-h: 30px;     /* every chip, every row: one height */
         --lib-chip-gap: 10px;   /* gap between cards in a scroll row */
-        --lib-x-size: 22px;     /* × overlay button diameter */
+        --lib-x-size: 22px;     /* ×/✎ overlay GLYPH diameter (visual only) */
+        --lib-x-hit: 44px;      /* #214: HIG §2 minimum hit region — the
+           tappable area of every ×/✎ overlay button. The glyph stays
+           22px; a transparent ::after (below) pads the hit area out to
+           44×44 so the visible design and the one-line row geometry are
+           untouched. */
         --lib-act-h: 38px;      /* Share/Copy action button height */
         --lib-row-space: 22px;  /* vertical rhythm between sections */
     }
@@ -466,11 +471,22 @@ def inject_library_css() -> None:
         width: auto !important;
         z-index: 10 !important;
     }
+    /* #214 (HIG §2: 44×44pt minimum hit region): the visible ×/✎ glyph
+       stays 22px (--lib-x-size), but every one of these buttons performs
+       a destructive remove, so the tappable area is padded out to
+       --lib-x-hit (44px) with a transparent ::after on the button itself.
+       The ::after is part of the <button> element, so clicks anywhere in
+       the 44×44 box hit the button; the button keeps its 22px box, so no
+       row geometry, chip padding, or corner position moves. `overflow:
+       visible` guards the expansion against any Streamlit overflow clip,
+       which would otherwise silently shrink the hit area back to 22px. */
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
         div[data-testid="stColumn"]
         div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
         + div[data-testid="stElementContainer"] [data-testid="stButton"] button {
+        position: relative !important;
+        overflow: visible !important;
         width: var(--lib-x-size) !important;
         height: var(--lib-x-size) !important;
         min-width: var(--lib-x-size) !important;
@@ -485,6 +501,21 @@ def inject_library_css() -> None:
         box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25) !important;
         color: inherit !important;
         border: 1px solid rgba(128, 128, 128, 0.45) !important;
+    }
+    div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
+        + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
+        div[data-testid="stColumn"]
+        div[data-testid="stElementContainer"]:has([data-marker^="lib-x-"])
+        + div[data-testid="stElementContainer"] [data-testid="stButton"] button::after {
+        /* #214: transparent hit-area pad — (44px − 22px) / 2 = 11px on
+           every side. Invisible, in-flow-neutral (absolute), and the
+           button's box/position are unchanged. */
+        content: "" !important;
+        position: absolute !important;
+        top: -11px !important;
+        right: -11px !important;
+        bottom: -11px !important;
+        left: -11px !important;
     }
     div[data-testid="stElementContainer"]:has([data-marker="lib-hscroll"])
         + div[data-testid="stLayoutWrapper"] > div[data-testid="stHorizontalBlock"]
@@ -1313,7 +1344,11 @@ def _fire_refresh_toasts(story_id: str, meta: dict) -> None:
                 icon=_refresh_outcome_icon(outcome["status"]))
     lib.update_story_fields(story_id, refresh_outcome_pending=[])
 def _overlay_button(marker: str, key: str, label: str, help: str = "") -> bool:
-    """Tiny ×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).
+    """×/✎ button overlaid at a scroll-card corner (marker-scoped CSS).
+
+    The visible glyph is 22px (--lib-x-size); #214 pads the tappable hit
+    area out to 44×44pt (--lib-x-hit, HIG §2) via a transparent ::after
+    on the button, so the design and row geometry are unchanged.
 
     ``marker`` is "lib-x-r" (top-right) or "lib-x-l" (top-left); the marker
     div sits directly before the button so the CSS can pin exactly this
