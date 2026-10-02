@@ -297,7 +297,7 @@ The Chief Editor operates a final Testing & Acceptance Gate (`audit_configuratio
    - If any check fails, the pipeline initiates self-healing retries dynamically looping up to `max_retries` (bounded between 1 and 5, default 5).
    - If retries are exhausted and items remain flagged, `compliance_passed=False` is recorded, and an actionable retry prompt is generated:
      `"⚠️ Configuration Acceptance Warning: [issues]. Recommendation: Click 'Generate' to re-run with current settings, or adjust Character Count / Duration in the settings panel."`
-   - The UI renders a one-click **"🔄 Retry Generation with Recommended Settings"** button for immediate user recovery.
+   - The UI renders a one-click icon-only retry button (refresh icon, tooltip "Retry generation with the recommended settings") for immediate user recovery.
 
 ---
 

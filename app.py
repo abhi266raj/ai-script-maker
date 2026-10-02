@@ -1705,22 +1705,15 @@ with col_settings:
                 if not hl:
                     return ("error", f"{entry.get('tag', '')} has no attached headline — cannot generate.")
                 return _verify_headline(hl)
-            # Render a config issue in the matching style: red for errors, yellow for warnings.
+            # Render a config issue as a native alert (#199: no emoji in UI
+            # chrome — the lead icon is a Material shortcode, and Streamlit
+            # does not expand shortcodes inside raw-HTML divs, so the custom
+            # banner-error/banner-warning divs are replaced by native alerts).
             def _show_config_issue(severity, message):
                 if severity == "error":
-                    st.markdown(
-                        "<div class='banner-error'>"
-                        f"<b>❌ Config Error:</b> {message}"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
+                    st.error(f":material/error: **Config Error:** {message}")
                 elif severity == "warning":
-                    st.markdown(
-                        "<div class='banner-warning'>"
-                        f"<b>⚠️ Config Warning:</b> {message}"
-                        "</div>",
-                        unsafe_allow_html=True,
-                    )
+                    st.warning(f":material/warning: **Config Warning:** {message}")
             if selected_source == TRENDING_HASHTAG_SOURCE:
                 # Same English famous-tag list as Instagram (X first, then Google Trends).
                 st.caption("English hashtags already trending on X and Google. Pick one, or type your own.")
@@ -2072,7 +2065,8 @@ with col_settings:
                 with c_info:
                     st.caption("Directs characters, narrative and tone — overrides creative settings on conflict (verified facts always win).")
                 with c_clear:
-                    if st.button("🗑️ Clear", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
+                    # #199: icon-only control — trash metaphor + verb-first help tag.
+                    if st.button("", icon=":material/delete:", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
                         st.session_state.chosen_sample_story = ""
                         st.session_state.sample_story_rev += 1
                         st.session_state.instruction_cfg_sig = None
@@ -2154,7 +2148,7 @@ with col_settings:
             save_config("scene_style", st.session_state.chosen_scene_style)
             _vibe_ok, _vibe_reason = check_vibe_format_compatible()
             if not _vibe_ok:
-                st.error(f"⚠️ {_vibe_reason}")
+                st.error(f":material/warning: {_vibe_reason}")
 
 
         dur_val = int(st.session_state.chosen_duration)
@@ -2191,7 +2185,8 @@ with col_settings:
         with inst_hdr_l:
             st.markdown('<div class="ios-section-label" style="margin-top:14px; margin-bottom:4px;">Instruction</div>', unsafe_allow_html=True)
         with inst_hdr_r:
-            if st.button("🔄 Update Instruction", help="Create or refresh instruction based on current config and selection", use_container_width=True, key="update_inst_btn"):
+            # #199: icon-only control — refresh metaphor + verb-first help tag.
+            if st.button("", icon=":material/refresh:", help="Create or refresh instruction based on current config and selection", use_container_width=True, key="update_inst_btn"):
                 st.session_state.instruction_cfg_sig = cfg_sig
                 st.session_state.instruction_rev += 1
                 st.session_state[f"instruction_text_{st.session_state.instruction_rev}"] = instruction_seed
@@ -2210,15 +2205,16 @@ with col_settings:
         )
         st.markdown('<div class="ios-section-label" style="margin-top:14px; margin-bottom:4px;">Generation Mode</div>', unsafe_allow_html=True)
         with st.container(border=True):
-            if st.button("✓ Verify Setup", use_container_width=True, key="verify_config_btn",
-                           help="Deterministic check: vibe↔format compatibility, character count vs format, sane ranges."):
+            # #199: icon-only control — check-circle metaphor + verb-first help tag.
+            if st.button("", icon=":material/check_circle:", use_container_width=True, key="verify_config_btn",
+                           help="Check the setup for vibe, format and character issues"):
                 _issues = validate_config()
                 if _issues:
-                    st.error("❌ Setup has problems:")
+                    st.error(":material/error: Setup has problems:")
                     for _i, _iss in enumerate(_issues, 1):
                         st.error(f"{_i}. {_iss}")
                 else:
-                    st.success(f"✅ Setup looks good — '{format_display_name(st.session_state.chosen_scene_style)}' format "
+                    st.success(f":material/check_circle: Setup looks good — '{format_display_name(st.session_state.chosen_scene_style)}' format "
                                f"with {st.session_state.chosen_character_count} character(s), "
                                f"'{vibe_display_name(st.session_state.chosen_tone)}' vibe. Ready to generate.")
         with st.container(border=True):
@@ -2233,6 +2229,10 @@ with col_settings:
                 horizontal=True,
                 label_visibility="collapsed",
                 key="workflow_mode_radio",
+                # #199: no emoji in UI chrome — the option values keep their
+                # emoji-prefixed form for saved-config compatibility, but the
+                # displayed labels are stripped of emoji.
+                format_func=lambda v: v.replace("⚡ ", "").replace("🪜 ", ""),
             )
             if sel_wf != st.session_state.get("workflow_mode"):
                 st.session_state.workflow_mode = sel_wf
@@ -2241,11 +2241,13 @@ with col_settings:
 
         if st.session_state.get("workflow_mode") == "🪜 Step-Wise":
             if not st.session_state.get("stepwise_active"):
-                launch_btn = st.button("🪜 Start Step-Wise Generation", type="primary", use_container_width=True, key="launch_stepwise_btn")
+                # #199: icon-only primary launch — play metaphor + verb-first help tag.
+                launch_btn = st.button("", icon=":material/play_arrow:", type="primary", use_container_width=True, key="launch_stepwise_btn",
+                                       help="Start step-wise script generation")
                 if launch_btn and st.session_state.get("active_story_input", "").strip():
                     _issues = validate_config()
                     if _issues:
-                        st.error("⛔ Cannot start — fix these first:")
+                        st.error(":material/block: Cannot start — fix these first:")
                         for _iss in _issues:
                             st.error(f"• {_iss}")
                     else:
@@ -2266,10 +2268,12 @@ with col_settings:
                         save_config("max_retries", st.session_state.chosen_max_retries)
                         st.rerun()
             else:
-                st.info(f"🪜 Step-Wise Active: Working on Step {st.session_state.get('stepwise_current_step', 1)} of 6")
+                st.info(f":material/info: Step-Wise Active: Working on Step {st.session_state.get('stepwise_current_step', 1)} of 6")
                 c_exit, c_new = st.columns([1, 1])
                 with c_exit:
-                    if st.button("❌ Exit Step-Wise", use_container_width=True, key="reset_stepwise_btn"):
+                    # #199: icon-only control — close metaphor + verb-first help tag.
+                    if st.button("", icon=":material/close:", use_container_width=True, key="reset_stepwise_btn",
+                                 help="Exit step-wise generation mode"):
                         st.session_state.stepwise_active = False
                         st.session_state.stepwise_state = None
                         st.session_state.stepwise_completed_steps = {}
@@ -2277,7 +2281,9 @@ with col_settings:
                         st.session_state.stepwise_run_requested = False
                         st.rerun()
                 with c_new:
-                    if st.button("🚀 Restart Step 1", use_container_width=True, key="restart_step1_btn"):
+                    # #199: icon-only control — restart metaphor + verb-first help tag.
+                    if st.button("", icon=":material/restart_alt:", use_container_width=True, key="restart_step1_btn",
+                                 help="Restart step-wise generation from step 1"):
                         st.session_state.stepwise_current_step = 1
                         st.session_state.stepwise_state = None
                         st.session_state.stepwise_completed_steps = {}
@@ -2286,11 +2292,13 @@ with col_settings:
                         st.session_state.generation_error = None
                         st.rerun()
         else:
-            launch_btn = st.button("Generate (Continuous)", type="primary", use_container_width=True, key="launch_continuous_btn")
+            # #199: icon-only primary launch — play metaphor + verb-first help tag.
+            launch_btn = st.button("", icon=":material/play_arrow:", type="primary", use_container_width=True, key="launch_continuous_btn",
+                                   help="Generate the script in continuous mode")
             if launch_btn and st.session_state.get("active_story_input", "").strip():
                 _issues = validate_config()
                 if _issues:
-                    st.error("⛔ Cannot generate — fix these first:")
+                    st.error(":material/block: Cannot generate — fix these first:")
                     for _iss in _issues:
                         st.error(f"• {_iss}")
                 else:
@@ -2575,19 +2583,21 @@ def _render_story_link_verifier(verif, *, key_prefix=""):
             st.error(f"Verification failed: {e}")
 
     if _entry.get("verified") is True:
-        st.success(f"✅ Same story confirmed — {_entry.get('reason', '')}")
+        st.success(f":material/check_circle: Same story confirmed — {_entry.get('reason', '')}")
     elif _entry.get("verified") is False:
-        st.warning(f"⚠️ {_entry.get('reason', '')}")
+        st.warning(f":material/warning: {_entry.get('reason', '')}")
 
     _imgs = _entry.get("images", []) or []
     if _imgs:
-        st.markdown(f"**🖼️ Article images ({len(_imgs)})** — ✕ removes one from the set")
+        st.markdown(f"**Article images ({len(_imgs)})** — the delete icon removes one from the set")
         _ncols = min(4, len(_imgs))
         _cols = st.columns(_ncols)
         for _i, _img in enumerate(list(_imgs)):
             with _cols[_i % _ncols]:
                 st.image(_img, use_container_width=True)
-                if st.button("✕ Remove", key=f"{key_prefix}sl_rm_{_i}"):
+                # #199: icon-only control — delete metaphor + verb-first help tag.
+                if st.button("", icon=":material/delete:", key=f"{key_prefix}sl_rm_{_i}",
+                             help="Remove this image from the set"):
                     _imgs.pop(_i)
                     _entry["images"] = _imgs
                     _store[_sel_url] = _entry
@@ -2818,7 +2828,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                         st.markdown(f"**Target Format:** {step_state.get('target_seconds', 60)}s • {format_display_name(step_state.get('scene_style', ''))}")
                     if step_state.get("verification_from_cache"):
                         _s1_ch = step_state.get("cache_age_hours", 0) or 0
-                        st.success(f"✓ Used cached verification from {_s1_ch:.1f} hours ago — API call skipped (24h cache)")
+                        st.success(f"Used cached verification from {_s1_ch:.1f} hours ago — API call skipped (24h cache)")
                     _render_verification_report(_ver, key_prefix=f"{key_prefix}s1_", as_expander=False)
                 else:
                     st.caption("No verification data.")
@@ -3924,19 +3934,25 @@ with col_output:
                 c_retry, c_abort = st.columns([1, 1])
                 c_back = None
             with c_retry:
-                if st.button(f"🔄 Retry Step {err_step}", key="retry_stepwise_step", type="primary", use_container_width=True):
+                # #199: icon-only control — refresh metaphor + verb-first help tag.
+                if st.button("", icon=":material/refresh:", key="retry_stepwise_step", type="primary", use_container_width=True,
+                             help=f"Retry step {err_step} with the same settings"):
                     st.session_state.generation_error = None
                     st.session_state.stepwise_run_requested = True
                     st.rerun()
             if c_back is not None:
                 with c_back:
-                    if st.button(f"⬅️ Back to Step {err_step - 1}", key="back_stepwise_step", use_container_width=True):
+                    # #199: icon-only control — back-arrow metaphor + verb-first help tag.
+                    if st.button("", icon=":material/arrow_back:", key="back_stepwise_step", use_container_width=True,
+                                 help=f"Go back to step {err_step - 1} and continue from there"):
                         st.session_state.generation_error = None
                         st.session_state.stepwise_run_requested = False
                         st.session_state.stepwise_current_step = err_step - 1
                         st.rerun()
             with c_abort:
-                if st.button("❌ Exit Step-Wise", key="cancel_stepwise_err", use_container_width=True):
+                # #199: icon-only control — close metaphor + verb-first help tag.
+                if st.button("", icon=":material/close:", key="cancel_stepwise_err", use_container_width=True,
+                             help="Exit step-wise generation mode"):
                     st.session_state.generation_error = None
                     st.session_state.stepwise_active = False
                     st.rerun()
@@ -4121,7 +4137,9 @@ with col_output:
 
         if not getattr(res, "compliance_passed", True) and getattr(res, "retry_prompt_recommendation", None):
             st.warning(res.retry_prompt_recommendation)
-            if st.button("🔄 Retry Generation with Recommended Settings", key="retry_compliance_btn", type="primary", use_container_width=True):
+            # #199: icon-only control — refresh metaphor + verb-first help tag.
+            if st.button("", icon=":material/refresh:", key="retry_compliance_btn", type="primary", use_container_width=True,
+                         help="Retry generation with the recommended settings"):
                 st.session_state.run_requested = True
         # Validation & Retry Details on final output stage
         _tot_retries = getattr(res, "total_retries", 0)
@@ -4150,12 +4168,10 @@ with col_output:
         _v_warns = [i for i in _v_issues if isinstance(i, dict) and i.get("severity") != "error"]
         if _v_errors:
             with st.container():
-                st.markdown(
-                    "<div class='banner-error'>"
-                    f"<b>❌ Errors ({len(_v_errors)})</b> — detected at Stage 6 (Integration & Validation), "
+                # #199: native alert with Material icon — no emoji in UI chrome.
+                st.error(
+                    f":material/error: **Errors ({len(_v_errors)})** — detected at Stage 6 (Integration & Validation), "
                     "but each issue below names the stage whose output needs fixing."
-                    "</div>",
-                    unsafe_allow_html=True,
                 )
                 for _iss in _v_errors:
                     _iss_stage = _iss.get("stage", "Unknown stage")
@@ -4169,11 +4185,9 @@ with col_output:
                         st.caption(f"Fix: {_iss_fix}")
         if _v_warns:
             with st.container():
-                st.markdown(
-                    "<div class='banner-warning'>"
-                    f"<b>⚠️ Warnings ({len(_v_warns)})</b> — advisory only, the reel is not blocked."
-                    "</div>",
-                    unsafe_allow_html=True,
+                # #199: native alert with Material icon — no emoji in UI chrome.
+                st.warning(
+                    f":material/warning: **Warnings ({len(_v_warns)})** — advisory only, the reel is not blocked."
                 )
                 for _iss in _v_warns:
                     _iss_stage = _iss.get("stage", "Unknown stage")
