@@ -2346,21 +2346,25 @@ def test_detail_toolbar_weights_fit_full_labels():
     action area, Delete stays trailing. #80: the news button is icon-only
     too ("📰", tooltip "Update News") in its own 0.9 slot. #53: glyph
     labels never change mid-work, so the static labels are the longest
-    state. #46: Share/Copy joined the same row; each toolbar total is
-    unchanged (10.0) so the overall layout — and the #24 baseline
-    alignment — is preserved."""
+    state. #46: Share/Copy joined the same row. #220: the row is grouped
+    refresh ×3 | share+copy | destructive (reset + delete) with hairline
+    separator columns between groups — the two separator slots are the
+    only addition (total 10.24), every action keeps its own weight, and
+    the #24 baseline alignment is preserved."""
     lui, _fake = _ui_with_fake_st()
-    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.0
+    assert round(sum(lui._DETAIL_TOOLBAR_WEIGHTS), 6) == 10.24
     assert round(sum(lui._TITLE_EDIT_TOOLBAR_WEIGHTS), 6) == 10.0
     # Icon columns fit the glyph + spinner (generous headroom); text
     # columns unchanged from the #38 fit.
     assert lui._DETAIL_TOOLBAR_WEIGHTS[0] >= 0.8  # hashtag icon button
     assert lui._DETAIL_TOOLBAR_WEIGHTS[1] >= 0.8  # image icon button
     assert lui._DETAIL_TOOLBAR_WEIGHTS[2] >= 0.8  # news icon button (#80)
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[3] <= 0.2  # #220 separator
     assert lui._DETAIL_TOOLBAR_WEIGHTS[4] >= 1.0  # Share popover trigger
     assert lui._DETAIL_TOOLBAR_WEIGHTS[5] >= 1.0  # Copy popover trigger
-    assert lui._DETAIL_TOOLBAR_WEIGHTS[7] >= 1.5  # Delete popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[6] <= 0.2  # #220 separator
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[8] >= 1.3  # Reset popover trigger
+    assert lui._DETAIL_TOOLBAR_WEIGHTS[9] >= 1.5  # Delete popover trigger
     assert lui._TITLE_EDIT_TOOLBAR_WEIGHTS[-1] >= 1.4  # Delete in edit mode
 
 

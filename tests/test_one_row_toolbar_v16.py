@@ -109,16 +109,22 @@ def _story(monkeypatch, lui, **meta_over):
 def test_detail_toolbar_weights_single_row():
     lui, _fake = _ui_with_fake_st()
     w = lui._DETAIL_TOOLBAR_WEIGHTS
-    assert len(w) == 8  # tags, images, news, reset, share, copy, spacer, delete
-    assert abs(sum(w) - 10.0) < 1e-9
+    # #220: 10 columns — the 7 actions + 2 hairline separators + spacer:
+    # refresh ×3 | sep | share+copy | sep | spacer | destructive (reset,
+    # delete). The separators are the only addition to the #80 spec.
+    assert len(w) == 10
+    assert abs(sum(w) - 10.24) < 1e-9
     assert w[0] >= 0.8  # tag icon button (#90)
     assert w[1] >= 0.8  # image icon button (#90)
     assert w[2] >= 0.8  # newspaper icon button (#80, #90)
-    assert w[3] >= 1.4  # reset icon + native chevron (#90)
+    assert w[3] <= 0.2  # #220: hairline separator after the refresh group
     assert w[4] >= 1.0  # share icon + native chevron (#90)
     assert w[5] >= 1.0  # copy icon + native chevron (#90)
-    assert w[6] > 1.0   # #71/#80: spacer absorbs the freed icon-column weight
-    assert w[7] >= 1.5  # delete icon stays trailing (#90)
+    assert w[6] <= 0.2  # #220: hairline separator after share+copy
+    assert w[7] > 1.0   # #71/#80: spacer absorbs the freed icon-column weight
+    assert w[8] >= 1.3  # reset icon + native chevron (#90), #220: moved
+    # into the trailing destructive group with delete
+    assert w[9] >= 1.5  # delete icon stays trailing (#90)
     # #119: delete is a direct button now — no native chevron.
 
 
@@ -135,18 +141,21 @@ def test_toolbar_renders_share_copy_in_same_row(monkeypatch):
     _story(monkeypatch, lui)
     lui._render_story_detail("sid1")
     toolbars = [s for s in fake.column_specs
-                if isinstance(s, list) and len(s) == 8
-                and abs(sum(s) - 10.0) < 1e-9]
-    assert len(toolbars) == 1  # exactly one 8-column toolbar row
-    # Render order inside that row: Reset, Share, Copy popovers.
+                if isinstance(s, list) and len(s) == 10
+                and abs(sum(s) - 10.24) < 1e-9]
+    assert len(toolbars) == 1  # exactly one 10-column toolbar row
+    # Render order inside that row: the three refresh buttons, separator,
+    # Share, Copy, separator, Reset, Delete.
     # (#84 reverted #60's title popover — every popover here is a toolbar
     # action; #90: icon-only triggers. #114: the upload popover is
     # icon-only now and renders at the end of the detail view.
     # #119: Delete is a direct button, not a popover — no dropdown
-    # chevron.)
+    # chevron. #220: Reset moved after Copy so it shares the trailing
+    # destructive group with Delete; the separators render as .lib-tb-sep
+    # markdown divs.)
     assert [p["label"] for p in fake.popovers] == ["", "", "", ""]
     assert [p.get("icon") for p in fake.popovers] == [
-        lui._TB_ICON_RESET, lui._TB_ICON_SHARE, lui._TB_ICON_COPY,
+        lui._TB_ICON_SHARE, lui._TB_ICON_COPY, lui._TB_ICON_RESET,
         lui._TB_ICON_UPLOAD]
     _del_trig = [k for k in fake.button_kwargs
                  if k.get("key") == "lib_delpop_sid1-trigger"]
