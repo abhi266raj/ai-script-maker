@@ -304,6 +304,58 @@ def test_telegram_share_parts_empty_story():
     assert links == ""
 
 
+def test_telegram_share_parts_normalizes_stale_engine_labels():
+    # #231: a story whose links were fetched once at creation can carry
+    # stale engine labels straight into the share — the share must render
+    # publisher names without any intervening repair step.
+    lui = _library_ui_module()
+    meta = {
+        "title": "Big Story",
+        "hashtags": ["#One"],
+        "news_links": [
+            {"title": "T1", "url": "https://indianexpress.com/article/1",
+             "source": "DuckDuckGo"},
+            {"title": "T2", "url": "https://www.ndtv.com/news/2",
+             "source": "Bing News"},
+            {"title": "T3", "url": "https://a.example/3",
+             "source": "Real Publisher"},
+            {"title": "T4", "url": "https://b.example/4", "source": ""},
+        ],
+    }
+    caption, links = lui._telegram_share_parts(meta)
+    assert caption == "Big Story\n#One"
+    assert links == (
+        "Indian Express: https://indianexpress.com/article/1\n"
+        "NDTV: https://www.ndtv.com/news/2\n"
+        "Real Publisher: https://a.example/3\n"
+        "b.example: https://b.example/4"
+    )
+    # render-side normalization only — the caller's meta is not mutated
+    assert meta["news_links"][0]["source"] == "DuckDuckGo"
+    assert meta["news_links"][1]["source"] == "Bing News"
+
+
+def test_refresh_stale_news_link_source_unit():
+    # #231: the label-normalization helper is pure — no story store, no
+    # network. Non-stale labels pass through untouched.
+    assert lib.refresh_stale_news_link_source(
+        "DuckDuckGo", "https://indianexpress.com/x") == "Indian Express"
+    assert lib.refresh_stale_news_link_source(
+        "News Wire", "https://www.ndtv.com/y") == "NDTV"
+    assert lib.refresh_stale_news_link_source(
+        "Live Wire", "https://unknown-host-xyz.example/a") == "Unknown Host Xyz"
+    assert lib.refresh_stale_news_link_source(
+        "The Hindu", "https://indianexpress.com/x") == "The Hindu"
+    assert lib.refresh_stale_news_link_source(
+        "", "https://indianexpress.com/x") == ""
+    assert lib.refresh_stale_news_link_source(
+        None, "https://indianexpress.com/x") == ""
+    # unparseable URL keeps the stale label rather than breaking the share
+    assert lib.refresh_stale_news_link_source("DuckDuckGo", "") == "DuckDuckGo"
+    assert lib.refresh_stale_news_link_source("DuckDuckGo", "not a url") == \
+        "DuckDuckGo"
+
+
 def test_story_video_path_missing_file_raises_loudly(libdir):
     lui = _library_ui_module()
     sid = lib.save_story(title="T", tone="funny", hashtags=[],

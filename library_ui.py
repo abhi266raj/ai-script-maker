@@ -2481,14 +2481,30 @@ def _telegram_share_parts(meta: dict):
     line per news link (the second message); "" when there are no links.
     The formats mirror _compose_news_tags_text (#151): title → tags →
     links, site name never blank, URLs deduped.
+
+    #231: the first step normalizes stale fetch-time source labels
+    ("DuckDuckGo", "Bing News", ...) to the publisher name derived from
+    each link's URL — the same label refresh repair_news_link_urls
+    performs (#153) — so a story whose links were fetched once at creation
+    still renders publisher labels in Telegram. Pure and offline-safe (no
+    redirect resolution): sharing never blocks on or fails because of the
+    network.
     """
     import urllib.parse as _up
+    # #231: normalize labels before any user-facing render. Normalized
+    # copies — the caller's meta dict is never mutated.
+    news_links = [
+        dict(lk, source=lib.refresh_stale_news_link_source(
+            lk.get("source"), lk.get("url")))
+        if isinstance(lk, dict) else lk
+        for lk in (meta.get("news_links") or [])
+    ]
     title = (meta.get("title") or "").strip() or "Untitled Story"
     tags = [t for t in (meta.get("hashtags") or []) if t]
     caption = title + ("\n" + " ".join(tags) if tags else "")
     seen_urls = set()
     link_lines = []
-    for lk in (meta.get("news_links") or []):
+    for lk in news_links:
         if not isinstance(lk, dict):
             continue
         url = (lk.get("url") or "").strip()
