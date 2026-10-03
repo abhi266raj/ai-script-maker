@@ -17,3 +17,4 @@ Instructions specific to **Muse, the Meta personal AI assistant**, when working 
 2. **Never Expose the Token:** Never echo, print, or copy the token into chat replies, memory files, logs, or any other file.
 3. **Write Fallbacks:** If the token file is absent, use a session token pasted in chat; if none is available, produce prefilled links instead of shell commands — `https://github.com/<owner>/<repo>/compare/develop...<branch>?title=<enc>&body=<enc>` for PRs, `https://github.com/<owner>/<repo>/issues/new?title=<enc>&body=<enc>&labels=<enc>` for issues (URL-encoded).
 4. **Token-Lean Output:** Keep patches, summaries, and terminal output concise — no filler, no redundant explanations.
+5. **AI Attribution:** My AI name is `Muse`. Every GitHub action I perform (PR, issue, comment) must carry it — pass `--ai Muse` (or `AI_NAME=Muse`) to `./open_pr`; append `_Raised by Muse_` to issue and comment bodies.

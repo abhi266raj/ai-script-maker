@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Usage: ./open_pr -t "<title>" -b "<body>"
+# Usage: ./open_pr -t "<title>" -b "<body>" [--ai "<name>"]
 # Protected-branch guard, pushes dedicated branch, opens PR targeting develop.
+# AI attribution: --ai "<name>" (or AI_NAME env) appends "_Raised by <name>_" to the PR body.
 set -euo pipefail
 
 CURRENT_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
@@ -16,16 +17,21 @@ fi
 
 PR_TITLE=""
 PR_BODY=""
+AI_NAME="${AI_NAME:-}"
 while [[ "$#" -gt 0 ]]; do
     case "$1" in
         -t|--title) PR_TITLE="$2"; shift 2 ;;
         -b|--body)  PR_BODY="$2"; shift 2 ;;
-        *) echo "ERROR: Unknown option '$1'. Use -t and -b." >&2; exit 1 ;;
+        -a|--ai)    AI_NAME="$2"; shift 2 ;;
+        *) echo "ERROR: Unknown option '$1'. Use -t, -b, --ai." >&2; exit 1 ;;
     esac
 done
 
 [ -n "$PR_TITLE" ] || { echo "ERROR: -t/--title is required." >&2; exit 1; }
 PR_BODY="${PR_BODY:-## Summary\nPR for $CURRENT_BRANCH}"
+if [ -n "$AI_NAME" ]; then
+    PR_BODY="${PR_BODY}"$'\n\n'"_Raised by ${AI_NAME}_"
+fi
 
 command -v gh >/dev/null 2>&1 || { echo "ERROR: gh CLI not installed." >&2; exit 1; }
 
