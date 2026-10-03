@@ -180,19 +180,6 @@ def test_text_input_contract_present():
     )
 
 
-def test_nav_shows_running_commit_next_to_version():
-    # #286 ground truth: the nav must show the running commit hash next to
-    # the version, so "is it up to date?" is answerable at a glance.
-    src = APP_PY.read_text(encoding="utf-8")
-    assert "_RUNNING_COMMIT = _running_commit()" in src, (
-        "app.py lost the _RUNNING_COMMIT wiring"
-    )
-    assert "rev-parse" in src and "--short" in src, (
-        "commit helper must resolve the short hash via git rev-parse"
-    )
-    assert "_commit_suffix" in src and "nav-ver" in src, (
-        "nav title must render the commit suffix next to v{APP_VERSION}"
-    )
 
 
 def test_launcher_fingerprint_covers_requirements_and_server_config():

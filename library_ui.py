@@ -244,7 +244,7 @@ def inject_library_css() -> None:
     }
     [data-testid="stButtonGroup"] {
         width: fit-content !important;
-        margin: 10px auto 18px auto !important;
+        margin: 0px auto !important;
     }
     [data-testid="stButtonGroup"] > div[role="radiogroup"] {
         background: var(--lib-glass-bg) !important;
@@ -2026,7 +2026,7 @@ def _render_fm_warmup_button() -> None:
     _icon, _disabled = _fm_warmup_button_props(_state)
     if _disabled:
         st.button("", icon=_icon, key="fm_warmup_btn", disabled=True,
-                  help=_FM_WARMUP_HELP,
+                  help="Warm up the on-device Apple FM model",
                   use_container_width=True)
         # Manual warm-up: the initiating control owns its loading state.
         # Stable icon + spinner while the probe is in flight (#365, HIG §3).
@@ -2040,7 +2040,7 @@ def _render_fm_warmup_button() -> None:
         st.rerun()
         return
     if st.button("", icon=_icon, key="fm_warmup_btn", disabled=False,
-                 help=_FM_WARMUP_HELP,
+                 help="Warm up the on-device Apple FM model",
                  use_container_width=True):
         _ok, _reason = lib.start_fm_warmup()
         if not _ok:
@@ -2115,16 +2115,32 @@ def _render_fm_warmup_result() -> None:
             st.session_state[_FM_WARMUP_TOAST_ANNOUNCED_KEY] = _marker
 
 
+_HEADER_WARMUP_COL = None
+
+
+def set_header_warmup_col(col) -> None:
+    """Set the target column for the warmup button in the unified header (#365)."""
+    global _HEADER_WARMUP_COL
+    _HEADER_WARMUP_COL = col
+
+
 def render_tab_bar() -> str:
     """Render the macOS-style tab bar. Returns 'studio' or 'library'."""
+    global _HEADER_WARMUP_COL
     inject_library_css()
-    # Developer warm-up (issue #37) rides in a compact trailing column so
-    # the normal author flow keeps its centered tab strip untouched.
-    _tab_col, _warm_col = st.columns([6.0, 1.0], vertical_alignment="center")
-    with _tab_col:
+    # Developer warm-up (issue #37, #365): in unified header layout,
+    # _HEADER_WARMUP_COL is set by app.py; standalone fallback uses st.columns.
+    _warm_target = _HEADER_WARMUP_COL
+    if _warm_target is not None:
+        _tab_col = None
+        _warm_col = _warm_target
+    else:
+        _tab_col, _warm_col = st.columns([6.0, 1.0], vertical_alignment="center")
+
+    def _render_seg():
         seg = getattr(st, "segmented_control", None)
         if seg is not None:
-            choice = seg(
+            return seg(
                 "View",
                 options=[TAB_STUDIO, TAB_LIBRARY],
                 default=TAB_STUDIO,
@@ -2132,7 +2148,7 @@ def render_tab_bar() -> str:
                 label_visibility="collapsed",
             )
         else:  # older Streamlit: horizontal radio dressed as a segmented control
-            choice = st.radio(
+            return st.radio(
                 "View",
                 options=[TAB_STUDIO, TAB_LIBRARY],
                 index=0 if st.session_state.get("lib_view", TAB_STUDIO) == TAB_STUDIO else 1,
@@ -2140,6 +2156,13 @@ def render_tab_bar() -> str:
                 label_visibility="collapsed",
                 horizontal=True,
             )
+
+    if _tab_col is not None:
+        with _tab_col:
+            choice = _render_seg()
+    else:
+        choice = _render_seg()
+
     with _warm_col:
         _render_fm_warmup_button()
     _render_fm_warmup_result()
