@@ -4,7 +4,7 @@
 # Triggers:
 #   - workflow_dispatch: manual build (choose dev / release / both).
 #   - push of tags matching 'v*': automatic — builds the RELEASE
-#     variant and attaches dist/*.dmg to a GitHub Release.
+#     variant and attaches dist/**/*.dmg to a GitHub Release.
 # Tag automation runs the workflow file as of the TAGGED commit, so it
 # takes effect starting with the v1.7 tag; earlier tags are unaffected
 # and nothing triggers retroactively.
@@ -133,5 +133,7 @@ jobs:
         if: startsWith(github.ref, 'refs/tags/v')
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.dmg
+          # Recursive glob: the build script nests the DMG under dist/vX.Y.Z/
+          # (a flat dist/*.dmg matched nothing and published empty releases).
+          files: dist/**/*.dmg
           generate_release_notes: true
