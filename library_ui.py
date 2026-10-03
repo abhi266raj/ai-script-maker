@@ -244,7 +244,7 @@ def inject_library_css() -> None:
     }
     [data-testid="stButtonGroup"] {
         width: fit-content !important;
-        margin: 10px auto 18px auto !important;
+        margin: 0px auto !important;
     }
     [data-testid="stButtonGroup"] > div[role="radiogroup"] {
         background: var(--lib-glass-bg) !important;

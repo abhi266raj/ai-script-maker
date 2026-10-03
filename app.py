@@ -778,13 +778,21 @@ st.markdown(
         display: none !important;
     }
 
-    .block-container {
-        padding-top: 1.25rem !important;
+    .block-container,
+    [data-testid="stMainBlockContainer"] {
+        padding-top: 0.25rem !important;
         padding-bottom: 2rem !important;
         max-width: 1400px !important;
         /* macOS HIG: center the content column on wide screens */
         margin-left: auto !important;
         margin-right: auto !important;
+    }
+
+    /* Collapse zero-height empty element containers (inline script/style blocks) */
+    div[data-testid="stElementContainer"]:has(> div[data-testid="stHtml"]),
+    div[data-testid="stElementContainer"]:has(script),
+    div[data-testid="stElementContainer"]:has(style) {
+        display: none !important;
     }
 
     [data-testid="stMarkdownContainer"],
@@ -819,7 +827,7 @@ st.markdown(
         opacity: 1 !important;
     }
 
-    .nav { padding: 4px 2px 18px 2px; }
+    .nav { padding: 0px 2px 4px 2px; }
     .nav-title {
         font-size: 1.35rem; font-weight: 700; color: var(--ink) !important;
         letter-spacing: -0.03em;
@@ -2593,9 +2601,9 @@ col_brand, col_tabs, col_srv, col_warm = st.columns([4.2, 2.4, 2.0, 1.4], vertic
 with col_brand:
     st.markdown(
         f"""
-        <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
+        <div class="nav" style="padding: 0px; margin: 0px;">
             <div>
-                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}{_commit_suffix}</span></div>
+                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}</span></div>
             </div>
         </div>
         """,
