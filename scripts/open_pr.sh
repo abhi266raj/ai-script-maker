@@ -31,6 +31,27 @@ done
 
 [ -n "$PR_TITLE" ] || { echo "ERROR: -t/--title is required." >&2; exit 1; }
 
+command -v gh >/dev/null 2>&1 || { echo "ERROR: gh CLI not installed." >&2; exit 1; }
+
+echo "Pushing $CURRENT_BRANCH..."
+git push -u origin "$CURRENT_BRANCH"
+
+EXISTING_PR="$(gh pr list --head "$CURRENT_BRANCH" --base develop --json url --jq '.[0].url // empty')"
+if [ -n "$EXISTING_PR" ]; then
+    PR_URL="$EXISTING_PR"
+    PR_NUM="$(echo "$PR_URL" | grep -oE '[0-9]+$')"
+    echo "PR already exists: $PR_URL"
+    echo ""
+    echo "=== Pull Request Details (Rule 3) ==="
+    echo "- GitHub URL: $PR_URL"
+    echo "- Merge Command: ./merge_pr $PR_NUM"
+    echo "- Diff Summary:"
+    git diff --stat origin/develop..HEAD
+    echo ""
+    echo "STOP HERE: Do not merge unprompted. Show GitHub PR URL, diff, and run './merge_pr $PR_NUM' only after explicit user approval."
+    exit 0
+fi
+
 if [ -z "$PR_BODY" ]; then
     # Auto-derive the PR body from branch commit messages (issue #359).
     git fetch origin develop --quiet 2>/dev/null || true
@@ -57,21 +78,9 @@ if [ -n "$AI_NAME" ]; then
     PR_BODY="${PR_BODY}"$'\n\n'"_Raised by ${AI_NAME}_"
 fi
 
-command -v gh >/dev/null 2>&1 || { echo "ERROR: gh CLI not installed." >&2; exit 1; }
-
-echo "Pushing $CURRENT_BRANCH..."
-git push -u origin "$CURRENT_BRANCH"
-
-EXISTING_PR="$(gh pr list --head "$CURRENT_BRANCH" --base develop --json url --jq '.[0].url // empty')"
-if [ -n "$EXISTING_PR" ]; then
-    PR_URL="$EXISTING_PR"
-    PR_NUM="$(echo "$PR_URL" | grep -oE '[0-9]+$')"
-    echo "PR already exists: $PR_URL"
-else
-    PR_URL="$(gh pr create --base develop --head "$CURRENT_BRANCH" --title "$PR_TITLE" --body "$PR_BODY")"
-    PR_NUM="$(echo "$PR_URL" | grep -oE '[0-9]+$')"
-    echo "PR opened: $PR_URL"
-fi
+PR_URL="$(gh pr create --base develop --head "$CURRENT_BRANCH" --title "$PR_TITLE" --body "$PR_BODY")"
+PR_NUM="$(echo "$PR_URL" | grep -oE '[0-9]+$')"
+echo "PR opened: $PR_URL"
 
 echo ""
 echo "=== Pull Request Details (Rule 3) ==="
