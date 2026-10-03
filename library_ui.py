@@ -2438,7 +2438,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
         raise ValueError("Cannot save: the final-stage screenplay text is empty.")
     hashtag = st.session_state.get("active_hashtag", "") or ""
     hashtags = [hashtag] if hashtag else []
-    tone = st.session_state.get("chosen_emotion", "") or ""  # #354: frozen emotion
+    emotion = st.session_state.get("chosen_emotion", "") or ""  # #354: frozen emotion
     topic = st.session_state.get("run_topic", "") or ""
     headline = st.session_state.get("selected_headline_title", "") or ""
     title = _build_autosave_title(script)
@@ -2449,7 +2449,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
         hashtags = _derive_local_hashtags(title, topic, headline)
     return lib.save_story(
         title=title,
-        tone=tone,
+        tone=emotion,  # library schema key stays 'tone'; the value is the frozen emotion
         hashtags=hashtags,
         dialogue_md="",
         script_md=pro_screenplay.strip(),
@@ -3868,7 +3868,7 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
                 instruction=_instruction,
                 story_context="\n".join(_ctx_parts),
                 history=_history,
-                tone=(meta.get("tone") or "").strip(),
+                emotion=(meta.get("tone") or "").strip(),  # schema key stays; value is the frozen emotion
                 # #210: the toolbar's selected engine — never the default.
                 # None (AI disabled) raises loudly inside fine_tune_script.
                 engine_mode=_library_ai_engine(),

@@ -90,7 +90,7 @@ def emotion_delivery(emotion: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Emotion -> Angle derivation (mirrors the old vibe->angle pattern).
+# Emotion -> Angle derivation (each frozen emotion suggests an editorial angle).
 # The 2-dropdown UI (Emotion + Scene Style) never asks for an angle; the
 # pipeline derives one so downstream prompt machinery keeps working.
 # ---------------------------------------------------------------------------

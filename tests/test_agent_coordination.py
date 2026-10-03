@@ -167,7 +167,7 @@ def _fake_generate(*args, **kwargs):
 
     if "script quality validator" in pl:
         return (
-            "TONE_VERDICT: YES\nTONE_ISSUE: None\n"
+            "EMOTION_VERDICT: YES\nEMOTION_ISSUE: None\n"
             "NEWS_VERDICT: YES\nNEWS_REASON: mocked pass",
             "fm",
         )
@@ -228,7 +228,7 @@ class TestAgentCoordination(unittest.TestCase):
             duration_sec=15,
             scene_lines=scene_lines,
             verified_facts=["Posters titled 'Jhooth Ki Goonj' with QR codes appeared across Indore walls"],
-            tone="Joke",
+            emotion="Joke",
             angle="Funny & Relatable",
             scene_style="Dialogue",
             personas=["👩 Priya (प्रिया)", "🧑 Rahul (राहुल)"],
@@ -270,7 +270,7 @@ class TestAgentCoordination(unittest.TestCase):
         prompts = video_prompt_engineer.generate_prompts(
             news_topic=topic,
             scenes=scenes,
-            tone="Funny & Relatable",
+            emotion="Funny & Relatable",
             angle="Funny & Relatable",
             verified_facts=["Posters titled 'Jhooth Ki Goonj' with QR codes appeared across Indore walls"],
             engine_mode="fm_only",
@@ -347,7 +347,7 @@ class TestAgentCoordination(unittest.TestCase):
             key_locations=report.key_locations,
             core_conflict_or_irony=report.core_conflict_or_irony,
             tangible_actions=report.tangible_actions,
-            tone="Shock",
+            emotion="Shock",
             angle="Investigative Deep-Dive",
             scene_style="Debate",
             personas=["👩 Advocate Sunita", "🧑 Expert Kabir"],
@@ -435,7 +435,7 @@ class TestAgentCoordination(unittest.TestCase):
         res_10s = dialogue_writer.write_dialogues_batch(
             news_input="Indore poster campaign",
             items=[{"angle": "Funny & Relatable", "hook": "इंदौर में पोस्टर लग गए!"}],
-            tone="Joke",
+            emotion="Joke",
             duration_sec=10,
             verification=report,
             character_count=2,
@@ -449,7 +449,7 @@ class TestAgentCoordination(unittest.TestCase):
         res_45s = dialogue_writer.write_dialogues_batch(
             news_input="Indore poster campaign",
             items=[{"angle": "Funny & Relatable", "hook": "इंदौर में पोस्टर लग गए!"}],
-            tone="Joke",
+            emotion="Joke",
             duration_sec=45,
             verification=report,
             character_count=3,

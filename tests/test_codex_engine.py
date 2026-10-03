@@ -139,7 +139,7 @@ class CodexEngineTests(unittest.TestCase):
             pl = prompt.lower()
             # Script-quality judge (Stage 3 validation) — return passing verdicts.
             if "script quality validator" in pl:
-                return "TONE_VERDICT: YES\nTONE_ISSUE: None\nNEWS_VERDICT: YES\nNEWS_REASON: Covers the ISRO news clearly."
+                return "EMOTION_VERDICT: YES\nEMOTION_ISSUE: None\nNEWS_VERDICT: YES\nNEWS_REASON: Covers the ISRO news clearly."
             # Character groups (Stage 2) — must parse into GROUP A / GROUP B.
             if "group a" in pl and "group b" in pl:
                 return (

@@ -139,7 +139,7 @@ def _invoke(agent, **kw):
     result = agent.write_dialogues_batch(
         news_input="Ola Electric rights issue",
         items=items,
-        tone="funny",
+        emotion="funny",
         duration_sec=30,
         verification=verification,
         character_count=2,
@@ -177,7 +177,7 @@ def _patch_validators(monkeypatch, order, struct=(),
         dw, "validate_clothing_specificity",
         lambda chars: (order.append("clothing"), list(clothing))[1])
     monkeypatch.setattr(
-        dw, "validate_sfx_tone_match",
+        dw, "validate_sfx_emotion_match",
         lambda sl, tone: (order.append("sfx"), list(sfx))[1])
 
 

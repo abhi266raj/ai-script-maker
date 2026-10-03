@@ -130,7 +130,7 @@ class ChiefEditorCoordinatorAgent:
         master_instruction: str,
         news_topic: str,
         target_seconds: int,
-        tone: str,
+        emotion: str,
         angle: str,
         character_count: int,
         scene_style: str,
@@ -161,14 +161,14 @@ class ChiefEditorCoordinatorAgent:
         max_w = budget["max_words"]
         scenes_cnt = budget.get("scenes", max(2, min(5, round(target_seconds / 5))))
         personas = personas_override or get_character_personas(
-            scene_style, character_count, tone, angle,
+            scene_style, character_count, emotion, angle,
             topic_or_script=news_topic, sample_story=sample_story
         )
-        creative_rules = get_creative_guidelines(scene_style, character_count, tone, angle)
+        creative_rules = get_creative_guidelines(scene_style, character_count, emotion, angle)
 
         # Emotion line: short, token-lean. Angle shown only when present.
         # #354: the frozen emotion (not a vibe) drives dialogue & delivery.
-        emotion_line = f"- Emotion: {tone} | {angle}." if (angle or "").strip() else f"- Emotion: {tone}."
+        emotion_line = f"- Emotion: {emotion} | {angle}." if (angle or "").strip() else f"- Emotion: {emotion}."
 
         sample_clause = ""
         if sample_story and sample_story.strip():
@@ -176,7 +176,7 @@ class ChiefEditorCoordinatorAgent:
                 f"\n📌 SAMPLE STORY \u2014 DIRECTOR'S GUIDE (highest creative precedence):\n"
                 f"Reference Sample: \"{sample_story.strip()}\"\n"
                 f"Rule: This sample is the author/director's guide. Follow its characters, "
-                f"relationships, direction, and tone. On any conflict with the emotion, character "
+                f"relationships, direction, and emotion. On any conflict with the emotion, character "
                 f"count, scene style, or other creative settings, the SAMPLE WINS.\n"
                 f"Hard boundary: verified news facts always outrank the sample \u2014 never "
                 f"alter confirmed facts to match the sample.\n"
@@ -210,8 +210,8 @@ class ChiefEditorCoordinatorAgent:
             "hooks": (
                 f"Hook & CTA Sub-Instruction (Agent 2):\n"
                 f"- News Story: {news_topic}\n"
-                f"- Format: {target_seconds}s vertical reel, emotion: {tone}.\n"
-                f"- Task: Craft punchy, scroll-stopping 0-3s Devanagari Hindi hooks (<7 words) and concise closing CTAs matching the requested tone and angle."
+                f"- Format: {target_seconds}s vertical reel, emotion: {emotion}.\n"
+                f"- Task: Craft punchy, scroll-stopping 0-3s Devanagari Hindi hooks (<7 words) and concise closing CTAs matching the requested emotion and angle."
             ),
             "dialogue_writer": (
                 f"Dialogue & Voiceover Sub-Instruction (Agent 3):\n"
@@ -227,7 +227,7 @@ class ChiefEditorCoordinatorAgent:
                 f"  * Absolute Strict Maximum: {max_w} words\n"
                 f"  * Hindi Speech Rate: ~2.0 - 2.3 words/sec in natural spoken cadence.\n"
                 f"- CRITICAL PACING ASYMMETRY: Fewer words ({min_w} to {rec_w} words) is completely SAFE and provides breathing room for B-roll visuals, SFX, and dramatic pauses. Exceeding {max_w} words is STRICTLY FORBIDDEN and will cause reel overflow.\n"
-                f"- Tone & Delivery: {tone}. Clean spoken Devanagari Hindi only. NO greetings (नमस्ते/हेलो), NO intro filler (आइए जानते हैं). If dialogue style, characters must actively talk back-and-forth!\n"
+                f"- Tone & Delivery: {emotion}. Clean spoken Devanagari Hindi only. NO greetings (नमस्ते/हेलो), NO intro filler (आइए जानते हैं). If dialogue style, characters must actively talk back-and-forth!\n"
                 f"- Single Continuous Video Reel: This is ONE continuous short video. Introduce the background context once in Scene 1, and do NOT repeat or re-explain background context in subsequent scenes."
             ),
             "timing_auditor": (
@@ -242,7 +242,7 @@ class ChiefEditorCoordinatorAgent:
                 f"- Core Mission: Break the screenplay into {scenes_cnt} distinct 9:16 vertical scenes totaling {target_seconds}s.\n"
                 f"- Format: {scene_style} with {character_count} character(s): {', '.join(personas)}.\n"
                 f"- Single Video Continuity: There will be ONE cohesive video reel. Establish the setting in Scene 1 and do NOT repeatedly re-introduce or re-explain background context across scenes.\n"
-                f"- Directives: Depict the imaginary situation matching '{angle}' with tone '{tone}'. Assign each scene to its speaking character with distinct visual action, on-screen ENGLISH text overlays (never Hindi), and dynamic visual B-roll. Do NOT repeat the spoken dialogue in the storyboard — visuals, camera, SFX and overlay text only."
+                f"- Directives: Depict the imaginary situation matching '{angle}' with emotion '{emotion}'. Assign each scene to its speaking character with distinct visual action, on-screen ENGLISH text overlays (never Hindi), and dynamic visual B-roll. Do NOT repeat the spoken dialogue in the storyboard — visuals, camera, SFX and overlay text only."
             ),
             "video_prompt_engineer": (
                 f"AI Video Prompt Sub-Instruction (Agent 6):\n"
@@ -316,7 +316,7 @@ class ChiefEditorCoordinatorAgent:
                     master_instruction=state.get("scenario", ""),
                     news_topic=state["news_input"],
                     target_seconds=state["target_seconds"],
-                    tone=state.get("active_tone", ""),
+                    emotion=state.get("active_emotion", ""),
                     angle=state.get("active_angle", ""),
                     character_count=state.get("character_count", 1),
                     scene_style=state.get("scene_style", "Dialogue"),
@@ -357,15 +357,15 @@ class ChiefEditorCoordinatorAgent:
         total_retries = 0
         agent_audits: List[AgentAuditItem] = []
 
-        active_tone = preferred_emotion or kwargs.get("preferred_emotion") or kwargs.get("preferred_tone") or kwargs.get("tone") or ""
-        if not active_tone and "Tone:" in scenario:
+        active_emotion = preferred_emotion or kwargs.get("preferred_emotion") or kwargs.get("preferred_tone") or kwargs.get("emotion") or ""
+        if not active_emotion and "Tone:" in scenario:
             for line in scenario.split("\n"):
                 if line.strip().startswith("Tone:"):
-                    active_tone = line.replace("Tone:", "").strip()
+                    active_emotion = line.replace("Tone:", "").strip()
                     break
-        if not active_tone:
+        if not active_emotion:
             # #354: fall back to the frozen default emotion — never a vibe string.
-            active_tone = EMOTION_CURIOSITY
+            active_emotion = EMOTION_CURIOSITY
 
         active_angle = preferred_angle or kwargs.get("preferred_angle") or kwargs.get("angle") or ""
         if not active_angle and "Editorial angle:" in scenario:
@@ -390,7 +390,7 @@ class ChiefEditorCoordinatorAgent:
             master_instruction=scenario,
             news_topic=news_input,
             target_seconds=target_seconds,
-            tone=active_tone,
+            emotion=active_emotion,
             angle=active_angle,
             character_count=character_count,
             scene_style=scene_style,
@@ -577,7 +577,7 @@ class ChiefEditorCoordinatorAgent:
             "scenario": scenario,
             "batch_size": total_scripts,
             "target_seconds": target_seconds,
-            "active_tone": active_tone,
+            "active_emotion": active_emotion,
             "active_angle": active_angle,
             "character_count": character_count,
             "scene_style": scene_style,
@@ -611,7 +611,7 @@ class ChiefEditorCoordinatorAgent:
         news_input = state["news_input"]
         total_scripts = state["batch_size"]
         preferred_angle = state["active_angle"]
-        active_tone = state["active_tone"]
+        active_emotion = state["active_emotion"]
         verification = state["verification"]
         target_seconds = state["target_seconds"]
         character_count = state["character_count"]
@@ -673,14 +673,14 @@ class ChiefEditorCoordinatorAgent:
             # NEW: Ask AI for TWO distinct character groups (A and B).
             # The user picks ONE group for dialogue — no random selection.
             _emit_substep(on_substep, 2, "2.1", "Character generation", "start",
-                           detail=f"Finalising {character_count} character(s), emotion: {active_tone}",
-                           input=f"News: {(news_input or '')[:200]}\nVibe: {active_tone} | Style: {scene_style}")
+                           detail=f"Finalising {character_count} character(s), emotion: {active_emotion}",
+                           input=f"News: {(news_input or '')[:200]}\nVibe: {active_emotion} | Style: {scene_style}")
             group_a, group_b = hook_strategist.finalise_character_groups(
                 news_topic=news_input,
                 verification=verification,
                 scenario=active_scenario,
                 sample_story=active_sample_story,
-                tone=active_tone,
+                emotion=active_emotion,
                 angle=preferred_angle or (selected_angles[0][0] if selected_angles else "Funny & Relatable"),
                 character_count=character_count,
                 scene_style=scene_style,
@@ -801,7 +801,7 @@ class ChiefEditorCoordinatorAgent:
         hooks = hook_strategist.craft_hooks_batch(
             news_topic=news_input,
             angles=selected_angles[:total_scripts],
-            tone=active_tone,
+            emotion=active_emotion,
             verification=verification,
             duration_sec=target_seconds,
             sub_instruction=sub_instructions.get("hooks", ""),
@@ -887,7 +887,7 @@ class ChiefEditorCoordinatorAgent:
         total_scripts = state["batch_size"]
         selected_angles = state["selected_angles"]
         hooks = state["hooks"]
-        active_tone = state["active_tone"]
+        active_emotion = state["active_emotion"]
         target_seconds = state["target_seconds"]
         verification = state["verification"]
         character_count = state["character_count"]
@@ -937,7 +937,7 @@ class ChiefEditorCoordinatorAgent:
             raw_narrations = dialogue_writer.write_dialogues_batch(
                 news_input=news_input,
                 items=batch_items,
-                tone=active_tone,
+                emotion=active_emotion,
                 duration_sec=target_seconds,
                 verification=verification,
                 character_count=character_count,
@@ -1213,7 +1213,7 @@ class ChiefEditorCoordinatorAgent:
         script_dialogues = state["script_dialogues"]
         news_input = state["news_input"]
         target_seconds = state["target_seconds"]
-        active_tone = state["active_tone"]
+        active_emotion = state["active_emotion"]
         active_angle = state["active_angle"]
         scene_style = state["scene_style"]
         verification = state["verification"]
@@ -1266,7 +1266,7 @@ class ChiefEditorCoordinatorAgent:
                     finalized_characters=finalized_characters,
                     dialogue_beats=s_lines,
                     num_scenes=num_scenes,
-                    tone=active_tone,
+                    emotion=active_emotion,
                     angle=d.get("angle_tuple", (active_angle, ""))[0] if d.get("angle_tuple") else active_angle,
                     scene_style=scene_style,
                     duration_sec=target_seconds,
@@ -1352,7 +1352,7 @@ class ChiefEditorCoordinatorAgent:
         script_dialogues = state["script_dialogues"]
         news_input = state["news_input"]
         target_seconds = state["target_seconds"]
-        active_tone = state["active_tone"]
+        active_emotion = state["active_emotion"]
         active_angle = state["active_angle"]
         scene_style = state["scene_style"]
         character_count = state["character_count"]
@@ -1412,7 +1412,7 @@ class ChiefEditorCoordinatorAgent:
                 personas = [c.name for c in finalized_chars]
             else:
                 personas = get_character_personas(
-                    scene_style, character_count, active_tone, active_angle,
+                    scene_style, character_count, active_emotion, active_angle,
                     topic_or_script=f"{news_input} {narration}", sample_story=active_sample_story
                 )
 
@@ -1443,7 +1443,7 @@ class ChiefEditorCoordinatorAgent:
                 key_locations=active_locs,
                 core_conflict_or_irony=verification.core_conflict_or_irony if verification else "",
                 tangible_actions=verification.tangible_actions if verification else [],
-                tone=active_tone,
+                emotion=active_emotion,
                 angle=angle_tuple[0],
                 scene_style=scene_style,
                 personas=personas,
@@ -1457,7 +1457,7 @@ class ChiefEditorCoordinatorAgent:
             video_prompts = video_prompt_engineer.generate_prompts(
                 news_topic=news_input,
                 scenes=scenes,
-                tone=active_tone,
+                emotion=active_emotion,
                 angle=angle_tuple[0],
                 verified_facts=verification.verified_facts if verification else [],
                 sub_instruction=sub_instructions.get("video_prompt_engineer"),
@@ -1677,7 +1677,7 @@ class ChiefEditorCoordinatorAgent:
     ) -> Dict[str, Any]:
         """Run the Stage 6 INTEGRATION-ONLY validation gate.
 
-        Stage 6 never re-checks content quality -- tone, news coverage,
+        Stage 6 never re-checks content quality -- emotion, news coverage,
         language, dialogue structure, scene quality, and storyboard/video
         prompt quality are owned and validated by the stages that created
         them (Stages 3, 4, 5). Stage 6 only verifies that the stage outputs
@@ -1913,7 +1913,7 @@ class ChiefEditorCoordinatorAgent:
         audit trail) into one coherent final package; THEN run the
         INTEGRATION-ONLY validation gate: every required Stage 1-5 output is
         present, ID/counts are consistent, cross-stage links hold, and no
-        payload is empty. Content quality (tone, news, language, structure,
+        payload is empty. Content quality (emotion, news, language, structure,
         storyboard quality) is owned by Stages 3/4/5 and is NOT re-checked
         here. Issues are reported as a numbered list with fix guidance --
         never as a fake success.
@@ -2070,7 +2070,7 @@ class ChiefEditorCoordinatorAgent:
                     )
 
         # Integration-only Stage 6: content compliance (word budget, character
-        # count, tone, dialogue/scene quality) is owned by Stages 3/4/5 and is
+        # count, emotion, dialogue/scene quality) is owned by Stages 3/4/5 and is
         # deliberately NOT re-checked here. The integration gate above is the
         # only Stage 6 validation.
         compliance_passed, compliance_notes, retry_prompt = True, [], None

@@ -1,7 +1,7 @@
 """Industry-standard screenplay formatter for 9:16 vertical Hindi Reels.
 Implements the canonical professional script structure:
 - Scene Detail (setting & atmosphere)
-- Characters & Clothing (tone-aligned attire, no genre clashes)
+- Characters & Clothing (emotion-aligned attire, no genre clashes)
 - Beats with continuous camera cues (no contradictory cuts)
 - Physical actor action lines only (bodies, props, expressions)
 - Spoken Hindi dialogues in Devanagari
@@ -174,7 +174,7 @@ def resolve_character_attire(first_name: str, sample_clothing_map: Dict[str, str
 
     Fail-loud rule: attire must come from the sample story's explicit clothing
     map or the Stage 2 character bible (SceneItem.character_attire).
-    Keyword-guessing wardrobes by role/tone invents clothing the pipeline never
+    Keyword-guessing wardrobes by role/emotion invents clothing the pipeline never
     designed — return "" and let the caller list the name without an invented
     outfit.
     """

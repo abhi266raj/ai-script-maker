@@ -15,7 +15,7 @@ from core.constants import (
 # Frozen emotion directives (#354). One genuine human feeling per emotion:
 # what it reacts to, how it is delivered, and the 70% / zero-contradiction
 # compliance contract. The derived editorial angle is merged in (same as the
-# old vibe system) so the creative situation-setting survives.
+# frozen-emotion system) so the creative situation-setting survives.
 # ---------------------------------------------------------------------------
 _EMOTION_CORE: Dict[str, str] = {
     "Anger": (
@@ -38,7 +38,7 @@ _EMOTION_CORE: Dict[str, str] = {
         "EMOTION DIRECTIVE (Joke — मज़ाक / हास्य):\n"
         "- GENUINE HUMAN FEELING: amusement at absurd policies, funny quirks, ironies of daily life.\n"
         "- DELIVERY: punchline timing, witty banter, teasing. Write every line to be SPOKEN funny — "
-        "real setups and punchlines, never a 'humorous tone' with no actual joke.\n"
+        "real setups and punchlines, never a 'humorous feeling' with no actual joke.\n"
         "- COMPLIANCE: at least 70% of beats must be GENUINELY FUNNY (setup + punchline); ZERO beats may "
         "contradict it (no somber grief, no horror, no dry lecturing)."
     ),
@@ -240,13 +240,11 @@ def get_scene_style_instruction(scene_style: str, character_count: int) -> str:
 def build_tailored_instruction(
     topic: str,
     duration_sec: int,
-    tone: str = "",
+    emotion: str = "",
     angle: str = "",
     scene_style: str = "Dialogue",
     character_count: int = 1,
     sample_story: Optional[str] = None,
-    vibe: str = "",
-    emotion: str = "",
 ) -> str:
     """
     Streamlined for 2-dropdown UI (Emotion + Scene Style).
@@ -259,7 +257,7 @@ def build_tailored_instruction(
             "Topic is required: refusing to build an instruction around a '[topic]' placeholder."
         )
 
-    effective_emotion = (emotion or vibe or tone).strip()
+    effective_emotion = (emotion or "").strip()  # #354: legacy vibe/tone params removed.
     if effective_emotion:
         # A selected emotion always resolves through the frozen directive
         # (which fails loudly on unknown emotions) — never an empty creative
@@ -301,7 +299,7 @@ def build_tailored_instruction(
             "⭐ SAMPLE STORY \u2014 DIRECTOR'S GUIDE (highest creative precedence):\n"
             'Reference Sample Story: "' + sample_clean + '"\n'
             "This sample is the author/director's guide for what they want. Follow its "
-            "characters, names, relationships, direction, structure, rhythm, and tone. "
+            "characters, names, relationships, direction, structure, rhythm, and emotion. "
             "When the sample conflicts with the emotion, character count, or scene style "
             "settings above, the SAMPLE WINS on every creative choice.\n"
             "HARD BOUNDARY \u2014 verified news facts always outrank the sample: adapt the "

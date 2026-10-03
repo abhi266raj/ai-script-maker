@@ -44,7 +44,7 @@ class AIVideoPromptAgent(BaseAgent):
         self,
         news_topic: str,
         scenes: List[SceneItem],
-        tone: str = "",
+        emotion: str = "",
         angle: str = "",
         verified_facts: Optional[List[str]] = None,
         sub_instruction: Optional[str] = None,
@@ -99,7 +99,7 @@ class AIVideoPromptAgent(BaseAgent):
         prompt = render_prompt(
             "video_prompt_engineer/generate_prompts.md",
             news_topic=news_topic,
-            tone=tone,
+            emotion=emotion,
             angle=angle,
             verified_facts=facts_text,
             sub_directive=sub_directive,

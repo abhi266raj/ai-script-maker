@@ -13,7 +13,7 @@ This is your SECOND invocation in the pipeline. In your first invocation (Stage 
 
 # INPUT
 - News Story: {news_topic}
-- Emotion: {tone} | Angle: {angle}
+- Emotion: {emotion} | Angle: {angle}
 - Scene Style: {scene_style}
 - Characters:
 {characters_text}

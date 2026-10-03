@@ -4,7 +4,7 @@ Your sole job in the pipeline is translating storyboard scenes into production-r
 
 # INPUT
 - Topic: {news_topic}
-- Emotion: {tone} — the genuine human feeling driving this reel; every scene's facial expressions, body language, lighting mood, and energy MUST match it (each scene's own Emotion line below is authoritative for that beat)
+- Emotion: {emotion} — the genuine human feeling driving this reel; every scene's facial expressions, body language, lighting mood, and energy MUST match it (each scene's own Emotion line below is authoritative for that beat)
 - Angle: {angle}
 - Verified News Facts (keep visuals, props, and on-screen elements consistent with the real news):
 {verified_facts}

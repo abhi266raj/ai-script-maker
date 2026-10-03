@@ -47,7 +47,7 @@ def test_instruction_script_and_context_reach_prompt():
         "BEAT 1: hello",
         "make it funnier",
         story_context="Title: Test",
-        tone="funny",
+        emotion="funny",
         generate_fn=_fake_llm(captured),
     )
     assert out == "REFINED SCRIPT"
@@ -330,7 +330,7 @@ def _drive_two_phases(ui, st, sid, instruction, refined,
     output_key = f"lib_ft_output_{sid}"
 
     def fake_llm(current_script, instruction, story_context="",
-                 history=(), tone="", generate_fn=None, engine_mode=None):
+                 history=(), emotion="", generate_fn=None, engine_mode=None):
         if llm_side_effect is not None:
             raise llm_side_effect
         return refined

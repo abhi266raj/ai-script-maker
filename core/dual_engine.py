@@ -197,7 +197,7 @@ def _compact_local_text(text: Optional[str], limit: int) -> Optional[str]:
     # slice that could remove the output format or hard constraints.
     lines = compacted.splitlines()
     priority = re.compile(
-        r"(task|format|output|news|story|fact|verified|target|duration|tone|angle|"
+        r"(task|format|output|news|story|fact|verified|target|duration|tone|emotion|angle|"
         r"character|agent|stage|step|scene|beat|dialogue|script|must|strict|"
         r"rule|instruction|directive|requirement)",
         re.IGNORECASE,

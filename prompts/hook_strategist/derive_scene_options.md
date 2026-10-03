@@ -33,7 +33,7 @@ You must propose TWO DISTINCT scene sets (SET A and SET B). The user will pick O
 
 # INPUT
 - News Story: {news_topic}
-- Emotion: {tone} | Angle: {angle}
+- Emotion: {emotion} | Angle: {angle}
 - Scene Style: {scene_style}
 - Characters:
 {characters_text}

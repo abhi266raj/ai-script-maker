@@ -195,7 +195,7 @@ def test_tailored_instruction_requires_emotion():
 # SceneItem.emotion stamping (scene_director validation)
 # ---------------------------------------------------------------------------
 
-def test_scene_director_rejects_non_palette_tone():
+def test_scene_director_rejects_non_palette_emotion():
     from agents.scene_director import scene_director
     from core.dual_engine import ModelGenerationError
     with pytest.raises(ModelGenerationError):
@@ -204,7 +204,7 @@ def test_scene_director_rejects_non_palette_tone():
             hook="hook",
             narration="narration",
             duration_sec=10,
-            tone="Desi Swag",  # legacy vibe — not a frozen emotion
+            emotion="Desi Swag",  # legacy vibe — not a frozen emotion
         )
 
 

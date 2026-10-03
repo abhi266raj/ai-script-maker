@@ -87,9 +87,9 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
    - Do NOT invent extra speakers, narrators, crowd voices, or merge two characters into one. If there are {character_count} beats or more, rotate speakers so each character is heard.
 
 9. EMOTION COMPLIANCE (NON-NEGOTIABLE — missing the emotion is a system failure, not a creative choice):
-   - The required emotion is: {tone}. Every line must be written to be SPOKEN with this feeling — an actor reading the screenplay parenthetical ({tone}) must know exactly how to deliver it: inflection, pacing, pauses.
+   - The required emotion is: {emotion}. Every line must be written to be SPOKEN with this feeling — an actor reading the screenplay parenthetical ({emotion}) must know exactly how to deliver it: inflection, pacing, pauses.
    - At least 70% of the beats (round up) must clearly embody it.
-   - If the emotion is Joke (funny / humorous / comic / satirical): those beats must each contain at least one REAL JOKE — a setup followed by a punchline. A merely 'humorous tone' with no actual joke is a FAILURE. Use joke tools: exaggerate the news absurdity, rule of three, callbacks, misdirection, relatable everyday comparisons.
+   - If the emotion is Joke (funny / humorous / comic / satirical): those beats must each contain at least one REAL JOKE — a setup followed by a punchline. A merely 'humorous emotion' with no actual joke is a FAILURE. Use joke tools: exaggerate the news absurdity, rule of three, callbacks, misdirection, relatable everyday comparisons.
    - The remaining beats may deliver straight facts, but they must stay NEUTRAL — they must NEVER contradict the emotion (no somber music, grief, or horror in a Joke reel; no jokes or laughter in a Sorrow reel).
    - If the emotion is Sorrow (sad / somber / lament): NO jokes, NO laughter anywhere — quiet grief, tender sensitivity, solemn dignity.
    - Match Audio/SFX to the emotion: Joke → comedic background music + laughter where humor lands; Sorrow → somber score, no laughter; Fear → tense, cautious score; Curiosity → investigative news-style score; Pride → uplifting celebratory score; Hope → warm comforting score; Anger → aggressive driving score; Shock → urgent staccato score.

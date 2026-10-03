@@ -351,7 +351,7 @@ def test_end_to_end_comedy_dialogue_pipeline():
         "fm",
     )
     _judge = (
-        "TONE_VERDICT: YES\nTONE_ISSUE: None\nNEWS_VERDICT: YES\nNEWS_REASON: mocked pass",
+        "EMOTION_VERDICT: YES\nEMOTION_ISSUE: None\nNEWS_VERDICT: YES\nNEWS_REASON: mocked pass",
         "fm",
     )
     _scene_options = (
@@ -1379,7 +1379,7 @@ def test_sample_precedence_in_chief_editor_sub_instructions():
         master_instruction="master",
         news_topic="AI in Education",
         target_seconds=30,
-        tone="Funny",
+        emotion="Funny",
         angle="Funny & Relatable",
         character_count=1,
         scene_style="Dialogue",
@@ -1405,7 +1405,7 @@ def test_sample_precedence_absent_without_sample():
     inst = build_tailored_instruction(
         topic="AI in Education",
         duration_sec=30,
-        tone="Joke",
+        emotion="Joke",
         angle="Funny",
         scene_style="Dialogue",
         character_count=1,

@@ -5,7 +5,7 @@ Your responsibility in the pipeline is crafting viral, scroll-stopping 0-3 secon
 # INPUT
 - News Topic: {news_topic}
 - Angle: {angle_name} ({angle_desc})
-- Target Emotion: {tone} — the genuine human feeling driving this reel
+- Target Emotion: {emotion} — the genuine human feeling driving this reel
 - Duration: {duration_sec}s
 {sub_directive}
 - Verified Context: {verification_summary}

@@ -3051,8 +3051,8 @@ with col_settings:
                     "Sample Story / Reference Script",
                     value=st.session_state.get("chosen_sample_story", ""),
                     height=75,
-                    placeholder="Paste reference story or script snippet here. If provided, it directs characters, tone and story as the author's guide...",
-                    help="Optional reference story or script snippet. When provided, it acts as the director's guide: its characters, direction and tone override the creative settings above on conflict. Verified news facts always outrank the sample.",
+                    placeholder="Paste reference story or script snippet here. If provided, it directs characters, emotion and story as the author's guide...",
+                    help="Optional reference story or script snippet. When provided, it acts as the director's guide: its characters, direction and emotion override the creative settings above on conflict. Verified news facts always outrank the sample.",
                     key=f"sample_story_textarea_{st.session_state.sample_story_rev}",
                 )
                 if sample_story_val != st.session_state.get("chosen_sample_story", ""):
@@ -3060,7 +3060,7 @@ with col_settings:
 
                 c_info, c_clear = st.columns([4, 1.2])
                 with c_info:
-                    st.caption("Directs characters, narrative and tone — overrides creative settings on conflict (verified facts always win).")
+                    st.caption("Directs characters, narrative and emotion — overrides creative settings on conflict (verified facts always win).")
                 with c_clear:
                     # #199: icon-only control — trash metaphor + verb-first help tag.
                     if st.button("", icon=":material/delete:", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
@@ -4002,7 +4002,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
     elif step_num == 2:
         _chars = step_state.get("finalized_characters") or []
         _news = step_state.get("news_input", "")
-        _tone = step_state.get("active_tone", "")
+        _emotion = step_state.get("active_emotion", "")
         _roles = [getattr(c, "role_or_job", "?") for c in _chars]
         _group_a = step_state.get("character_group_a") or []
         _group_b = step_state.get("character_group_b") or []
@@ -4014,7 +4014,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             with st.expander("2.1 Generate Characters — 🤖 AI generation", expanded=True):
                 st.markdown("**📥 Input:**")
                 st.caption(f"News: {_news}")
-                st.caption(f"Vibe: {_tone} | Requested Count: {len(_chars) or step_state.get('character_count', 2)}")
+                st.caption(f"Emotion: {_emotion} | Requested Count: {len(_chars) or step_state.get('character_count', 2)}")
                 st.markdown("**📤 Output (Generated Characters):**")
 
                 if _group_a or _group_b:
@@ -4089,7 +4089,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             if _hooks:
                 with st.expander("2.3 Viral Angles & Hooks Formulation — 🤖 AI generation", expanded=False):
                     st.markdown("**📥 Input:**")
-                    st.caption(f"Selected editorial angle(s) + verified news + emotion: {_tone}")
+                    st.caption(f"Selected editorial angle(s) + verified news + emotion: {_emotion}")
                     st.markdown("**📤 Output (Formulated Hooks):**")
                     for _hi, _hk in enumerate(_hooks, 1):
                         _hook_text = _hk if isinstance(_hk, str) else getattr(_hk, "hook_text", "")
@@ -4109,7 +4109,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             # 3.1 Generate Dialogue (ALL dialogue beats, timing telemetry, and JSON INSIDE here)
             with st.expander("3.1 Generate Dialogue — 🤖 AI generation", expanded=True):
                 st.markdown("**📥 Input:**")
-                st.caption(f"News + {len(step_state.get('finalized_characters') or [])} character(s) + emotion ({step_state.get('active_tone', '')}) → dialogue writer")
+                st.caption(f"News + {len(step_state.get('finalized_characters') or [])} character(s) + emotion ({step_state.get('active_emotion', '')}) → dialogue writer")
                 st.markdown("**📤 Output (Dialogue Beats & Spoken Hindi Script):**")
                 st.caption(f"{len(_s3_dlgs)} script(s), {_s3_nbeats} beat(s) generated:")
                 for _di, _d in enumerate(_s3_dlgs, 1):
@@ -4158,14 +4158,14 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                 _s3_check_defs = [
                     ("3.2.1", "structure check", "3.2.1 Structure Check", "code validator",
                      "Generated beats → speaker labels, format rules"),
-                    ("3.2.2", "tone + news check", "3.2.2 Tone + News Check", "AI validator",
-                     f"Required emotion: {step_state.get('active_tone', '')} | AI judges emotion + news coverage"),
+                    ("3.2.2", "emotion + news check", "3.2.2 Emotion + News Check", "AI validator",
+                     f"Required emotion: {step_state.get('active_emotion', '')} | AI judges emotion + news coverage"),
                     ("3.2.3", "language check", "3.2.3 Language Check", "code validator",
                      "Dialogue lines → common Hindi (no formal/shuddh words)"),
                     ("3.2.4", "clothing check", "3.2.4 Clothing Check", "code validator",
                      "Character attire specific, visual, job/news-appropriate"),
                     ("3.2.5", "sfx check", "3.2.5 SFX Check", "code validator",
-                     f"SFX matches the required tone ({step_state.get('active_tone', '')})"),
+                     f"SFX matches the required emotion ({step_state.get('active_emotion', '')})"),
                 ]
                 for _ck_num, _ck_name, _ck_title, _ck_validator, _ck_desc in _s3_check_defs:
                     _ck = next((_v for _v in _s3_subs if str(_v.get("stage", "")).strip() == _ck_num or _ck_name in str(_v.get("name", "")).lower()), None)

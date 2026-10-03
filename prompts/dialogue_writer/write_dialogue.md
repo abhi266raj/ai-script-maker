@@ -12,7 +12,7 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
   * Minimum Safe Words: {min_words} words
 {sub_directive}
 {guidance}
-- Emotion: {tone} — write every line to be SPOKEN with this feeling
+- Emotion: {emotion} — write every line to be SPOKEN with this feeling
 - Closing CTA: {cta}
 {correction_note}
 - Facts to incorporate:

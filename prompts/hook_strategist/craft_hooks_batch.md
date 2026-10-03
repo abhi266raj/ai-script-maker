@@ -4,7 +4,7 @@ Your responsibility is crafting batch variants of viral, scroll-stopping 0-3 sec
 
 # INPUT
 - News Topic: {news_topic}
-- Target Emotion: {tone} — the genuine human feeling driving this reel
+- Target Emotion: {emotion} — the genuine human feeling driving this reel
 - Target Duration: {duration_sec} Seconds
 {sub_directive}
 - Verified Key Facts:

@@ -88,7 +88,7 @@ class SceneVisualsDirectorAgent(BaseAgent):
         key_locations: Optional[List[str]] = None,
         core_conflict_or_irony: str = "",
         tangible_actions: Optional[List[str]] = None,
-        tone: str = EMOTION_CURIOSITY,
+        emotion: str = EMOTION_CURIOSITY,
         angle: str = "Funny & Relatable",
         scene_style: str = "Dialogue",
         personas: Optional[List[str]] = None,
@@ -106,10 +106,10 @@ class SceneVisualsDirectorAgent(BaseAgent):
         # #354: every beat carries the reel's frozen emotion as its delivery
         # direction. Fail loudly on a non-palette value — stamping a vibe or
         # invented string here would corrupt the screenplay parentheticals.
-        _emotion = (tone or "").strip()
+        _emotion = (emotion or "").strip()
         if _emotion not in ALL_EMOTIONS:
             raise ModelGenerationError(
-                f"Stage 5 failed: tone {tone!r} is not a frozen emotion. "
+                f"Stage 5 failed: emotion {emotion!r} is not a frozen emotion. "
                 f"Valid emotions: {ALL_EMOTIONS}. Refusing to stamp a non-emotion "
                 "value on SceneItem.emotion."
             )
