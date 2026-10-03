@@ -1,25 +1,20 @@
-# Muse (On-Device) Code Generation Guidelines
+# Muse (Assistant) — Repo Operating Notes
 
-Operational standards when **Muse / Apple on-device models** generate, edit, or patch code in this repository.
+Instructions specific to **Muse, the Meta personal AI assistant**, when working on this repository.
 
 ---
 
 ## 🚦 When to Apply & What to Expect
 
-- **When to Apply:** Any task where Muse or local on-device models are generating patches, small functions, or code edits.
-- **What to Expect:** Token-lean, highly focused code modifications that fit comfortably within local context memory.
+- **When to Apply:** Any task where this assistant works on this repo.
+- **What to Expect:** All `guidelines/workflows/` rules apply as-is; the notes below cover Muse-specific environment handling only.
 
 ---
 
-## 🛑 Code Generation Invariants
+## 🛑 Muse-Specific Invariants
 
-1. **Token-Lean Code Output:**
-   - Focus exclusively on the specific function or code block being added or patched.
-   - Do NOT regenerate entire files or large boilerplates when modifying existing modules.
-2. **Standard Library & macOS Compatibility:**
-   - Generate standard Python 3.11 code compatible with the local macOS Apple Silicon environment.
-   - Do NOT assume external network connectivity or cloud APIs during local code authoring.
-3. **Fail-Loud Principles:**
-   - Ensure all generated code adheres to strict error handling—raise explicit exceptions rather than returning silent nulls or empty fallback values.
-4. **Preserve Surrounding Context:**
-   - Retain existing function contracts, signatures, docstrings, and issue annotations.
+1. **GitHub Token (repo-scoped):** This VM's default `gh` is read-only. Every launch for this repo, read the token from `~/.config/muse/repos/ai-script-maker/github_token` (mode 600, user-managed and rotated) and use it as `GH_TOKEN="$(cat ~/.config/muse/repos/ai-script-maker/github_token)"` for `gh` writes (open PR, create issue, comment, merge).
+2. **Never Expose the Token:** Never echo, print, or copy the token into chat replies, memory files, logs, or any other file.
+3. **Write Fallbacks:** If the token file is absent, use a session token pasted in chat; if none is available, produce prefilled links instead of shell commands — `https://github.com/<owner>/<repo>/compare/develop...<branch>?title=<enc>&body=<enc>` for PRs, `https://github.com/<owner>/<repo>/issues/new?title=<enc>&body=<enc>&labels=<enc>` for issues (URL-encoded).
+4. **Token-Lean Output:** Keep patches, summaries, and terminal output concise — no filler, no redundant explanations.
+5. **AI Attribution:** My AI name is `Muse`. Every GitHub action I perform (PR, issue, comment) must carry it — pass `--ai Muse` (or `AI_NAME=Muse`) to `./open_pr` and `./resolve_comment`; append `_Raised by Muse_` to issue and other comment bodies.

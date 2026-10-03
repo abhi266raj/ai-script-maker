@@ -32,7 +32,8 @@ Applies to: [`scripts/create_branch.sh`](file:///Users/abhiraj/Documents/news/ag
 
 1. **Diagnose:** Check if the script failed due to an internal bug, regex defect, CLI change, or outdated assumption.
 2. **Prohibition:** Do NOT silently bypass the script with ad-hoc manual plumbing.
-3. **Action:** **Raise a GitHub bug report** documenting the defect:
+3. **Re-report rule:** If the agent already knows the issue for this defect (from the task context or memory — user message, handoff, referenced ID, or saved notes), comment on / reopen that issue instead of opening a duplicate. Do NOT make API calls to search for an existing issue.
+4. **Action:** **Raise a GitHub bug report** documenting the defect (only when no issue is known):
    ```bash
    gh issue create --title "bug(script): <script_name> defect" --body "## Defect Details\n- Script: scripts/<script_name>\n- Error: <details>\n- Required Fix: <details>" --label "bug"
    ```
@@ -45,7 +46,8 @@ Applies to: [`scripts/create_branch.sh`](file:///Users/abhiraj/Documents/news/ag
 2. **Baseline Failure:** If it fails on pristine develop (`./runut --baseline <target>`) $\rightarrow$ note in PR; do not attempt out-of-scope fixes.
 3. **Test Script Defect:** If the test has an outdated assertion, broken mock, or invalid assumption:
    - **PROHIBITION:** Do NOT modify, delete, or weaken test scripts to force a pass.
-   - **Action:** **Raise a GitHub bug report** documenting the test defect:
+   - **Re-report rule:** If the agent already knows the issue for this defect (from the task context or memory — user message, handoff, referenced ID, or saved notes), comment on / reopen that issue instead of opening a duplicate. Do NOT make API calls to search for an existing issue.
+   - **Action:** **Raise a GitHub bug report** documenting the test defect (only when no issue is known):
      ```bash
      gh issue create --title "bug(test): <test_name> defect in tests/<file>.py" --body "## Defect Details\n- File: tests/<file>.py\n- Why Code is Correct: <details>\n- Test Defect: <details>" --label "bug"
      ```

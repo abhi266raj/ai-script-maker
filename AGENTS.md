@@ -23,7 +23,7 @@ This repository index governs **how AI agents author, modify, test, and integrat
 | :--- | :--- | :--- | :--- |
 | **Gemini** | When Gemini writes/edits code in this repo | Python 3.11 type hints, surgical edits, Streamlit HIG compliance | [`guidelines/engines/gemini.md`](./guidelines/engines/gemini.md) |
 | **Grok** | When Grok writes/edits code in this repo | Idiomatic Python, no unapproved dependencies, contract fidelity | [`guidelines/engines/grok.md`](./guidelines/engines/grok.md) |
-| **Muse** | When Muse writes/edits code in this repo | Token-lean patches, local macOS compatibility, fail-loud handling | [`guidelines/engines/muse.md`](./guidelines/engines/muse.md) |
+| **Muse** | When the Muse assistant works on this repo | Assistant operating notes: repo-scoped GitHub token handling | [`guidelines/engines/muse.md`](./guidelines/engines/muse.md) |
 
 ---
 
