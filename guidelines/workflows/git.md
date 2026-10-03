@@ -67,6 +67,8 @@ git commit -m "<type>: <concise description>"
 ./open_pr -t "<type>: <description>" -b "## Summary\n<details of change>"
 ```
 
+**Omit `-b` to auto-derive the body** (issue #359): the script lists the branch's commit subjects under `## Summary` and appends `#N fixed` per unique `(#N)` found in them. `-b` remains an exact explicit override. The script fails loudly when the commit range is empty or no issue ID is found — then pass `-b` or add `(#N)` to a commit message.
+
 **No `gh` write access? Produce the prefilled link instead of running `./open_pr`.**
 When the agent's GitHub access is read-only (e.g. a restricted VM), do not hand over a shell command — produce a clickable link with title/body prefilled (URL-encoded); the user just hits Create:
 - PR: `https://github.com/<owner>/<repo>/compare/develop...<branch>?title=<enc-title>&body=<enc-body>`
