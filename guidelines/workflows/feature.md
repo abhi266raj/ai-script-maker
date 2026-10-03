@@ -27,25 +27,32 @@
 ## 📋 Execution Protocol
 
 ### 1. Plan & Branch from Develop
+Use the standardized script to ensure a clean branch off fresh develop:
 ```bash
-git checkout develop && git pull origin develop
-git checkout -b feature/<descriptive-feature-name>
+./scripts/create_branch.sh feature/<descriptive-feature-name>
+# Or via shortcut:
+./create_branch feature/<descriptive-feature-name>
 ```
 
 ### 2. Implement & Verify
 ```bash
 # Implement changes adhering to fail-loud architecture
-.venv/bin/python3 -m unittest discover tests
+# Verify with standardized test runner
+./runut
 ```
 
 ### 3. Commit & Open Pull Request
 ```bash
 git add <files>
 git commit -m "feat: <description>"
-git push -u origin feature/<descriptive-feature-name>
-gh pr create --base develop --title "feat: <description>" --body "## Summary\n<details>"
+
+# Push dedicated branch and open PR targeting develop
+./scripts/open_pr.sh --title "feat: <description>" --body "## Summary\n<details>"
+# Or via shortcut:
+./open_pr -t "feat: <description>" -b "## Summary\n<details>"
 ```
 
 ### 4. User Review Gate
 - Present PR URL, diff summary, and test verification output for explicit user review.
 - Never merge without user approval.
+- Once approved, merge using `./merge_pr <pr-number>`.

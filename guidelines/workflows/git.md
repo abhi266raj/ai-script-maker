@@ -22,45 +22,45 @@
    - `fix/<issue>-<name>`: Bug fixes and regressions.
    - `refactor/<name>`: Code restructuring without functional change.
    - `chore/<name>`: Maintenance, version bumps, workflow scripts, documentation.
-3. **No Auto-Tests on Branch Creation:** Do not run unit tests on branch creation unless requested. Run tests during verification before commit.
-4. **User Confirmation Gate:** Never merge a Pull Request automatically. Present the PR link, diff summary, and test status for explicit user approval.
+3. **Standardized Scripts:** Agents must invoke standardized scripts in `scripts/` (or via root shortcuts) instead of executing manual multi-step git commands.
+4. **No Auto-Tests on Branch Creation:** Do not run unit tests on branch creation unless requested. Run tests during verification before commit.
+5. **User Confirmation Gate:** Never merge a Pull Request automatically. Present the PR link, diff summary, and test status for explicit user approval before running `./merge_pr`.
 
 ---
 
 ## 📋 Execution Protocol
 
 ### 1. Verify & Branch from Develop
+Use the standardized branch script (ensures clean sync and validates prefix):
 ```bash
-git checkout develop && git pull origin develop
-git checkout -b <prefix>/<descriptive-name>
+./scripts/create_branch.sh <prefix>/<descriptive-name>
+# Or via shortcut:
+./create_branch <prefix>/<descriptive-name>
 ```
 
 ### 2. Develop, Verify & Commit
 ```bash
-# Verify test suite
-.venv/bin/python3 -m unittest discover tests
+# Verify test suite using standardized runner
+./runut
 
 # Stage and commit changes
 git add <files>
 git commit -m "<type>: <concise description>"
 ```
 
-### 3. Push Branch & Open Pull Request
+### 3. Push Dedicated Branch & Open Pull Request
+Use the standardized PR opener (pushes branch, verifies protected branches, and opens PR targeting `develop`):
 ```bash
-# Push dedicated branch to remote
-git push -u origin <prefix>/<descriptive-name>
-
-# Create Pull Request targeting develop
-gh pr create --base develop --title "<type>: <description>" --body "## Summary\n<details of change>"
+./scripts/open_pr.sh --title "<type>: <description>" --body "## Summary\n<details of change>"
+# Or via shortcut:
+./open_pr -t "<type>: <description>" -b "## Summary\n<details of change>"
 ```
 
-### 4. User Approval & PR Merge
-- Present the Pull Request URL to the user for review.
-- Once explicitly confirmed by the user, merge the PR:
+### 4. User Approval & PR Merge Gate
+- **STOP HERE:** Present the Pull Request URL to the user for explicit review and confirmation.
+- Once explicitly confirmed by the user, merge the PR and synchronize `develop`:
   ```bash
-  gh pr merge --squash --delete-branch
-  ```
-- Sync local develop:
-  ```bash
-  git checkout develop && git pull origin develop
+  ./scripts/merge_pr.sh <pr-number>
+  # Or via shortcut:
+  ./merge_pr <pr-number>
   ```

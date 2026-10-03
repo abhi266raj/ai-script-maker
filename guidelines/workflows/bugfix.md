@@ -24,31 +24,36 @@
 
 ### 1. Reproduce & Branch from Develop
 ```bash
-# 1. Confirm failure on target test
-.venv/bin/python3 -m unittest tests/test_<target>.py
+# 1. Confirm failure on target test using runner
+./runut tests/test_<target>.py
 
-# 2. Branch off develop
-git checkout develop && git pull origin develop
-git checkout -b fix/<issue-number>-<short-description>
+# 2. Branch off develop using standardized branch script
+./scripts/create_branch.sh fix/<issue-number>-<short-description>
+# Or via shortcut:
+./create_branch fix/<issue-number>-<short-description>
 ```
 
 ### 2. Surgical Patch & Verify
 ```bash
 # Apply fix, then verify target test passes
-.venv/bin/python3 -m unittest tests/test_<target>.py
+./runut tests/test_<target>.py
 
 # Verify full suite passes
-.venv/bin/python3 -m unittest discover tests
+./runut
 ```
 
 ### 3. Commit & Open Pull Request
 ```bash
 git add <files>
 git commit -m "fix: <description> (#<issue-number>)"
-git push -u origin fix/<issue-number>-<short-description>
-gh pr create --base develop --title "fix: <description> (#<issue-number>)" --body "## Summary\n<details of root cause and fix>"
+
+# Push dedicated branch and open PR targeting develop
+./scripts/open_pr.sh --title "fix: <description> (#<issue-number>)" --body "## Summary\n<details of root cause and fix>"
+# Or via shortcut:
+./open_pr -t "fix: <description> (#<issue-number>)" -b "## Summary\n<details of root cause and fix>"
 ```
 
 ### 4. User Review Gate
 - Present PR URL, root cause explanation, and test verification output for explicit user review.
 - Never merge without user approval.
+- Once approved, merge using `./merge_pr <pr-number>`.

@@ -26,10 +26,25 @@ This repository index governs **how AI agents author, modify, test, and integrat
 
 ---
 
+## 🛠️ Standardized Reusable Workflow Scripts (`scripts/`)
+
+Agents MUST run these standardized scripts instead of manually assembling raw Git or test commands:
+
+| Task / Purpose | Script / Shortcut | Usage Example |
+| :--- | :--- | :--- |
+| **Sync Develop** | [`scripts/sync_develop.sh`](./scripts/sync_develop.sh) or `./sync_develop` | `./sync_develop` |
+| **Create Branch** | [`scripts/create_branch.sh`](./scripts/create_branch.sh) or `./create_branch` | `./create_branch feature/emotion-engine` |
+| **Run Unit Tests** | [`scripts/runut`](./scripts/runut) or `./runut` | `./runut` or `./runut tests/test_foo.py` |
+| **Push & Open PR** | [`scripts/open_pr.sh`](./scripts/open_pr.sh) or `./open_pr` | `./open_pr -t "feat: ..." -b "## Summary\n..."` |
+| **Merge PR** | [`scripts/merge_pr.sh`](./scripts/merge_pr.sh) or `./merge_pr` | `./merge_pr 357` *(User approval required)* |
+
+---
+
 ## 🛑 Universal Coding Invariants (All Tasks)
 
-1. **Protected Branches (Main & Develop):** Direct pushes to `main` and `develop` are **strictly blocked** by GitHub branch rules (`GH013`). Never attempt direct pushes. All changes MUST be submitted via a dedicated branch and Pull Request (`gh pr create`).
-2. **User Confirmation Gate:** Never merge Pull Requests automatically. Present the PR link, diff summary, and test status for explicit user approval.
-3. **Fail-Loud:** No silent fallbacks or invented defaults in generated code. Raise explicit errors with diagnostic details on invalid inputs.
-4. **Preserve Documentation:** Retain all docstrings, comments, and issue references (`#138`, `#217`, `#344`).
-5. **Clean Slate Protocol (Clear After Work, Re-Read When Needed):** Clear task-specific rules and assumptions upon completing each work unit. Never carry over stale task context. When starting any new task, re-identify the task type and re-read the required guideline file afresh.
+1. **Protected Branches (Main & Develop):** Direct pushes to `main` and `develop` are **strictly blocked** by GitHub branch rules (`GH013`). Never attempt direct pushes. All changes MUST be submitted via a dedicated branch and Pull Request (`gh pr create` or `./open_pr`).
+2. **Standardized Scripts First:** Agents must run reusable workflow scripts (`./create_branch`, `./runut`, `./open_pr`, `./merge_pr`, `./sync_develop`) instead of manually running multi-step git plumbing commands.
+3. **User Confirmation Gate:** Never merge Pull Requests automatically. Present the PR link, diff summary, and test status for explicit user approval before calling `./merge_pr`.
+4. **Fail-Loud:** No silent fallbacks or invented defaults in generated code. Raise explicit errors with diagnostic details on invalid inputs.
+5. **Preserve Documentation:** Retain all docstrings, comments, and issue references (`#138`, `#217`, `#344`).
+6. **Clean Slate Protocol (Clear After Work, Re-Read When Needed):** Clear task-specific rules and assumptions upon completing each work unit. Never carry over stale task context. When starting any new task, re-identify the task type and re-read the required guideline file afresh.
