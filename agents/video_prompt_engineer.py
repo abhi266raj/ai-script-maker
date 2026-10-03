@@ -44,7 +44,7 @@ class AIVideoPromptAgent(BaseAgent):
         self,
         news_topic: str,
         scenes: List[SceneItem],
-        tone: str = "",
+        emotion: str = "",
         angle: str = "",
         verified_facts: Optional[List[str]] = None,
         sub_instruction: Optional[str] = None,
@@ -62,9 +62,13 @@ class AIVideoPromptAgent(BaseAgent):
         # The video prompter needs the beat's purpose and visible action, not the spoken words.
         scenes_desc = ""
         for s in scenes:
+            # #354: the beat's frozen emotion flows into the video prompt so
+            # facial expressions, lighting mood, and energy match the feeling.
+            _emo = (getattr(s, "emotion", "") or "").strip()
             scenes_desc += (
                 f"Scene {s.scene_number}:\n"
                 f"  Speaker: {s.character}\n"
+                f"  Emotion: {_emo}\n"
                 f"  Visual Action & Props: {s.visual_b_roll}\n"
                 f"  On-Screen Text: {s.on_screen_text}\n\n"
             )
@@ -95,7 +99,7 @@ class AIVideoPromptAgent(BaseAgent):
         prompt = render_prompt(
             "video_prompt_engineer/generate_prompts.md",
             news_topic=news_topic,
-            tone=tone,
+            emotion=emotion,
             angle=angle,
             verified_facts=facts_text,
             sub_directive=sub_directive,

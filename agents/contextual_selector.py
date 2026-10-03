@@ -4,7 +4,7 @@ Selects domain-grounded settings, authentic characters, and role-appropriate war
 1. News topic domain (e.g. SIR / Industrial Corridor / Government Bureaucracy -> Government Office,
    Hospital / Medical -> Hospital OPD, High Court -> Courtroom / Corridors, IT / Tech -> Corporate Cubicle).
 2. Reference sample story (if provided, given top precedence).
-3. Requirements & creative tone.
+3. Requirements & creative emotion.
 
 CRITICAL RULE: NOT everything is a chai tapri! Institutional topics are placed in their authentic venues.
 """
@@ -21,6 +21,7 @@ from agents.scene_catalog import (
     get_domain_catalog,
 )
 from core.prompt_loader import load_prompt, render_prompt
+from core.constants import EMOTION_CURIOSITY
 from core.dual_engine import ModelGenerationError
 
 CONTEXTUAL_SELECTOR_INSTRUCTIONS = load_prompt("contextual_selector/contextual_selector.md")
@@ -43,7 +44,7 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
         sample_story: Optional[str] = None,
         character_count: int = 2,
         duration_sec: int = 15,
-        tone: str = "",
+        emotion: str = "",
         scene_style: str = "Dialogue",
         angle: str = "",
         verified_facts: Optional[List[str]] = None,
@@ -62,7 +63,7 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
             "contextual_selector/contextual_selector.md",
             news_topic=news_topic,
             scenario=scenario or f"{scene_style} scene with {character_count} characters",
-            tone=tone or "Funny & Relatable",
+            emotion=emotion or EMOTION_CURIOSITY,  # #354: frozen emotion fallback, never a legacy vibe string.
             scene_style=scene_style,
             character_count=character_count,
             duration_sec=duration_sec,
@@ -257,7 +258,7 @@ class ContextualSceneCharacterSelectorAgent(BaseAgent):
         sample_story: Optional[str] = None,
         character_count: int = 2,
         duration_sec: int = 15,
-        tone: str = "",
+        emotion: str = "",
         angle: str = "",
     ) -> Dict[str, Any]:
         """

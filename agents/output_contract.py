@@ -261,7 +261,7 @@ STAGE_CONTRACTS: Dict[str, Dict[str, Any]] = {
 VERIFICATION_ASPECTS: Dict[str, List[str]] = {
     "stage_1": ["verification_status", "facts_complete", "news_grounded"],
     "stage_2": ["character_grounding", "attire_specificity", "distinctness"],
-    "stage_3": ["voice", "tone", "news_coverage", "language"],
+    "stage_3": ["voice", "emotion", "news_coverage", "language"],
     "stage_4": ["scene_count", "dialogue_grounding"],
     # Stage 5 enforced checks are deterministic (visual-only prompts, no
     # dialogue, well-formed/complete). The AI video-prompt audit
@@ -269,7 +269,7 @@ VERIFICATION_ASPECTS: Dict[str, List[str]] = {
     # cannot fail the stage (FR-20.8).
     "stage_5": ["visual_only", "no_dialogue", "well_formed"],
     "stage_6": [
-        "tone_70",
+        "emotion_70",
         "style_fidelity",
         "news_intelligibility",
         "dialogue_scene_connection",

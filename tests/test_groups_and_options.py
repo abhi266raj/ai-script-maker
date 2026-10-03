@@ -5,7 +5,7 @@ Verifies:
    (Group A and Group B), each with exactly N characters. No random selection.
 2. Stage 4: hook_strategist.derive_scene_options returns TWO distinct scene sets
    (Set A and Set B), each with exactly num_scenes imaginative scenes.
-3. Stage 3: ai_judge_news_coverage and ai_judge_tone_compliance exist in
+3. Stage 3: ai_judge_news_coverage and ai_judge_emotion_compliance exist in
    dialogue_writer and are wired into the validation flow.
 4. Prompt templates exist: finalise_character_groups.md, derive_scene_options.md.
 5. chief_editor stores both groups/sets in state for user selection.
@@ -114,9 +114,9 @@ class TestAIJudges:
         assert hasattr(dw_mod, "ai_judge_news_coverage"), \
             "dialogue_writer missing ai_judge_news_coverage"
 
-    def test_ai_judge_tone_compliance_exists(self):
-        assert hasattr(dw_mod, "ai_judge_tone_compliance"), \
-            "dialogue_writer missing ai_judge_tone_compliance"
+    def test_ai_judge_emotion_compliance_exists(self):
+        assert hasattr(dw_mod, "ai_judge_emotion_compliance"), \
+            "dialogue_writer missing ai_judge_emotion_compliance"
 
     def test_news_judge_wired_into_validation(self):
         """When regex fails, the AI judge must be consulted before failing."""
@@ -126,14 +126,14 @@ class TestAIJudges:
 
     def test_tone_judge_wired_into_validation(self):
         src = inspect.getsource(dw_mod.DialogueNarrationAgent.write_dialogues_batch)
-        assert "ai_judge_tone_compliance" in src, \
-            "write_dialogues_batch must call ai_judge_tone_compliance"
+        assert "ai_judge_emotion_compliance" in src, \
+            "write_dialogues_batch must call ai_judge_emotion_compliance"
 
     def test_tone_judge_returns_issue_for_feedback(self):
         """Tone judge must return a specific issue so it can feed the correction loop."""
-        sig = inspect.signature(dw_mod.ai_judge_tone_compliance)
+        sig = inspect.signature(dw_mod.ai_judge_emotion_compliance)
         # Returns Tuple[bool, str] — (is_compliant, issue)
-        src = inspect.getsource(dw_mod.ai_judge_tone_compliance)
+        src = inspect.getsource(dw_mod.ai_judge_emotion_compliance)
         assert "ISSUE" in src, "Tone judge must extract a specific ISSUE from the AI response"
 
     def test_tone_corrective_pass_exists(self):

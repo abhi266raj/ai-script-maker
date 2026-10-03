@@ -32,7 +32,7 @@ def test_preferred_angle_keeps_first_slot():
 
 
 def test_all_slots_distinct_with_preferred_angle():
-    # The exact #138 scenario: 4 scripts, vibe-derived angle always set.
+    # The exact #138 scenario: 4 scripts, emotion-derived angle always set.
     angles = build_batch_angles(4, "Funny & Relatable")
     assert len(angles) == 4
     assert _distinct_normed(angles) == 4, (

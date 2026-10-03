@@ -11,7 +11,7 @@ Your mission is analyzing news topics and wire verification facts to assign auth
 # INPUT
 - News Topic: {news_topic}
 - Story Context / Scenario: {scenario}
-- Creative Tone: {tone}
+- Creative Emotion: {emotion}
 - Scene Style: {scene_style}
 - Target Character Count: {character_count}
 - Target Duration: {duration_sec}s

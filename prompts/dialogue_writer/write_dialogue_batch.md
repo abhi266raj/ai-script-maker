@@ -86,13 +86,14 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
    - EVERY listed character MUST speak at least one beat. No character may be left silent, and no beat may be given to someone not on the list.
    - Do NOT invent extra speakers, narrators, crowd voices, or merge two characters into one. If there are {character_count} beats or more, rotate speakers so each character is heard.
 
-9. TONE COMPLIANCE (NON-NEGOTIABLE — missing the tone is a system failure, not a creative choice):
-   - The required tone is: {tone}. At least 70% of the beats (round up) must clearly embody it.
-   - If the tone is funny / humorous / comic / satirical: those beats must each contain at least one REAL JOKE — a setup followed by a punchline. A merely 'humorous tone' with no actual joke is a FAILURE. Use joke tools: exaggerate the news absurdity, rule of three, callbacks, misdirection, relatable everyday comparisons.
-   - The remaining beats may deliver straight facts, but they must stay NEUTRAL — they must NEVER contradict the tone (no somber music, grief, or horror in a comedy; no jokes or laughter in a sad/lament tone).
-   - If the tone is sad / somber / lament: NO jokes, NO laughter anywhere — quiet grief, tender sensitivity, solemn dignity.
-   - Match Audio/SFX to the tone: comedy → comedic background music + laughter where humor lands; sad → somber score, no laughter; tense/investigative → dramatic news-style score.
-   - SELF-CHECK before emitting: count your beats — at least 70% deliver the required tone and ZERO beats contradict it. Rewrite any beat that fails this.
+9. EMOTION COMPLIANCE (NON-NEGOTIABLE — missing the emotion is a system failure, not a creative choice):
+   - The required emotion is: {emotion}. Every line must be written to be SPOKEN with this feeling — an actor reading the screenplay parenthetical ({emotion}) must know exactly how to deliver it: inflection, pacing, pauses.
+   - At least 70% of the beats (round up) must clearly embody it.
+   - If the emotion is Joke (funny / humorous / comic / satirical): those beats must each contain at least one REAL JOKE — a setup followed by a punchline. A merely 'humorous emotion' with no actual joke is a FAILURE. Use joke tools: exaggerate the news absurdity, rule of three, callbacks, misdirection, relatable everyday comparisons.
+   - The remaining beats may deliver straight facts, but they must stay NEUTRAL — they must NEVER contradict the emotion (no somber music, grief, or horror in a Joke reel; no jokes or laughter in a Sorrow reel).
+   - If the emotion is Sorrow (sad / somber / lament): NO jokes, NO laughter anywhere — quiet grief, tender sensitivity, solemn dignity.
+   - Match Audio/SFX to the emotion: Joke → comedic background music + laughter where humor lands; Sorrow → somber score, no laughter; Fear → tense, cautious score; Curiosity → investigative news-style score; Pride → uplifting celebratory score; Hope → warm comforting score; Anger → aggressive driving score; Shock → urgent staccato score.
+   - SELF-CHECK before emitting: count your beats — at least 70% deliver the required emotion and ZERO beats contradict it. Rewrite any beat that fails this.
 
 10. LANGUAGE SPLIT (STRICT):
     - ENGLISH ONLY: SCENE DETAIL, CHARACTERS & CLOTHING, Camera Focus & Action, Audio/SFX, Text Overlay.
@@ -100,7 +101,7 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
     - The on-screen Text Overlay (popup text over the video) is ALWAYS English — never Hindi, never Devanagari.
 
 11. AUDIO DESIGN (EVERY BEAT):
-    - Every beat's Audio/SFX MUST include a background music bed suited to the tone (e.g. "upbeat comedic background music", "tense news-style background score", "light cheerful background track").
+    - Every beat's Audio/SFX MUST include a background music bed suited to the emotion (e.g. "upbeat comedic background music", "tense news-style background score", "light cheerful background track").
     - Add ambient/scene SFX (traffic, sizzling tawa, crowd murmur, phone notification) and LAUGHTER wherever the beat is funny.
     - Format: "<music bed> + <ambient SFX> + <spot SFX / laughter>".
 
@@ -117,7 +118,7 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
     - Invent vivid, concrete details GROUNDED in the verified news: real numbers, named places, specific reactions, surprising-but-truthful angles on the facts.
     - Vary sentence rhythms, emotional registers, and conversational tactics across beats. No two beats should feel like the same beat reworded.
     - Humor, drama, and tension must come from CREATIVE treatment of the real facts — unexpected comparisons, sharp everyday observations, memorable turns of phrase — while staying 100% truthful to the verified news.
-    - IMAGINARY STORY IS ALLOWED: to serve the required TONE, you MAY imagine emotional story elements — a character's personal reaction, a hypothetical "imagine if this happened to you" scenario, grief, fear, joy, or dramatic what-ifs. These are storytelling devices, not news claims. What you MUST NEVER invent are NEWS FACTS: dates, numbers, events, names, or claims presented as real.
+    - IMAGINARY STORY IS ALLOWED: to serve the required EMOTION, you MAY imagine emotional story elements — a character's personal reaction, a hypothetical "imagine if this happened to you" scenario, grief, fear, joy, or dramatic what-ifs. These are storytelling devices, not news claims. What you MUST NEVER invent are NEWS FACTS: dates, numbers, events, names, or claims presented as real.
     - SELF-CHECK before emitting: if a beat could be swapped into a different news reel without anyone noticing, it is too generic — rewrite it so it is unmistakably THIS story.
 
 15. PITFALL AVOIDANCE (COMMON FAILURES — DO NOT REPEAT THESE):
@@ -130,7 +131,7 @@ Your sole job in the pipeline is writing spoken-word Hindi narration (Devanagari
     - Do NOT default to chai tapri / tea stall settings unless the news is about them.
     - Do NOT write timestamps: the model cannot do clock arithmetic. Beats run in order; timestamps are computed in code.
     - Do NOT include word counts, budgets, or metadata in the output: only the script format specified below.
-    - Do NOT use mismatched Audio/SFX: music and sound effects must match the tone and news. No comedic sounds (party horns, slide whistles) in serious/dramatic stories. No sad music in funny stories. SFX must enhance the scene's mood — dramatic beats for tension, natural ambience for realism, silence where it hits harder.
+    - Do NOT use mismatched Audio/SFX: music and sound effects must match the emotion and news. No comedic sounds (party horns, slide whistles) in serious/dramatic stories. No sad music in funny stories. SFX must enhance the scene's mood — dramatic beats for tension, natural ambience for realism, silence where it hits harder.
 
 # TASK
 Write the spoken Hindi dialogue for EACH of the {num_scripts} scripts listed under "Scripts to Write" above — beat-by-beat (EXACTLY {actual_scenes} beats per script).

@@ -61,7 +61,7 @@ def _call(items, raw_outputs, **kw):
     """Run write_dialogues_batch with stubbed model output(s)."""
     agent = dw_mod.dialogue_writer
     params = dict(
-        news_input="test news", items=items, tone="Neutral", duration_sec=20,
+        news_input="test news", items=items, emotion="Neutral", duration_sec=20,
         verification=None, character_count=1, scene_style="Monologue",
         _max_retries=0,
     )
@@ -137,7 +137,7 @@ class TestPromptMandate:
             physical_props="p", core_conflict="c", facts_text="f",
             creative_rules="", sample_directive="", sub_directive="",
             revision_directive="", guidance="", items_desc="SCRIPT 1:\n...",
-            num_scripts=4, sample_scenes="s", tone="Neutral",
+            num_scripts=4, sample_scenes="s", emotion="Neutral",
         )
         assert "SCRIPT 4" in rendered, "rendered prompt must enumerate all 4 scripts"
 
@@ -176,7 +176,7 @@ class TestMultiScriptRetry:
                           return_value=(True, "", True, "")), \
              patch.object(dw_mod, "find_formal_hindi", return_value=[]):
             result = agent.write_dialogues_batch(
-                news_input="talk show", items=items, tone="Neutral",
+                news_input="talk show", items=items, emotion="Neutral",
                 duration_sec=20, verification=None, character_count=2,
                 scene_style="Interview", _max_retries=1,
             )

@@ -49,7 +49,7 @@ class TestStepwiseWorkflow(unittest.TestCase):
         _base_response = ("यह एक त्वरित हिंदी रील स्क्रिप्ट है। पूरी जानकारी यहाँ दी गई है।", "🍏 Local Apple FM (On-Device)")
         # Stage 3 now fails loudly on unparseable model output (no silent
         # synthetic scenes), and the merged ai_judge_script_quality issues
-        # its own model call expecting TONE_VERDICT/NEWS_VERDICT. The fake
+        # its own model call expecting EMOTION_VERDICT/NEWS_VERDICT. The fake
         # must therefore return parseable dialogue and a passing verdict.
         # The dialogue must ALSO pass the code validators: no formal/
         # bureaucratic Hindi tokens (see _FORMAL_HINDI_TOKENS), and short
@@ -82,7 +82,7 @@ class TestStepwiseWorkflow(unittest.TestCase):
                 )
             return ("SCRIPT 1:\n" + "\n".join(beats) + "\n", "🍏 Local Apple FM (On-Device)")
         _judge_response = (
-            "TONE_VERDICT: YES\nTONE_ISSUE: None\n"
+            "EMOTION_VERDICT: YES\nEMOTION_ISSUE: None\n"
             "NEWS_VERDICT: YES\nNEWS_REASON: mocked pass",
             "🍏 Local Apple FM (On-Device)",
         )

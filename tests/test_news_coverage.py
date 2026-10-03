@@ -1,7 +1,7 @@
 """News-intelligibility + fail-loud Stage 3 tests.
 
 Stage 3 validation makes exactly ONE AI validator call per script per attempt:
-`ai_judge_script_quality` judges BOTH tone compliance (enforced) and news
+`ai_judge_script_quality` judges BOTH emotion compliance (enforced) and news
 coverage (advisory) in a single model call and returns a split verdict.
 The other checks (structure, language, clothing, SFX) are code validators.
 
@@ -15,13 +15,13 @@ A judge engine error renders as a visible warning — never a silent
 pass or silent fail.
 
 Regression tests for the user-reported defects:
-1. ai_judge_script_quality(): one call, split (tone_ok, tone_issue, news_ok, news_reason) verdict.
+1. ai_judge_script_quality(): one call, split (emotion_ok, emotion_issue, news_ok, news_reason) verdict.
 2. Judge input contains no verified facts.
 3. Judge engine error -> visible warning with error detail.
 4. Stage 3 must FAIL WITH ERROR, never fall silently:
    - model exception -> ModelGenerationError (no silent empty-output fallback)
    - unparseable model output -> ModelGenerationError (no silent synthetic scenes)
-   - enforced tone verdict still failing after retries -> ModelGenerationError
+   - enforced emotion verdict still failing after retries -> ModelGenerationError
    - each preview script is checked against ITS OWN hook (multi-preview batches)
 """
 import inspect
@@ -124,7 +124,7 @@ def _call(items=None, **kw):
     base = dict(
         news_input=TOPIC,
         items=items or [{"angle": "Test", "hook": HOOK, "cta": "Follow!"}],
-        tone="Neutral",
+        emotion="Neutral",
         duration_sec=20,
         verification=None,
         character_count=2,
@@ -161,8 +161,8 @@ def test_empty_model_output_raises():
             _call()
 
 
-def test_tone_judge_still_failing_raises():
-    """If the ENFORCED tone verdict keeps failing, the stage must fail with
+def test_emotion_judge_still_failing_raises():
+    """If the ENFORCED emotion verdict keeps failing, the stage must fail with
     error (surfacing the judge's reason), not ship the broken output.
     (News is advisory-only: a failing news verdict never fails the stage.)"""
     vague_raw = (
@@ -172,11 +172,11 @@ def test_tone_judge_still_failing_raises():
     )
     with patch.object(dw_mod.dialogue_writer, "execute", return_value=vague_raw), \
          patch.object(dw_mod, "ai_judge_script_quality",
-                      return_value=(False, "TONE_ISSUE: mocked not funny", True, "mocked news pass")):
+                      return_value=(False, "EMOTION_ISSUE: mocked not funny", True, "mocked news pass")):
         with pytest.raises(ModelGenerationError) as exc:
             _call()
     assert "validation failed" in str(exc.value)
-    assert "tone + news check" in str(exc.value).lower()
+    assert "emotion + news check" in str(exc.value).lower()
     # The judge's reason is surfaced, not hidden.
     assert "mocked not funny" in str(exc.value)
 
@@ -193,7 +193,7 @@ def test_judge_engine_error_surfaces_warning_in_failure():
     def _execute(prompt, engine_mode=None):
         # Generation prompts return the draft; the merged quality-judge
         # prompt raises so the judge's own engine-error path is exercised.
-        if "TONE_VERDICT" in prompt:
+        if "EMOTION_VERDICT" in prompt:
             raise RuntimeError("boom")
         return vague_raw
 
@@ -208,7 +208,7 @@ def test_each_preview_checked_against_own_hook():
     script 1's."""
     per_item_hooks = []
 
-    def spy(agent, scene_lines, news_topic, hook, tone, angle, engine_mode="first_local_then_agy"):
+    def spy(agent, scene_lines, news_topic, hook, emotion, angle, engine_mode="first_local_then_agy"):
         per_item_hooks.append(hook)
         return True, "", True, "AI judge: NEWS_VERDICT=YES — mocked pass"
 

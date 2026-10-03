@@ -81,13 +81,13 @@ def test_genuine_chai_news_does_not_invent_tapri(selector):
 
 # --- Generated master instruction -------------------------------------------
 
-# NB: build_tailored_instruction is fail-loud on unknown tones — use a real one.
-_REAL_TONE = "😂 Relatable Comedy & Sarcasm (देसी ह्यूमर)"
+# NB: build_tailored_instruction is fail-loud on unknown emotions — use a real one.
+_REAL_EMOTION = "Joke"
 
 
 def test_instruction_has_no_tapri_example():
     inst = build_tailored_instruction(
-        topic="WFO mandate news", duration_sec=15, tone=_REAL_TONE,
+        topic="WFO mandate news", duration_sec=15, emotion=_REAL_EMOTION,
         angle="Funny & Relatable", scene_style="Dialogue", character_count=2,
     )
     assert "friends at a local chai tapri" not in inst
@@ -96,7 +96,7 @@ def test_instruction_has_no_tapri_example():
 
 def test_instruction_has_no_operational_params():
     inst = build_tailored_instruction(
-        topic="WFO mandate news", duration_sec=15, tone=_REAL_TONE,
+        topic="WFO mandate news", duration_sec=15, emotion=_REAL_EMOTION,
         angle="Funny & Relatable", scene_style="Dialogue", character_count=2,
     )
     assert "script version" not in inst
@@ -106,12 +106,12 @@ def test_instruction_has_no_operational_params():
 # --- Personas and catalog ----------------------------------------------------
 
 def test_no_tapri_personas_for_generic_topic():
-    personas = get_character_personas("Dialogue", 2, "Funny", "Funny", topic_or_script="Municipal election rally and voting")
+    personas = get_character_personas("Dialogue", 2, "Joke", "Joke", topic_or_script="Municipal election rally and voting")
     assert not any("tapri" in p.lower() or "टपरी" in p or "chai" in p.lower() for p in personas)
 
 
 def test_no_tapri_in_creative_guidelines():
-    g = get_creative_guidelines("Dialogue", 2, "😂 Comedy & Sarcastic Banter (ह्यूमर)", "Funny & Relatable")
+    g = get_creative_guidelines("Dialogue", 2, "Joke", "Funny & Relatable")
     assert "tapri" not in g.lower()
 
 
