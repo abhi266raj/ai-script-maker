@@ -116,6 +116,12 @@ from core.stepwise_flow import (
     request_step_run,
     complete_step_run,
     inflight_action,
+    record_step_failure,
+    step_fail_count,
+    clear_step_fail_count,
+    mark_step_bypassed,
+    step_was_bypassed,
+    reset_stepwise_run_markers,
     ACTION_LAUNCH,
     ACTION_RETRY,
     ACTION_PROCEED,
@@ -816,6 +822,7 @@ st.markdown(
     .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--ok-text); padding: 4px 0; border-bottom: 3px solid var(--ok-text); }
     .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--primary-strong); padding: 4px 0; border-bottom: 3px solid var(--primary); }
     .step-wait { text-align: center; font-size: 0.75rem; font-weight: 500; color: var(--muted); padding: 4px 0; border-bottom: 3px solid var(--line); }
+    .step-skip { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--warn-text); padding: 4px 0; border-bottom: 3px solid var(--warn-text); }
 
     .ios-section-label {
         font-size: 0.78rem; font-weight: 700; color: var(--muted) !important;
@@ -2511,6 +2518,13 @@ if "stepwise_inflight" not in st.session_state:
     st.session_state.stepwise_inflight = None
 if "stepwise_completed_steps" not in st.session_state:
     st.session_state.stepwise_completed_steps = {}
+if "stepwise_step_fail_counts" not in st.session_state:
+    # Issue #350: consecutive failures per step — the failure panel shows
+    # the count and offers the "Move to next step" bypass.
+    st.session_state.stepwise_step_fail_counts = {}
+if "stepwise_bypassed_steps" not in st.session_state:
+    # Issue #350: steps the user skipped via the failure-panel bypass.
+    st.session_state.stepwise_bypassed_steps = set()
 
 # Server action handlers (Self-contained Web Controls)
 server_action = st.session_state.get("server_action")
@@ -3247,6 +3261,7 @@ with col_settings:
                         st.session_state.stepwise_step_model = st.session_state.chosen_engine_mode
                         st.session_state.stepwise_extra_instruction = ""
                         st.session_state.stepwise_completed_steps = {}
+                        reset_stepwise_run_markers(st.session_state)  # issue #350
                         st.session_state.batch_result = None
                         st.session_state.generation_error = None
                         st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
@@ -3266,6 +3281,7 @@ with col_settings:
                         st.session_state.stepwise_active = False
                         st.session_state.stepwise_state = None
                         st.session_state.stepwise_completed_steps = {}
+                        reset_stepwise_run_markers(st.session_state)  # issue #350
                         st.session_state.stepwise_current_step = 1
                         st.session_state.stepwise_run_requested = False
                         st.rerun()
@@ -3287,6 +3303,7 @@ with col_settings:
                             st.session_state.stepwise_current_step = 1
                             st.session_state.stepwise_state = None
                             st.session_state.stepwise_completed_steps = {}
+                            reset_stepwise_run_markers(st.session_state)  # issue #350
                             st.session_state.batch_result = None
                             st.session_state.generation_error = None
                             st.rerun()
@@ -5016,7 +5033,12 @@ with col_output:
                     )
         if st.session_state.get("stepwise_active"):
             err_step = failure.get("step", st.session_state.get("stepwise_current_step", 1))
-            st.caption(f"Failure occurred during Step {err_step}. You can change the model and retry, or go back to the previous stage.")
+            # Issue #350: surface the consecutive-failure count — the human
+            # is right once the step's own attempts are exhausted, and the
+            # panel below always offers the bypass.
+            _fail_n = step_fail_count(st.session_state, err_step)
+            _fail_word = "time" if _fail_n == 1 else "times"
+            st.caption(f"Step {err_step} failed ({_fail_n} {_fail_word}). You can change the model and retry, go back to the previous stage, or move to the next step.")
             # Output till previous stage: keep every completed stage's output
             # visible so the failure doesn't wipe out the work so far.
             _comp = st.session_state.get("stepwise_completed_steps", {}) or {}
@@ -5029,11 +5051,21 @@ with col_output:
                     for _s_num in _prev_steps:
                         _render_step_output(_s_num, _comp[_s_num], key_prefix=f"failhist{_s_num}_", as_root=True)
                         _render_input_prompts(_comp[_s_num], key_prefix=f"failhistp{_s_num}_")
-            if err_step > 1:
+            # Issue #350: every stepwise failure offers a bypass ("Move to
+            # next step") — a retry-only dead end is not acceptable. Step 6
+            # is the final integrate & validate that produces the script, so
+            # there is no next step to move to.
+            _bypassable = err_step < 6
+            c_back = None
+            c_bypass = None
+            if err_step > 1 and _bypassable:
+                c_retry, c_back, c_bypass, c_abort = st.columns([1, 1, 1.4, 1])
+            elif err_step > 1:
                 c_retry, c_back, c_abort = st.columns([1, 1, 1])
+            elif _bypassable:
+                c_retry, c_bypass, c_abort = st.columns([1, 1.4, 1])
             else:
                 c_retry, c_abort = st.columns([1, 1])
-                c_back = None
             with c_retry:
                 # Issue #198 / HIG §3: Retry initiates a step run — it owns
                 # its loading state (running label shown visibly + disabled
@@ -5060,6 +5092,21 @@ with col_output:
                         st.session_state.generation_error = None
                         st.session_state.stepwise_run_requested = False
                         st.session_state.stepwise_current_step = err_step - 1
+                        st.rerun()
+            if c_bypass is not None:
+                with c_bypass:
+                    # Issue #350: bypass is navigation (like Back) — it runs
+                    # nothing, so it claims no in-flight slot; it marks the
+                    # step skipped, clears the failure, and advances.
+                    # #199: verb-first help tag.
+                    if st.button("Move to next step", icon=":material/skip_next:", key="bypass_stepwise_step",
+                                 use_container_width=True,
+                                 help=f"Skip step {err_step} and continue with step {err_step + 1}"):
+                        mark_step_bypassed(st.session_state, err_step)
+                        clear_step_fail_count(st.session_state, err_step)
+                        st.session_state.generation_error = None
+                        st.session_state.stepwise_run_requested = False
+                        st.session_state.stepwise_current_step = err_step + 1
                         st.rerun()
             with c_abort:
                 # #199: icon-only control — close metaphor + verb-first help tag.
@@ -5109,7 +5156,10 @@ with col_output:
         cols_step = st.columns(6)
         for idx, (c_st, name) in enumerate(zip(cols_step, step_names), 1):
             with c_st:
-                if idx < curr_step:
+                # Issue #350: bypassed steps render as skipped, never as done.
+                if step_was_bypassed(st.session_state, idx):
+                    st.markdown(f'<div class="step-skip">⏭ {name}</div>', unsafe_allow_html=True)
+                elif idx < curr_step:
                     st.markdown(f'<div class="step-done">✓ {name}</div>', unsafe_allow_html=True)
                 elif idx == curr_step:
                     st.markdown(f'<div class="step-now">▶ {name}</div>', unsafe_allow_html=True)
@@ -5131,6 +5181,10 @@ with col_output:
                     if past_st:
                         _render_step_output(s_num, past_st, key_prefix=f"hist{s_num}_", as_root=True)
                         _render_input_prompts(past_st, key_prefix=f"histp{s_num}_")
+                    elif step_was_bypassed(st.session_state, s_num):
+                        # Issue #350: a bypassed step has no output to show —
+                        # say so instead of silently dropping it from history.
+                        st.caption(f"⏭ Step {s_num} skipped — moved to the next step after failure.")
 
             st.markdown('<div class="ios-section-label" style="margin-top:14px;">Next Action &amp; Refinements</div>', unsafe_allow_html=True)
             with st.container(border=True):
@@ -5309,6 +5363,7 @@ with col_output:
                 st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = copy.deepcopy(st_res)
                 st.session_state.stepwise_extra_instruction = ""
                 st.session_state.generation_error = None
+                clear_step_fail_count(st.session_state, curr_step)  # issue #350
                 s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
             except Exception as e:
                 st.session_state.generation_error = {
@@ -5320,6 +5375,7 @@ with col_output:
                     "attempt_history": getattr(e, "attempt_history", None) or [],
                     "validation_steps": getattr(e, "validation_steps", None) or [],
                 }
+                record_step_failure(st.session_state, curr_step)  # issue #350
                 s_box.update(label=f"Step {curr_step} Failed", state="error")
             finally:
                 # Issue #198 / HIG §3: release the in-flight marker the moment
