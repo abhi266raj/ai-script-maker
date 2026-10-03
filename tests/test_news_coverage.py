@@ -176,7 +176,7 @@ def test_tone_judge_still_failing_raises():
         with pytest.raises(ModelGenerationError) as exc:
             _call()
     assert "validation failed" in str(exc.value)
-    assert "tone + news check" in str(exc.value).lower()
+    assert "emotion + news check" in str(exc.value).lower()
     # The judge's reason is surfaced, not hidden.
     assert "mocked not funny" in str(exc.value)
 

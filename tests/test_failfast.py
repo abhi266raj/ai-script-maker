@@ -264,4 +264,4 @@ def test_tone_failure_skips_language_clothing_sfx(monkeypatch):
     assert order == ["structure", "quality"], f"later checks must not run: {order}"
     subs = _val_step(agent)["sub_checks"]
     assert [s["passed"] for s in subs] == [True, False, None, None, None]
-    assert subs[2]["output"] == "Skipped (3.2.2 Tone + news check failed)"
+    assert subs[2]["output"] == "Skipped (3.2.2 Emotion + news check failed)"

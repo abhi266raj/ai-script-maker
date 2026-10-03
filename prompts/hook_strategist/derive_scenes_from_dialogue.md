@@ -9,11 +9,11 @@ This is your SECOND invocation in the pipeline. In your first invocation (Stage 
 - Every location you output MUST be traceable to specific beats: list the beat numbers each scene is grounded in.
 - NEVER pick from a generic pool of defaults. FORBIDDEN unless the dialogue/news is literally about them: roadside tea stall / chai tapri, generic street food cart, generic office.
 - If the dialogue implies only one real location, you may still split coverage (e.g. wide vs close-up zone) but both scenes must be visibly distinct framings of the dialogue's world.
-- BE CREATIVE: design visually striking, filmable locations with character — specific textures, memorable background details, dynamic lighting moods that serve the tone. A creative location grounded in the dialogue beats a bland-but-safe one every time. Creativity NEVER means inventing places the dialogue/news doesn't support.
+- BE CREATIVE: design visually striking, filmable locations with character — specific textures, memorable background details, dynamic lighting moods that serve the emotion. A creative location grounded in the dialogue beats a bland-but-safe one every time. Creativity NEVER means inventing places the dialogue/news doesn't support.
 
 # INPUT
 - News Story: {news_topic}
-- Tone: {tone} | Angle: {angle}
+- Emotion: {tone} | Angle: {angle}
 - Scene Style: {scene_style}
 - Characters:
 {characters_text}
@@ -32,7 +32,7 @@ Write exactly {num_scenes} scenes:
 SCENE 1:
 Location: [Specific location / setting name extracted from the dialogue beats]
 Atmosphere: [Visual environment and background details seen in the beats]
-Lighting: [Lighting and mood fitting the tone]
+Lighting: [Lighting and mood fitting the emotion]
 Props: [Key physical props visible in these beats, comma-separated]
 Grounded in beats: [Beat numbers, e.g. 1, 2]
 

@@ -1,62 +1,119 @@
 """Central constants for the reel pipeline — no magic strings.
 
-All vibe values, format values, stage names, source names, and UI sentinel
+All emotion values, format values, stage names, source names, and UI sentinel
 values live here. Import from here instead of hardcoding strings.
 """
 
 # ---------------------------------------------------------------------------
-# Vibe internal values (pipeline-facing; creator UI shows VIBE_DISPLAY_NAMES)
+# Emotion internal values (pipeline-facing). #354: the frozen canonical
+# palette of 8 genuine human emotions for news reel generation. The creator
+# UI shows these directly — no composite marketing phrases.
 # ---------------------------------------------------------------------------
-VIBE_DESI_SWAG = "Desi Swag"
-VIBE_HERITAGE = "Heritage"
-VIBE_VIRAL = "Viral"
-VIBE_COMEDY = "Joke"
-VIBE_BREAKING = "Breaking"
-VIBE_ANALYSIS = "Analysis"
-VIBE_CINEMATIC = "Cinematic"
-VIBE_EMOTIONAL = "Emotional"
-VIBE_HEATED = "Heated"
+EMOTION_ANGER = "Anger"
+EMOTION_SHOCK = "Shock"
+EMOTION_JOKE = "Joke"
+EMOTION_SORROW = "Sorrow"
+EMOTION_CURIOSITY = "Curiosity"
+EMOTION_PRIDE = "Pride"
+EMOTION_FEAR = "Fear"
+EMOTION_HOPE = "Hope"
 
-ALL_VIBES = [
-    VIBE_DESI_SWAG,
-    VIBE_HERITAGE,
-    VIBE_VIRAL,
-    VIBE_COMEDY,
-    VIBE_BREAKING,
-    VIBE_ANALYSIS,
-    VIBE_CINEMATIC,
-    VIBE_EMOTIONAL,
-    VIBE_HEATED,
+# Frozen order per #354 — do not reorder; UI and tests pin this sequence.
+ALL_EMOTIONS = [
+    EMOTION_ANGER,
+    EMOTION_SHOCK,
+    EMOTION_JOKE,
+    EMOTION_SORROW,
+    EMOTION_CURIOSITY,
+    EMOTION_PRIDE,
+    EMOTION_FEAR,
+    EMOTION_HOPE,
 ]
 
-# ---------------------------------------------------------------------------
-# Vibe display names (creator UI ONLY — emoji-prefixed for visual scanning).
-# Pipeline-facing VIBE_* values stay plain text; agents NEVER receive emojis.
-# ---------------------------------------------------------------------------
-VIBE_DISPLAY_NAMES = {
-    VIBE_DESI_SWAG: "\U0001F1EE\U0001F1F3 Desi Swag",
-    VIBE_HERITAGE: "\U0001FAB2 Heritage",
-    VIBE_VIRAL: "\U0001F525 Viral",
-    VIBE_COMEDY: "\U0001F602 Joke",
-    VIBE_BREAKING: "\u26A1 Breaking",
-    VIBE_ANALYSIS: "\U0001F4A1 Analysis",
-    VIBE_CINEMATIC: "\U0001F3AD Cinematic",
-    VIBE_EMOTIONAL: "\U0001F622 Emotional",
-    VIBE_HEATED: "\u2694\uFE0F Heated",
+# Hindi names for the creator UI and agent prompts.
+EMOTION_HINDI = {
+    EMOTION_ANGER: "क्रोध / गुस्सा",
+    EMOTION_SHOCK: "स्तब्ध / झटका",
+    EMOTION_JOKE: "मज़ाक / हास्य",
+    EMOTION_SORROW: "शोक / दुख",
+    EMOTION_CURIOSITY: "जिज्ञासा / पड़ताल",
+    EMOTION_PRIDE: "गर्व / स्वाभिमान",
+    EMOTION_FEAR: "डर / चिंता",
+    EMOTION_HOPE: "उम्मीद / राहत",
+}
+
+# Delivery direction per emotion: how the feeling is spoken/performed.
+# Screenplay parentheticals, teleprompter headers, and the dialogue writer
+# all ground on these — an actor reading "(Anger)" knows the delivery.
+EMOTION_DELIVERY = {
+    EMOTION_ANGER: "fast, abrupt, aggressive, interruptive",
+    EMOTION_SHOCK: "gasping, wide-eyed disbelief, rapid urgency",
+    EMOTION_JOKE: "punchline timing, witty banter, teasing",
+    EMOTION_SORROW: "quiet grief, respectful restraint, somber pauses",
+    EMOTION_CURIOSITY: "inquisitive, investigative, steady",
+    EMOTION_PRIDE: "confident, celebratory, inspiring",
+    EMOTION_FEAR: "rapid, cautious, tense concern",
+    EMOTION_HOPE: "warm, relaxed, comforting reassurance",
+}
+
+# News triggers per emotion: what human reaction the emotion answers.
+EMOTION_TRIGGERS = {
+    EMOTION_ANGER: "scams, price hikes, bureaucratic negligence, injustice",
+    EMOTION_SHOCK: "sudden breaking developments, unbelievable numbers, scandals",
+    EMOTION_JOKE: "absurd policies, funny quirks, ironies of daily life",
+    EMOTION_SORROW: "tragic loss, casualties, disasters, heartbreak",
+    EMOTION_CURIOSITY: "investigations, tech/space mysteries, 'why this matters'",
+    EMOTION_PRIDE: "national triumphs, space missions (ISRO), championship wins",
+    EMOTION_FEAR: "cyber scams, health warnings, financial threats",
+    EMOTION_HOPE: "crises averted, rescues, inflation cooling, good news",
 }
 
 
-def vibe_display_name(plain: str) -> str:
-    """Emoji-prefixed creator-facing label for a plain pipeline vibe value."""
-    return VIBE_DISPLAY_NAMES.get(plain, plain)
+def emotion_hindi_name(emotion: str) -> str:
+    """Hindi name for a frozen emotion. Fails loudly on unknown emotions."""
+    if emotion not in EMOTION_HINDI:
+        raise ValueError(
+            f"Unknown emotion {emotion!r}: not in the frozen palette {ALL_EMOTIONS}. "
+            "Refusing to invent a Hindi name."
+        )
+    return EMOTION_HINDI[emotion]
 
 
-def vibe_plain_name(display: str) -> str:
-    """Reverse lookup: map a UI display name back to the plain pipeline value."""
-    for plain, disp in VIBE_DISPLAY_NAMES.items():
-        if disp == display:
-            return plain
-    return display
+def emotion_delivery(emotion: str) -> str:
+    """Delivery direction for a frozen emotion. Fails loudly on unknown emotions."""
+    if emotion not in EMOTION_DELIVERY:
+        raise ValueError(
+            f"Unknown emotion {emotion!r}: not in the frozen palette {ALL_EMOTIONS}. "
+            "Refusing to invent delivery direction."
+        )
+    return EMOTION_DELIVERY[emotion]
+
+
+# ---------------------------------------------------------------------------
+# Emotion -> Angle derivation (mirrors the old vibe->angle pattern).
+# The 2-dropdown UI (Emotion + Scene Style) never asks for an angle; the
+# pipeline derives one so downstream prompt machinery keeps working.
+# ---------------------------------------------------------------------------
+EMOTION_TO_ANGLE = {
+    EMOTION_ANGER: "Dramatic Storytelling",
+    EMOTION_SHOCK: "Dramatic Storytelling",
+    EMOTION_JOKE: "Funny & Relatable",
+    EMOTION_SORROW: "Tragic & Heartbreaking",
+    EMOTION_CURIOSITY: "Investigative Deep-Dive",
+    EMOTION_PRIDE: "Inspirational & Uplifting",
+    EMOTION_FEAR: "Dramatic Storytelling",
+    EMOTION_HOPE: "Inspirational & Uplifting",
+}
+
+
+def emotion_to_angle(emotion: str) -> str:
+    """Derive the pipeline angle from the selected emotion. Fail-loud."""
+    if emotion not in EMOTION_TO_ANGLE:
+        raise ValueError(
+            f"Unknown emotion {emotion!r}: no angle derivation exists. "
+            f"Valid emotions: {ALL_EMOTIONS}."
+        )
+    return EMOTION_TO_ANGLE[emotion]
 
 # ---------------------------------------------------------------------------
 # Format internal values (pipeline-facing; creator UI shows FORMAT_DISPLAY_NAMES)

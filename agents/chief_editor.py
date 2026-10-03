@@ -6,6 +6,7 @@ import re
 import threading
 import time
 from typing import Generator, Dict, Any, List, Tuple, Optional, Callable
+from core.constants import EMOTION_CURIOSITY
 from core.models import (
     ReelBatchResult,
     ReelScript,
@@ -80,7 +81,7 @@ def build_batch_angles(
     carried N identical SCRIPT briefs and the model repeated script 1
     N times. Detection gates (#147) cannot fix identical inputs.
 
-    The user's preferred (vibe-derived) angle takes slot 1; remaining
+    The user's preferred (emotion-derived) angle takes slot 1; remaining
     slots cycle REEL_ANGLES excluding the preferred angle, so every
     script in a normal-size batch gets a genuinely different editorial
     angle. Oversized batches (N > pool) wrap around, as before.
@@ -165,8 +166,9 @@ class ChiefEditorCoordinatorAgent:
         )
         creative_rules = get_creative_guidelines(scene_style, character_count, tone, angle)
 
-        # Vibe line: short, token-lean. Angle shown only when present.
-        vibe_line = f"- Vibe: {tone} | {angle}." if (angle or "").strip() else f"- Vibe: {tone}."
+        # Emotion line: short, token-lean. Angle shown only when present.
+        # #354: the frozen emotion (not a vibe) drives dialogue & delivery.
+        emotion_line = f"- Emotion: {tone} | {angle}." if (angle or "").strip() else f"- Emotion: {tone}."
 
         sample_clause = ""
         if sample_story and sample_story.strip():
@@ -174,7 +176,7 @@ class ChiefEditorCoordinatorAgent:
                 f"\n📌 SAMPLE STORY \u2014 DIRECTOR'S GUIDE (highest creative precedence):\n"
                 f"Reference Sample: \"{sample_story.strip()}\"\n"
                 f"Rule: This sample is the author/director's guide. Follow its characters, "
-                f"relationships, direction, and tone. On any conflict with the vibe, character "
+                f"relationships, direction, and tone. On any conflict with the emotion, character "
                 f"count, scene style, or other creative settings, the SAMPLE WINS.\n"
                 f"Hard boundary: verified news facts always outrank the sample \u2014 never "
                 f"alter confirmed facts to match the sample.\n"
@@ -193,7 +195,7 @@ class ChiefEditorCoordinatorAgent:
                 f"Scene & Character Selector Sub-Instruction (Dynamic Subagent):\n"
                 f"- Story Domain: {news_topic}\n"
                 f"- Format: {target_seconds}s vertical reel ({scene_style} style, {character_count} character(s)).\n"
-                f"{vibe_line}\n"
+                f"{emotion_line}\n"
                 f"- Task: Detect the authentic real-world domain and select dynamic physical location/venue, personas, authentic wardrobes, props, and ambient SFX.\n"
                 f"- Rule: Institutional topics MUST be placed in authentic institutional venues (government offices, hospitals, courts, IT tech parks, space centers). Never default to a chai tapri unless explicitly topical.{sample_clause}"
             ),
@@ -201,14 +203,14 @@ class ChiefEditorCoordinatorAgent:
                 f"Character Finalisation Sub-Instruction (Agent 2 - Stage 2):\n"
                 f"- News Story: {news_topic}\n"
                 f"- Format: {target_seconds}s vertical reel ({scene_style} style, {character_count} character(s)).\n"
-                f"{vibe_line}\n"
+                f"{emotion_line}\n"
                 f"- Task: Finalise {character_count} distinct, grounded characters with authentic professions, specific wardrobes, emotional postures, and relational dynamics. NO dialogue, NO hooks, NO CTAs.\n"
                 f"- Diversity: Ensure gender balance and varied professions/socioeconomic roles. No all-male default cast.{sample_clause}"
             ),
             "hooks": (
                 f"Hook & CTA Sub-Instruction (Agent 2):\n"
                 f"- News Story: {news_topic}\n"
-                f"- Format: {target_seconds}s vertical reel, vibe: {tone}.\n"
+                f"- Format: {target_seconds}s vertical reel, emotion: {tone}.\n"
                 f"- Task: Craft punchy, scroll-stopping 0-3s Devanagari Hindi hooks (<7 words) and concise closing CTAs matching the requested tone and angle."
             ),
             "dialogue_writer": (
@@ -341,7 +343,7 @@ class ChiefEditorCoordinatorAgent:
         preferred_angle: str = "",
         character_count: int = 1,
         scene_style: str = "Dialogue",
-        preferred_tone: str = "",
+        preferred_emotion: str = "",
         sample_story: Optional[str] = None,
         extra_instruction: Optional[str] = None,
         on_substep: Optional[Callable[[Dict[str, Any]], None]] = None,
@@ -355,14 +357,15 @@ class ChiefEditorCoordinatorAgent:
         total_retries = 0
         agent_audits: List[AgentAuditItem] = []
 
-        active_tone = preferred_tone or kwargs.get("preferred_tone") or kwargs.get("tone") or ""
+        active_tone = preferred_emotion or kwargs.get("preferred_emotion") or kwargs.get("preferred_tone") or kwargs.get("tone") or ""
         if not active_tone and "Tone:" in scenario:
             for line in scenario.split("\n"):
                 if line.strip().startswith("Tone:"):
                     active_tone = line.replace("Tone:", "").strip()
                     break
         if not active_tone:
-            active_tone = "Trending Reel / Desi Swag"
+            # #354: fall back to the frozen default emotion — never a vibe string.
+            active_tone = EMOTION_CURIOSITY
 
         active_angle = preferred_angle or kwargs.get("preferred_angle") or kwargs.get("angle") or ""
         if not active_angle and "Editorial angle:" in scenario:
@@ -644,7 +647,7 @@ class ChiefEditorCoordinatorAgent:
                 )
 
         # #138: one DISTINCT angle per batch slot — the user's preferred
-        # (vibe-derived) angle takes slot 1, the rest cycle REEL_ANGLES.
+        # (emotion-derived) angle takes slot 1, the rest cycle REEL_ANGLES.
         # Stamping the same angle on every slot starved the batch prompt of
         # per-script differentiation and the model repeated script 1 N times.
         selected_angles: List[Tuple[str, str]] = build_batch_angles(
@@ -670,7 +673,7 @@ class ChiefEditorCoordinatorAgent:
             # NEW: Ask AI for TWO distinct character groups (A and B).
             # The user picks ONE group for dialogue — no random selection.
             _emit_substep(on_substep, 2, "2.1", "Character generation", "start",
-                           detail=f"Finalising {character_count} character(s), vibe: {active_tone}",
+                           detail=f"Finalising {character_count} character(s), emotion: {active_tone}",
                            input=f"News: {(news_input or '')[:200]}\nVibe: {active_tone} | Style: {scene_style}")
             group_a, group_b = hook_strategist.finalise_character_groups(
                 news_topic=news_input,
@@ -2158,7 +2161,7 @@ class ChiefEditorCoordinatorAgent:
         preferred_angle: str = "",
         character_count: int = 1,
         scene_style: str = "Dialogue",
-        preferred_tone: str = "",
+        preferred_emotion: str = "",
         sample_story: Optional[str] = None,
         **kwargs,
     ) -> Generator[Dict[str, Any], None, ReelBatchResult]:
@@ -2191,7 +2194,7 @@ class ChiefEditorCoordinatorAgent:
             preferred_angle=preferred_angle,
             character_count=character_count,
             scene_style=scene_style,
-            preferred_tone=preferred_tone,
+            preferred_emotion=preferred_emotion,
             sample_story=sample_story,
             **kwargs,
         )

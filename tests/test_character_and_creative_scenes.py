@@ -11,50 +11,51 @@ from workflow import reel_workflow
 from core.metrics import get_duration_budget
 from core.prompt_matrix import (
     build_tailored_instruction,
-    TONE_INSTRUCTIONS,
+    EMOTION_INSTRUCTIONS,
     ANGLE_INSTRUCTIONS,
     SCENE_STYLE_INSTRUCTIONS,
 )
+from core.constants import ALL_EMOTIONS
 from core.models import ReelScript, SceneItem
 
 
 def test_character_personas_mapping():
     """Verify authentic character personas generated for style, count, tone, angle, and script topic grounding."""
     # 1. Comedy Dialogue with 2 characters (default pair retains Friend 1 / Friend 2 tags)
-    p_funny_2 = get_character_personas("Dialogue", 2, "😂 Comedy & Sarcastic Banter (ह्यूमर)", "Funny & Relatable")
+    p_funny_2 = get_character_personas("Dialogue", 2, "Joke", "Funny & Relatable")
     assert len(p_funny_2) == 2
     assert "Friend 1" in p_funny_2[0] and "Friend 2" in p_funny_2[1]
 
     # 2. Solo Comedy Creator
-    p_funny_1 = get_character_personas("Dialogue", 1, "😂 Comedy & Sarcastic Banter (ह्यूमर)", "Funny & Relatable")
+    p_funny_1 = get_character_personas("Dialogue", 1, "Joke", "Funny & Relatable")
     assert len(p_funny_1) == 1
     assert "Desi Creator" in p_funny_1[0]
 
     # 3. Debate with 2 characters
-    p_debate_2 = get_character_personas("Debate", 2, "Analytical", "Contrast")
+    p_debate_2 = get_character_personas("Debate", 2, "Curiosity", "Contrast")
     assert len(p_debate_2) == 2
     assert "Speaker A" in p_debate_2[0] and "Speaker B" in p_debate_2[1]
 
     # 4. Interview with 2 characters
-    p_interview_2 = get_character_personas("Interview", 2, "Investigative", "Deep Dive")
+    p_interview_2 = get_character_personas("Interview", 2, "Curiosity", "Deep Dive")
     assert len(p_interview_2) == 2
     assert "Journalist" in p_interview_2[0] and "Guest" in p_interview_2[1]
 
     # 5. Cultural Pride with 2 characters
-    p_culture_2 = get_character_personas("Dialogue", 2, "🇮🇳 Desi Swag & Cultural Pride (भारतीय गौरव)", "Heritage")
+    p_culture_2 = get_character_personas("Dialogue", 2, "Pride", "Inspirational & Uplifting")
     assert len(p_culture_2) == 2
     assert "Senior Scholar" in p_culture_2[0] or "गुरु" in p_culture_2[0]
     assert "Youth" in p_culture_2[1] or "युवा" in p_culture_2[1]
 
     # 6. Script-Grounded Domain Personas (Police, Legal, Tech, Politics, Healthcare)
     # Police / Traffic Challan
-    p_police = get_character_personas("Dialogue", 2, "Funny", "Funny", topic_or_script="Traffic police challan scam in city")
+    p_police = get_character_personas("Dialogue", 2, "Joke", "Funny", topic_or_script="Traffic police challan scam in city")
     assert any("Police" in p or "दरोगा" in p for p in p_police)
     assert any("Delivery" in p or "राइडर" in p for p in p_police)
     assert "Friend 1" in p_police[0] and "Friend 2" in p_police[1]
 
     # Court / Legal Verdict
-    p_court = get_character_personas("Dialogue", 2, "Funny", "Funny", topic_or_script="Supreme Court legal verdict on bail plea")
+    p_court = get_character_personas("Dialogue", 2, "Joke", "Funny", topic_or_script="Supreme Court legal verdict on bail plea")
     assert any("Lawyer" in p or "वकील" in p for p in p_court)
     assert any("Trader" in p or "दुकानदार" in p for p in p_court)
 
@@ -136,6 +137,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 visual_b_roll="Handheld dynamic 9:16 shot at a vibrant Indian street market; Priya aggressively slaps her smartphone onto the bench",
                 on_screen_text="आज़ादी छिन गई! 😭",
                 audio_sfx="Cutting Chai Clink",
+                emotion="Joke",
             ),
             SceneItem(
                 scene_number=2,
@@ -145,6 +147,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 visual_b_roll="Rohan smirks, mock-presses his thumb on the RFID badge, and sips cutting chai",
                 on_screen_text="बायोमेट्रिक हाजिरी! 🚨",
                 audio_sfx="Tea Sip",
+                emotion="Joke",
             ),
         ],
         word_count=18,
@@ -156,8 +159,8 @@ def test_professional_screenplay_scene_description_and_clean_beats():
     assert "[Format Requirement: 9:16 Vertical Reel | All scene descriptions in English, Dialogues strictly in Hindi]" in pro
     assert "SCENE DETAIL:" in pro
     assert "CHARACTERS & CLOTHING:" in pro
-    assert "PRIYA:" in pro
-    assert "ROHAN:" in pro
+    assert 'PRIYA (Joke): "' in pro
+    assert 'ROHAN (Joke): "' in pro
 
     # Per FR-9.3: timestamps are omitted by default in exported screenplay
     assert "[Time:" not in pro
@@ -196,6 +199,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 on_screen_text="No Jobs?",
                 audio_sfx="Fast whoosh + heavy book slam.",
                 dialogue="डिग्री ले ली, नौकरी कहाँ है?",
+                emotion="Joke",
             ),
             SceneItem(
                 scene_number=2,
@@ -205,6 +209,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 on_screen_text="",
                 audio_sfx="Record scratch effect.",
                 dialogue="सिस्टम को स्टूडेंट नहीं, अंधभक्त चाहिए!",
+                emotion="Joke",
             ),
             SceneItem(
                 scene_number=3,
@@ -214,6 +219,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
                 on_screen_text="Need new coaching!",
                 audio_sfx="Comedic drum punchline.",
                 dialogue="तो भाई, मेरा भी अंधभक्ति कोचिंग में एडमिशन करा दे!",
+                emotion="Joke",
             ),
         ],
         word_count=18,
@@ -225,9 +231,9 @@ def test_professional_screenplay_scene_description_and_clean_beats():
     assert "Camera Focus & Action: Fast whip-pan to Ananya slamming a book on the library counter." in pro10
     assert "Camera Focus & Action: Quick pan to Vikram shoving his phone screen into the frame." in pro10
     assert "Camera Focus & Action: Fast pull back to frame both. Ananya mockingly tosses her book aside." in pro10
-    assert 'ANANYA: "डिग्री ले ली, नौकरी कहाँ है?"' in pro10
-    assert 'VIKRAM: "सिस्टम को स्टूडेंट नहीं, अंधभक्त चाहिए!"' in pro10
-    assert 'ANANYA: "तो भाई, मेरा भी अंधभक्ति कोचिंग में एडमिशन करा दे!"' in pro10
+    assert 'ANANYA (Joke): "डिग्री ले ली, नौकरी कहाँ है?"' in pro10
+    assert 'VIKRAM (Joke): "सिस्टम को स्टूडेंट नहीं, अंधभक्त चाहिए!"' in pro10
+    assert 'ANANYA (Joke): "तो भाई, मेरा भी अंधभक्ति कोचिंग में एडमिशन करा दे!"' in pro10
 
     # 4. User preference toggle for optional overlays and SFX
     pro_no_overlay = format_professional_screenplay(s10, include_overlays=False)
@@ -244,7 +250,7 @@ def test_professional_screenplay_scene_description_and_clean_beats():
 
 def test_creative_guidelines():
     """Verify that angle provides imaginary scene setup and comedy mandates genuine humor."""
-    guidelines = get_creative_guidelines("Dialogue", 2, "😂 Comedy & Sarcastic Banter (ह्यूमर)", "Funny & Relatable")
+    guidelines = get_creative_guidelines("Dialogue", 2, "Joke", "Funny & Relatable")
     assert "GENUINELY FUNNY" in guidelines
     assert "JOKE MANDATE" in guidelines
     # The chai-tapri comedy example was removed from all guidance
@@ -256,14 +262,14 @@ def test_creative_guidelines():
 
 
 def test_tailored_instruction_matrix():
-    """Verify instruction generator covers all tone, angle, and style combinations and sample story precedence."""
-    for tone in TONE_INSTRUCTIONS:
+    """Verify instruction generator covers all emotion, angle, and style combinations and sample story precedence."""
+    for emotion in ALL_EMOTIONS:
         for angle in ANGLE_INSTRUCTIONS:
             for style in SCENE_STYLE_INSTRUCTIONS:
                 inst = build_tailored_instruction(
                     topic="AI in Education",
                     duration_sec=30,
-                    tone=tone,
+                    emotion=emotion,
                     angle=angle,
                     scene_style=style,
                     character_count=2,
@@ -424,7 +430,7 @@ def test_end_to_end_comedy_dialogue_pipeline():
             max_retries=3,
             character_count=2,
             scene_style="Dialogue",
-            preferred_tone="😂 Comedy & Sarcastic Banter (ह्यूमर)",
+            preferred_emotion="Joke",
             preferred_angle="Funny & Relatable",
             sample_story=sample,
         )
@@ -462,7 +468,7 @@ def test_end_to_end_comedy_dialogue_pipeline():
 
     # 5. Sub-instructions passed to all sub-agents
     # NB: the suite now has 6 sub-agent instruction blocks (was 7 before the
-    # vibe-system streamlining).
+    # emotion-system streamlining).
     assert len(result.sub_instructions) == 6
     assert "dialogue_writer" in result.sub_instructions
 
@@ -474,17 +480,17 @@ def test_end_to_end_comedy_dialogue_pipeline():
 def test_sadness_tone_angle_and_lament_style():
     """Verify personas, guidelines, tailored instructions, and visuals for sadness/lament."""
     # 1. Personas
-    p_sad_1 = get_character_personas("Lament", 1, "😢 Emotional & Heartbreaking (भावुक / दुखद)", "Tragic & Heartbreaking")
+    p_sad_1 = get_character_personas("Lament", 1, "Sorrow", "Tragic & Heartbreaking")
     assert len(p_sad_1) == 1
     assert "Grieving" in p_sad_1[0] or "भावुक" in p_sad_1[0]
 
-    p_sad_2 = get_character_personas("Lament", 2, "😢 Emotional & Heartbreaking (भावुक / दुखद)", "Tragic & Heartbreaking")
+    p_sad_2 = get_character_personas("Lament", 2, "Sorrow", "Tragic & Heartbreaking")
     assert len(p_sad_2) == 2
     assert "Bereaved" in p_sad_2[0] or "शोकाकुल" in p_sad_2[0]
     assert "Consoling" in p_sad_2[1] or "सहयोगी" in p_sad_2[1]
 
     # 2. Guidelines
-    g_sad = get_creative_guidelines("Lament", 2, "😢 Emotional & Heartbreaking (भावुक / दुखद)", "Tragic & Heartbreaking")
+    g_sad = get_creative_guidelines("Lament", 2, "Sorrow", "Tragic & Heartbreaking")
     assert "deep emotional weight" in g_sad
     assert "personal loss" in g_sad
     assert "LAMENT" in g_sad
@@ -493,14 +499,14 @@ def test_sadness_tone_angle_and_lament_style():
     inst = build_tailored_instruction(
         topic="Tragic Bridge Collapse",
         duration_sec=20,
-        tone="😢 Emotional & Heartbreaking (भावुक / दुखद)",
+        emotion="Sorrow",
         angle="Tragic & Heartbreaking",
         scene_style="Lament",
         character_count=2,
     )
     assert "Tragic Bridge Collapse" in inst
     assert "Lament" in inst
-    assert "Sadness & Grief" in inst or "भावुक" in inst
+    assert "EMOTION DIRECTIVE (Sorrow" in inst or "शोक" in inst
 
 
 def test_dead_configs_purged_and_update_instruction():
@@ -521,7 +527,7 @@ def test_dead_configs_purged_and_update_instruction():
 
     # Ensure active configs exist
     expected_keys = {
-        "default_engine", "default_tone", "default_duration", "batch_count",
+        "default_engine", "default_emotion", "default_duration", "batch_count",
         "max_retries", "story_source", "selected_headline", "selected_script_index",
         "default_angle", "character_count", "scene_style"
     }
@@ -531,18 +537,18 @@ def test_dead_configs_purged_and_update_instruction():
     inst = build_tailored_instruction(
         topic="Varanasi Dev Deepawali celebration",
         duration_sec=20,
-        tone="🪔 Traditional Heritage & Wisdom (सांस्कृतिक धरोहर)",
+        emotion="Pride",
         angle="Dramatic Storytelling",
         scene_style="Narration",
         character_count=1,
         sample_story="Ghats glow with millions of diyas.",
     )
     assert "20 seconds" in inst
-    assert "timeless Indian wisdom" in inst
-    # NB: the 2-dropdown vibe system resolves the angle FROM the tone
-    # (_VIBE_TO_ANGLE_KEY maps "🪔 Traditional Heritage & Wisdom" to
-    # "Inspirational & Uplifting"); the explicit angle= parameter is only
-    # used when no tone/vibe is given. This pins the current contract.
+    assert "confident, celebratory, inspiring" in inst
+    # NB: the 2-dropdown emotion system resolves the angle FROM the emotion
+    # (EMOTION_TO_ANGLE maps "Pride" to "Inspirational & Uplifting"); the
+    # explicit angle= parameter is only used when no emotion is given. This
+    # pins the current contract.
     assert "Inspirational & Uplifting" in inst
     assert "Narration" in inst
     assert "1 speaking character(s)" in inst
@@ -574,7 +580,7 @@ def test_no_commenting_in_dialogue_or_script():
     assert "दोस्त चाय पीओ" in trimmed
 
     # Creative guidelines for Dialogue must mandate in-universe conversation without commenting
-    guidelines = get_creative_guidelines("Dialogue", 2, "😂 Comedy & Sarcastic Banter", "Funny & Relatable")
+    guidelines = get_creative_guidelines("Dialogue", 2, "Joke", "Funny & Relatable")
     assert "NO social media commenting" in guidelines
     assert "NO CTA" in guidelines
 
@@ -582,7 +588,7 @@ def test_no_commenting_in_dialogue_or_script():
     inst = build_tailored_instruction(
         topic="Tech WFO Mandate",
         duration_sec=15,
-        tone="😂 Relatable Comedy & Sarcasm (देसी ह्यूमर)",
+        emotion="Joke",
         angle="Funny & Relatable",
         scene_style="Dialogue",
         character_count=2,
@@ -603,28 +609,28 @@ def test_argument_style_and_relational_characters():
     inst = build_tailored_instruction(
         topic="Inflation in Household Budget",
         duration_sec=20,
-        tone="⚔️ Heated Argument & Clash (तीखी बहस / तकरार)",
+        emotion="Anger",
         angle="Dramatic Storytelling",
         scene_style="Argument",
         character_count=2,
     )
     assert "Argument" in inst
-    assert "Heated Argument & Clash" in inst or "तीखी बहस" in inst
+    assert "EMOTION DIRECTIVE (Anger" in inst
     assert "sharp conflict" in inst.lower() or "clash" in inst.lower()
 
     # 2. Creative Guidelines for Argument style
-    guide = get_creative_guidelines("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic Storytelling")
+    guide = get_creative_guidelines("Argument", 2, "Anger", "Dramatic Storytelling")
     assert "HEATED ARGUMENT" in guide or "ARGUMENT" in guide
     assert "sharp verbal spar" in guide.lower() or "clash" in guide.lower()
 
     # 3. Relational Character Grounding
     # Husband & Wife for household / gas / ration / inflation
-    hw_personas = get_character_personas("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic Storytelling", topic_or_script="LPG gas cylinder price hike and ration expense")
+    hw_personas = get_character_personas("Argument", 2, "Anger", "Dramatic Storytelling", topic_or_script="LPG gas cylinder price hike and ration expense")
     assert any("Wife" in p or "पत्नी" in p for p in hw_personas)
     assert any("Husband" in p or "पति" in p for p in hw_personas)
 
     # Father & Son for coaching / degree / generation gap
-    fs_personas = get_character_personas("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic Storytelling", topic_or_script="Engineering degree coaching fees versus startup dreams")
+    fs_personas = get_character_personas("Argument", 2, "Anger", "Dramatic Storytelling", topic_or_script="Engineering degree coaching fees versus startup dreams")
     assert any("Father" in p or "पिता" in p for p in fs_personas)
     assert any("Son" in p or "बेटा" in p for p in fs_personas)
 
@@ -633,14 +639,14 @@ def test_argument_style_and_relational_characters():
     assert any("Colleague" in p or "Senior" in p or "Junior" in p or "कलीग" in p for p in col_personas)
 
     # Neighbors for society gossip / parking
-    neigh_personas = get_character_personas("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic Storytelling", topic_or_script="Apartment parking spot dispute and society gossip")
+    neigh_personas = get_character_personas("Argument", 2, "Anger", "Dramatic Storytelling", topic_or_script="Apartment parking spot dispute and society gossip")
     assert any("Neighbor" in p or "पड़ोसी" in p for p in neigh_personas)
 
 
 def test_sample_story_is_directors_guide():
     """Verify the sample story is the DIRECTOR'S GUIDE: its cast, direction and
     tone win over creative setup rules on conflict (issue #33). Verified news
-    facts still outrank the sample; the sample outranks vibe/character-count/
+    facts still outrank the sample; the sample outranks emotion/character-count/
     scene-style settings. Extracted personas are never force-fit to the
     configured character count."""
     from core.screenplay_formatter import format_industry_screenplay
@@ -659,7 +665,7 @@ ANANYA: "डिग्री ले ली, नौकरी कहाँ है?"
 [Time: 0:03 - 0:06]
 VIKRAM: "सिस्टम को स्टूडेंट नहीं, अंधभक्त चाहिए!"
 """
-    p_block = get_character_personas("Dialogue", 2, "Funny", "Funny", sample_story=sample_script_block)
+    p_block = get_character_personas("Dialogue", 2, "Joke", "Funny", sample_story=sample_script_block)
     assert len(p_block) == 2
     # Sample cast wins — the director's names carry through
     assert any("Ananya" in p for p in p_block)
@@ -671,7 +677,7 @@ VIKRAM: "सिस्टम को स्टूडेंट नहीं, अं
 Wife: "सब्जी और राशन का बिल देखकर तो होश उड़ गए!"
 Husband: "कमाई वही है और खर्चे दोगुने हो गए हैं!"
 """
-    p_cues = get_character_personas("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic", sample_story=sample_dialogue_cues)
+    p_cues = get_character_personas("Argument", 2, "Anger", "Dramatic", sample_story=sample_dialogue_cues)
     assert len(p_cues) == 2
     assert any("Wife" in p or "पत्नी" in p for p in p_cues)
     assert any("Husband" in p or "पति" in p for p in p_cues)
@@ -679,7 +685,7 @@ Husband: "कमाई वही है और खर्चे दोगुन�
     # 3. Narrative relationship mention (Father & Son) — the sample's implied
     #    cast is returned WHOLE, never force-fit back to character_count=2.
     sample_father_son = "Father and son heated debate regarding coaching classes fees and degree value."
-    p_fs = get_character_personas("Argument", 2, "⚔️ Heated Argument & Clash (तीखी बहस / तकरार)", "Dramatic", sample_story=sample_father_son)
+    p_fs = get_character_personas("Argument", 2, "Anger", "Dramatic", sample_story=sample_father_son)
     assert len(p_fs) == 3  # trio template kept whole: no truncation to 2
     assert any("Father" in p or "पिता" in p for p in p_fs)
     assert any("Son" in p or "बेटा" in p for p in p_fs)
@@ -692,7 +698,7 @@ CHARACTERS:
 ⚬ VIKRAM: street-smart friend
 ⚬ KABIR: quiet friend
 """
-    p_trio = get_character_personas("Dialogue", 1, "Funny", "Funny", sample_story=sample_trio_block)
+    p_trio = get_character_personas("Dialogue", 1, "Joke", "Funny", sample_story=sample_trio_block)
     assert len(p_trio) == 3
     assert any("Ananya" in p for p in p_trio)
     assert any("Vikram" in p for p in p_trio)
@@ -701,13 +707,13 @@ CHARACTERS:
     # 4. Narrative domain mention (hospital/doctor) with no recognizable cast —
     #    extraction finds nothing, so setup-driven grounded generation applies.
     sample_doc_pat = "Hospital doctor discusses medicine costs with a visitor."
-    p_dp = get_character_personas("Dialogue", 2, "Funny", "Funny", sample_story=sample_doc_pat)
+    p_dp = get_character_personas("Dialogue", 2, "Joke", "Funny", sample_story=sample_doc_pat)
     assert len(p_dp) == 2
     assert any("Doctor" in p or "चिकित्सक" in p or "डॉक्टर" in p for p in p_dp)
     assert any("Construction Worker" in p or "मजदूर" in p for p in p_dp)
 
     # 4b. No sample at all — setup-driven behavior unchanged.
-    p_plain = get_character_personas("Dialogue", 2, "Funny", "Funny")
+    p_plain = get_character_personas("Dialogue", 2, "Joke", "Funny")
     assert len(p_plain) == 2
 
     # 5. Screenplay Formatter custom clothing and scene detail extraction from sample script
@@ -741,6 +747,7 @@ VIKRAM: "सिस्टम को स्टूडेंट नहीं, अं
                 dialogue="डिग्री ले ली, नौकरी कहाँ है?",
                 on_screen_text="No Jobs?",
                 audio_sfx="Whoosh",
+                emotion="Joke",
             ),
             SceneItem(
                 scene_number=2,
@@ -750,6 +757,7 @@ VIKRAM: "सिस्टम को स्टूडेंट नहीं, अं
                 dialogue="सिस्टम को स्टूडेंट नहीं, अंधभक्त चाहिए!",
                 on_screen_text="",
                 audio_sfx="Record Scratch",
+                emotion="Joke",
             ),
         ],
         word_count=12,
@@ -1008,6 +1016,7 @@ def test_contextual_selector_and_sir_government_domain():
                 visual_b_roll="Sharma Ji taps an index finger emphatically on a blueprint map of the Special Investment Region laid out across a wooden desk",
                 on_screen_text="धोलेरा SIR पास!",
                 audio_sfx="Paper File Thud + Sub Bass Hit",
+                emotion="Curiosity",
                 character_attire="Crisp half-sleeve formal collared shirt with ballpoint pens in front pocket and official government ID lanyard",
                 scene_location="Government administrative planning office",
             ),
@@ -1019,6 +1028,7 @@ def test_contextual_selector_and_sir_government_domain():
                 visual_b_roll="Rajesh reviews blue official document file folder across the desk",
                 on_screen_text="जमीन अधिग्रहण?",
                 audio_sfx="Desk Slide Whoosh",
+                emotion="Curiosity",
                 character_attire="Smart-casual collared shirt and trousers, holding a blue official document file folder",
                 scene_location="Government administrative planning office",
             ),
@@ -1102,6 +1112,7 @@ def test_dynamic_imagination_engine_for_missing_pairs_and_settings():
                 visual_b_roll="Dr. Vikram points to the telemetry screen displaying satellite orbital trajectory coordinates",
                 on_screen_text="इसरो का नया मिशन!",
                 audio_sfx="Telemetry Beeps + Countdown Echo",
+                emotion="Pride",
                 # NB: the formatter no longer invents setting/attire — it uses
                 # the Stage 2 character bible + selected scene location carried
                 # on each SceneItem. Supply them as the pipeline would.
@@ -1116,6 +1127,7 @@ def test_dynamic_imagination_engine_for_missing_pairs_and_settings():
                 visual_b_roll="Priya adjusts communications headset and logs telemetry coordinates",
                 on_screen_text="डेटा ट्रांसमिशन शुरू!",
                 audio_sfx="Keypad Clatter",
+                emotion="Pride",
                 character_attire="Smart-casual aerospace project blazer with communication headset",
                 scene_location="ISRO Satellite Telemetry and Mission Operations Complex",
             ),
@@ -1146,6 +1158,7 @@ def test_screenplay_coherence_sub_agent_and_dialogue_action_sync():
         visual_b_roll="Priya looks around randomly at the wall",
         on_screen_text="चाय",
         audio_sfx="Whoosh",
+        emotion="Joke",
     )
     sc2 = SceneItem(
         scene_number=2,
@@ -1155,6 +1168,7 @@ def test_screenplay_coherence_sub_agent_and_dialogue_action_sync():
         visual_b_roll="Rohan shrugs shoulders indifferently",
         on_screen_text="ऑर्डर",
         audio_sfx="Clink",
+        emotion="Joke",
     )
 
     test_script = ReelScript(

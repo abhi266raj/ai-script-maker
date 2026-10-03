@@ -2438,7 +2438,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
         raise ValueError("Cannot save: the final-stage screenplay text is empty.")
     hashtag = st.session_state.get("active_hashtag", "") or ""
     hashtags = [hashtag] if hashtag else []
-    tone = st.session_state.get("chosen_tone", "") or ""
+    tone = st.session_state.get("chosen_emotion", "") or ""  # #354: frozen emotion
     topic = st.session_state.get("run_topic", "") or ""
     headline = st.session_state.get("selected_headline_title", "") or ""
     title = _build_autosave_title(script)

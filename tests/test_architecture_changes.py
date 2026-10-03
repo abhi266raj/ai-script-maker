@@ -241,7 +241,7 @@ class TestFailFastValidation:
         names = re.findall(r'"name":\s*"([^"]+)"', m.group(1))
         assert names == [
             "Structure check",
-            "Tone + news check",
+            "Emotion + news check",
             "Language check",
             "Clothing check",
             "SFX check",

@@ -4,7 +4,7 @@ Your responsibility is crafting batch variants of viral, scroll-stopping 0-3 sec
 
 # INPUT
 - News Topic: {news_topic}
-- Target Tone: {tone}
+- Target Emotion: {tone} — the genuine human feeling driving this reel
 - Target Duration: {duration_sec} Seconds
 {sub_directive}
 - Verified Key Facts:
@@ -16,7 +16,7 @@ Your responsibility is crafting batch variants of viral, scroll-stopping 0-3 sec
 # CORE RULES & GUIDELINES
 1. For each designated angle, write ONE 0-3s viral Hindi Hook (with emojis).
 2. The hook must stop viewers from scrolling within 3 seconds using humor, curiosity, or shock value.
-3. Match the requested tone and ground hooks in relatable desi phrasing.
+3. Match the requested emotion and ground hooks in relatable desi phrasing.
 4. Do NOT write any call to action, social-media CTA, or viewer-engagement line (no "follow", "share", "comment", "like"). Hooks only.
 
 # TASK
