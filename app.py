@@ -109,8 +109,12 @@ from core.refresh_guard import (  # #196: Refresh button owns its loading state
 )
 from tools.news_fetcher import news_fetcher, NewsFetchError
 # v1.5: Saved Stories Library (tab bar + storage + auto-save)
-import story_library  # noqa: F401
-from library_ui import render_tab_bar, render_library_page, maybe_autosave_story
+from library_ui import (
+    render_tab_bar,
+    render_library_page,
+    maybe_autosave_story,
+    set_header_warmup_col,
+)
 from core.workflow import reel_workflow
 from core.stepwise_flow import (
     step_run_inflight,
@@ -2580,30 +2584,30 @@ elif server_action == "restart":
     )
     st.stop()
 
-# v1.5: macOS-style tab bar (Studio | Library). Library renders here and stops
-# the script so the Studio flow below runs untouched when Studio is selected.
-# (Placed after the server-action handlers so stop/restart pages take precedence.)
-_v15_view = render_tab_bar()
-if _v15_view == "library":
-    render_library_page()
-    st.stop()
-
 srv_info = get_server_info()
-col_brand, col_srv = st.columns([7.8, 2.2], vertical_alignment="center")
+_commit_suffix = f" · {_RUNNING_COMMIT}" if _RUNNING_COMMIT else ""
+
+# Issue #365: Consolidated unified header row
+# Title + version/commit, View selector (Studio | Library), Server status expander, and Warmup button
+col_brand, col_tabs, col_srv, col_warm = st.columns([4.2, 2.4, 2.0, 1.4], vertical_alignment="center")
 with col_brand:
-    # #365 (HIG §1): the product title carries the version only — the git
-    # commit hash is developer metadata, so it lives in the Server expander
-    # below, not in the most prominent element on screen.
     st.markdown(
         f"""
         <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
             <div>
-                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}</span></div>
+                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}{_commit_suffix}</span></div>
             </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+with col_tabs:
+    # v1.5 (#2, #365): macOS-style tab bar (Studio | Library).
+    set_header_warmup_col(col_warm)
+    try:
+        _v15_view = render_tab_bar()
+    finally:
+        set_header_warmup_col(None)
 with col_srv:
     # macOS HIG: disclosure triangle (inline expansion), never a popover on click.
     with st.expander(f"Server · :{srv_info['port']}", expanded=False):
@@ -2622,6 +2626,10 @@ with col_srv:
             if st.button("Restart", help="Restart server process", use_container_width=True, key="web_srv_restart"):
                 st.session_state.server_action = "restart"
                 st.rerun()
+
+if _v15_view == "library":
+    render_library_page()
+    st.stop()
 
 col_settings, col_output = st.columns([6, 4], gap="large")
 
