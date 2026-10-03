@@ -1,21 +1,26 @@
 #!/usr/bin/env bash
-# bump_version.sh — bump the app version and generate the release task.
+# bump_version.sh — version increase (NOT a release).
 #
 # Usage: ./scripts/bump_version.sh <new-version>
-#   e.g. ./scripts/bump_version.sh 1.8.0
+#   e.g. ./scripts/bump_version.sh 1.8.1
 #
-# What it does:
-#   1. Validates the version (semver X.Y.Z).
+# Flow (guidelines/workflows/release.md — Version Increase Protocol):
+#   1. Validates the version (semver X.Y.Z); aborts if already at it.
 #   2. Aborts if the working tree is dirty (it switches branches).
-#   3. Cuts branch chore/version-<v> from refs/remotes/origin/develop.
-#   4. Updates the single source of truth: core/version.py
+#   3. Fetches origin; cuts branch chore/version-<v> from origin/develop
+#      (i.e. pulls the latest develop).
+#   4. Merges origin/main into the branch (true merge, --no-ff) so any
+#      main-only commits come along with history intact. On conflict the
+#      merge is aborted and the script dies loudly — resolve manually.
+#   5. Bumps the single source of truth: core/version.py
 #      (build/packaging scripts resolve it dynamically — nothing else to edit).
-#   5. Writes scripts/tasks/release-<v>.md: the release task with the steps
-#      for this version. The full release rule lives in ADO; the template
-#      points there instead of duplicating it.
+#   6. Commits the bump.
 #
-# The generated task file is then used to create the tracked release task
-# (Goals tab), which carries the work from PR to published DMG.
+# Then: push, open PR → develop, and after explicit user approval merge with
+# a TRUE merge (never squash): ./merge_pr <num> --merge
+#
+# A version increase is not a release. The release happens when develop is
+# merged to main (true merge) and tagged.
 
 set -euo pipefail
 
@@ -26,7 +31,7 @@ die() { echo "error: $*" >&2; exit 1; }
 
 VERSION="${1:-}"
 [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
-  || die "usage: $0 <new-version>   (semver X.Y.Z, e.g. 1.8.0)"
+  || die "usage: $0 <new-version>   (semver X.Y.Z, e.g. 1.8.1)"
 
 [ -f core/version.py ] || die "core/version.py not found — run from the repo root"
 
@@ -37,10 +42,23 @@ CURRENT="$(sed -n -E 's/^__version__[[:space:]]*=[[:space:]]*["'"'"']([^"'"'"']+
 [ -z "$(git status --porcelain | grep -v '^??')" ] \
   || die "working tree has uncommitted changes to tracked files — commit or stash first (this script switches branches)"
 
+git fetch origin develop main \
+  || die "could not fetch origin — check network access and retry"
+git rev-parse --verify --quiet refs/remotes/origin/develop >/dev/null \
+  || die "refs/remotes/origin/develop not found after fetch"
+git rev-parse --verify --quiet refs/remotes/origin/main >/dev/null \
+  || die "refs/remotes/origin/main not found after fetch"
+
 BRANCH="chore/version-${VERSION}"
-git fetch -q origin develop 2>/dev/null || true
 git checkout -q -B "$BRANCH" refs/remotes/origin/develop
 echo "branch: $BRANCH (from refs/remotes/origin/develop)"
+
+if git merge --no-ff -q -m "Merge origin/main into $BRANCH" refs/remotes/origin/main; then
+  echo "merged: origin/main into $BRANCH (true merge)"
+else
+  git merge --abort 2>/dev/null || true
+  die "origin/main conflicts with develop — merge aborted, $BRANCH left clean. Bypass: merge manually (git checkout $BRANCH && git merge --no-ff refs/remotes/origin/main), resolve, commit, then bump core/version.py to $VERSION by hand."
+fi
 
 # Portable version edit (BSD sed needs -i '', so use python3).
 python3 - "$VERSION" <<'EOF'
@@ -63,31 +81,18 @@ echo "bumped: core/version.py $CURRENT -> $NEW"
 RESOLVED="$(python3 -c "import sys; sys.path.insert(0, '.'); from core.version import __version__; print(__version__)" 2>/dev/null || true)"
 [ "$RESOLVED" = "$VERSION" ] && echo "verified: core.version resolves to $RESOLVED"
 
-TASK_DIR="scripts/tasks"
-mkdir -p "$TASK_DIR"
-TASK_FILE="${TASK_DIR}/release-${VERSION}.md"
-DATE="$(date -u +%Y-%m-%d)"
-cat > "$TASK_FILE" <<EOF
-# Release $VERSION — release task
+git add core/version.py
+git commit -q -m "chore: bump version to $VERSION"
+echo "committed: chore: bump version to $VERSION"
 
-Generated $DATE by scripts/bump_version.sh.
-Full release rule lives in ADO (version release process) — this file only
-carries the per-version state and the checklist.
+cat <<EOF
+next:
+  git push -u origin $BRANCH
+  ./open_pr -t "chore: bump version to $VERSION" -b "## Summary
+- Merge origin/main into $BRANCH (true merge)
+- chore: bump version to $VERSION
 
-State: version bumped $CURRENT -> $VERSION in core/version.py
-on branch $BRANCH (cut from refs/remotes/origin/develop, not yet pushed).
-
-## Do
-1. Push $BRANCH and open PR → develop (body follows repo convention).
-2. Evaluate the "code completed" labeling automation in this PR: after the
-   merge, confirm the workflow tags the PR and every open issue it
-   references. If it still doesn't fire, fix the workflow first.
-3. Verify mergeable/clean → squash-merge into develop → delete the branch.
-4. Release PR develop → main with Closes keywords
-   (scripts/release_closing_keywords.sh), true-merge.
-5. Tag v$VERSION; confirm Actions builds Hindi-Reel-Studio-v$VERSION-macOS.dmg;
-   publish the GitHub release; share via Telegram.
+Version increase, not a release." --ai Muse
+  # after explicit user approval, true merge (never squash):
+  ./merge_pr <pr-number> --merge
 EOF
-
-echo "task template: $TASK_FILE"
-echo "next: use $TASK_FILE to create the tracked release task."
