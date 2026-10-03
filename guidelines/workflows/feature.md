@@ -37,7 +37,8 @@ Use the standardized script to ensure a clean branch off fresh develop:
 ### 2. Implement & Verify
 ```bash
 # Implement changes adhering to fail-loud architecture
-# Verify with standardized test runner
+# Verify with standardized test runner (ONLY if executable .py code was touched)
+# If any failure occurs, follow guidelines/workflows/failure.md
 ./runut
 ```
 

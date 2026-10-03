@@ -39,6 +39,7 @@
 ./runut tests/test_<target>.py
 
 # Verify full suite passes
+# If any failure occurs or test script has a defect, follow guidelines/workflows/failure.md
 ./runut
 ```
 

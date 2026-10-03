@@ -12,6 +12,7 @@ This repository index governs **how AI agents author, modify, test, and integrat
 | **New Feature** | Writing new capabilities, UI controls, models, or prompt matrices | Spec/plan gate $\rightarrow$ branch $\rightarrow$ fail-loud code $\rightarrow$ unit tests | [`guidelines/workflows/feature.md`](./guidelines/workflows/feature.md) |
 | **Bug Fix** | Fixing crashes, defects, test failures, or UI regressions | Root cause analysis $\rightarrow$ fix branch $\rightarrow$ surgical minimal diff $\rightarrow$ test pass | [`guidelines/workflows/bugfix.md`](./guidelines/workflows/bugfix.md) |
 | **Git & PR Workflow** | Branch creation, commit gates, test execution, opening Pull Requests | Prohibition on direct push to main/develop $\rightarrow$ PR creation $\rightarrow$ user approval | [`guidelines/workflows/git.md`](./guidelines/workflows/git.md) |
+| **Test Failure & Bug** | Test runner failures, triage, script defects | Root cause triage $\rightarrow$ code fix OR GitHub bug report for test defects | [`guidelines/workflows/failure.md`](./guidelines/workflows/failure.md) |
 | **Release & Spec** | Version bumps, release audits, requirements lifecycle | Formal spec & plan $\rightarrow$ commit gate $\rightarrow$ post-release requirement audit | [`guidelines/workflows/release.md`](./guidelines/workflows/release.md) |
 
 ---
@@ -48,3 +49,5 @@ Agents MUST run these standardized scripts instead of manually assembling raw Gi
 4. **Fail-Loud:** No silent fallbacks or invented defaults in generated code. Raise explicit errors with diagnostic details on invalid inputs.
 5. **Preserve Documentation:** Retain all docstrings, comments, and issue references (`#138`, `#217`, `#344`).
 6. **Clean Slate Protocol (Clear After Work, Re-Read When Needed):** Clear task-specific rules and assumptions upon completing each work unit. Never carry over stale task context. When starting any new task, re-identify the task type and re-read the required guideline file afresh.
+7. **Strict Unit Test Gate (Code-Only):** Run unit tests (`./runut`) **ONLY** when executable code (`.py`) is touched. Strictly **DO NOT** run unit tests when only instructions, guidelines, documentation, or Markdown files (`.md`) are modified.
+8. **Master Test Failure & Script Defect Policy:** When a test failure occurs during code verification, diagnose the root cause (regression vs. baseline vs. test script defect). If a test script itself needs modification, agents are **strictly forbidden** from altering or weakening the test script unilaterally—agents **MUST raise a GitHub bug report** (`gh issue create`) documenting the script defect.

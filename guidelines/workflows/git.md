@@ -39,8 +39,14 @@ Use the standardized branch script (ensures clean sync and validates prefix):
 ```
 
 ### 2. Develop, Verify & Commit
+- **Strict UT Gate:** Run `./runut` **ONLY** if executable code (`.py`) was touched.
+  - If only Markdown (`.md`), guidelines, prompts text, or docs were changed, **SKIP unit tests**.
+- **Failure Protocol:** If any test fails, follow [`guidelines/workflows/failure.md`](./failure.md):
+  - Diagnose if it is a code regression, pre-existing baseline issue, or test script defect.
+  - If the test script itself needs changes, **DO NOT modify the test script**; file a GitHub bug report with `gh issue create`.
+
 ```bash
-# Verify test suite using standardized runner
+# Verify test suite (ONLY if .py code was touched)
 ./runut
 
 # Stage and commit changes
