@@ -9,7 +9,8 @@ Any code change. Start from `origin/develop`. End: branch pushed, PR open, merge
 | Task | Command |
 | :--- | :--- |
 | Sync develop | `./sync_develop` |
-| Branch | `./create_branch <prefix>/<name>` |
+| Branch | `./create_branch <prefix>/<name> [--stash]` |
+| Stash | `./stash [push [msg] \| pop \| list \| drop]` |
 | Tests | `./runut` |
 | PR | `./open_pr -t "..." [-b "..."] [--ai "..."]` |
 | Resolve review | `./resolve_comment <pr> [reply] [--ai "..."]` |
@@ -24,7 +25,7 @@ Any code change. Start from `origin/develop`. End: branch pushed, PR open, merge
 10. Stop before merge. Show PR URL, diff, tests. `./merge_pr` only after user approval.
 
 ```bash
-./create_branch <prefix>/<name>
+./create_branch <prefix>/<name> [--stash]
 ./runut   # .py only
 git add <files>
 git commit -m "<type>: <desc>"

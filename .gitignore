@@ -14,6 +14,7 @@ venv/
 # Runtime cache files (news data, session state -- machine-local)
 project_config.json
 studio_config.json
+.*_cache.json
 
 # macOS
 .DS_Store

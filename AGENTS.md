@@ -14,7 +14,7 @@ Dispatch: re-read the matching file each task. Do not reuse prior-task assumptio
 | Muse | `guidelines/engines/muse.md` |
 
 1. **Branches:** `main` and `develop` reject direct push (`GH013`). Branch + PR (`./open_pr` or `gh pr create`). Never push those branches.
-2. **Scripts:** Use `scripts/` shortcuts (`./sync_develop`, `./create_branch`, `./runut`, `./open_pr`, `./resolve_comment`, `./merge_pr`). See `guidelines/workflows/git.md`.
+2. **Scripts:** Use `scripts/` shortcuts (`./sync_develop`, `./create_branch`, `./stash`, `./runut`, `./open_pr`, `./resolve_comment`, `./merge_pr`). See `guidelines/workflows/git.md`.
 3. **Merge:** Never merge unprompted. Show PR link, diff, test status. Merge only after user says yes (`./merge_pr`).
 4. **Fail-loud:** No silent fallbacks or invented defaults. Raise with input, expected, stage.
 5. **Keep docs:** Docstrings, comments, issue refs (`#138`, `#217`, `#344`).
