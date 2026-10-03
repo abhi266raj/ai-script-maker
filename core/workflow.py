@@ -62,6 +62,63 @@ class ReelWorkflow:
             **kwargs,
         )
 
+    def resume_stream(
+        self,
+        state: Dict[str, Any],
+        from_stage: int,
+        engine_mode: str = "first_local_then_agy",
+    ) -> Generator[Dict[str, Any], None, ReelBatchResult]:
+        """Resume the pipeline from a mid-pipeline state (failure recovery).
+
+        Replays stages ``from_stage``..6 using the same event protocol as
+        :meth:`run_stream` (stage-start ``{"step": N, "data": None}``,
+        ``{"type": "substep", ...}`` live events, stage-complete
+        ``{"step": N, "data": <state>}``, final ``{"completed": True}``),
+        so the UI run loop consumes a resumed run with no changes.
+
+        ``state`` must be the completed state dict of stage
+        ``from_stage - 1`` (the caller deep-copies it — every stage mutates
+        the state in place). Stage 1 cannot be resumed (it builds the state
+        from the raw inputs); use :meth:`run_stream` for a fresh run.
+        """
+        # Validate the user's selected model before doing any agent work —
+        # same fail-fast contract as run_stream.
+        dual_engine.validate_mode(engine_mode)
+        stage_fns = {
+            2: chief_editor_coordinator.execute_stage_2,
+            3: chief_editor_coordinator.execute_stage_3,
+            4: chief_editor_coordinator.execute_stage_4,
+            5: chief_editor_coordinator.execute_stage_5,
+            6: chief_editor_coordinator.execute_stage_6,
+        }
+        if from_stage not in stage_fns:
+            raise ValueError(
+                f"Cannot resume from stage {from_stage}: expected 2-6 "
+                "(stage 1 builds the state from the raw inputs)."
+            )
+        for stage_num in range(from_stage, 7):
+            yield {"step": stage_num, "total_steps": 6, "data": None}
+            state = yield from chief_editor_coordinator._pump_stage_with_substeps(
+                stage_fns[stage_num], stage_num, state, engine_mode=engine_mode,
+            )
+            yield {"step": stage_num, "total_steps": 6, "data": state}
+        yield {
+            "step": 6,
+            "total_steps": 6,
+            "stage_label": "✅ Pipeline Complete: Chief Editor Sign-Off",
+            "agent": chief_editor_coordinator.name,
+            "icon": chief_editor_coordinator.icon,
+            "status": "✅ Pipeline resumed from stage "
+            f"{from_stage} and completed.",
+            "data": {
+                "batch_result": state["batch_result"],
+                "total_time": state.get("total_time"),
+                "audit_report": state.get("audit_report"),
+            },
+            "completed": True,
+        }
+        return state["batch_result"]
+
     def run_step_1(
         self,
         news_input: str,
