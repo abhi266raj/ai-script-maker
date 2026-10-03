@@ -27,18 +27,13 @@
 ## 📋 Execution Protocol
 
 ### 1. Plan & Branch from Develop
-Use the standardized script to ensure a clean branch off fresh develop:
 ```bash
-./scripts/create_branch.sh feature/<descriptive-feature-name>
-# Or via shortcut:
 ./create_branch feature/<descriptive-feature-name>
 ```
 
 ### 2. Implement & Verify
 ```bash
-# Implement changes adhering to fail-loud architecture
-# Verify with standardized test runner (ONLY if executable .py code was touched)
-# If any failure occurs, follow guidelines/workflows/failure.md
+# Verify with runner ONLY if executable .py was touched (failure rules: guidelines/workflows/failure.md)
 ./runut
 ```
 
@@ -46,14 +41,9 @@ Use the standardized script to ensure a clean branch off fresh develop:
 ```bash
 git add <files>
 git commit -m "feat: <description>"
-
-# Push dedicated branch and open PR targeting develop
-./scripts/open_pr.sh --title "feat: <description>" --body "## Summary\n<details>"
-# Or via shortcut:
 ./open_pr -t "feat: <description>" -b "## Summary\n<details>"
 ```
 
 ### 4. User Review Gate
-- Present PR URL, diff summary, and test verification output for explicit user review.
-- Never merge without user approval.
+- Present PR URL to user for review.
 - Once approved, merge using `./merge_pr <pr-number>`.

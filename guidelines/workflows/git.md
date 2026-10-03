@@ -31,19 +31,16 @@
 ## 📋 Execution Protocol
 
 ### 1. Verify & Branch from Develop
-Use the standardized branch script (ensures clean sync and validates prefix):
 ```bash
-./scripts/create_branch.sh <prefix>/<descriptive-name>
-# Or via shortcut:
 ./create_branch <prefix>/<descriptive-name>
 ```
 
 ### 2. Develop, Verify & Commit
 - **Strict UT Gate:** Run `./runut` **ONLY** if executable code (`.py`) was touched.
-  - If only Markdown (`.md`), guidelines, prompts text, or docs were changed, **SKIP unit tests**.
+  - If only Markdown (`.md`), guidelines, prompts, or docs were changed, **SKIP unit tests**.
 - **Failure Protocol:** If any test fails, follow [`guidelines/workflows/failure.md`](./failure.md):
-  - Diagnose if it is a code regression, pre-existing baseline issue, or test script defect.
-  - If the test script itself needs changes, **DO NOT modify the test script**; file a GitHub bug report with `gh issue create`.
+  - Diagnose regression vs. baseline vs. script defect.
+  - If script/test itself needs changes, **DO NOT modify script**; file bug report via `gh issue create`.
 
 ```bash
 # Verify test suite (ONLY if .py code was touched)
@@ -55,18 +52,13 @@ git commit -m "<type>: <concise description>"
 ```
 
 ### 3. Push Dedicated Branch & Open Pull Request
-Use the standardized PR opener (pushes branch, verifies protected branches, and opens PR targeting `develop`):
 ```bash
-./scripts/open_pr.sh --title "<type>: <description>" --body "## Summary\n<details of change>"
-# Or via shortcut:
 ./open_pr -t "<type>: <description>" -b "## Summary\n<details of change>"
 ```
 
 ### 4. User Approval & PR Merge Gate
-- **STOP HERE:** Present the Pull Request URL to the user for explicit review and confirmation.
-- Once explicitly confirmed by the user, merge the PR and synchronize `develop`:
+- **STOP HERE:** Present PR URL to user for explicit review and confirmation.
+- Once approved, merge PR:
   ```bash
-  ./scripts/merge_pr.sh <pr-number>
-  # Or via shortcut:
   ./merge_pr <pr-number>
   ```

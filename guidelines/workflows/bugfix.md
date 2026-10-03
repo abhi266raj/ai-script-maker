@@ -24,22 +24,14 @@
 
 ### 1. Reproduce & Branch from Develop
 ```bash
-# 1. Confirm failure on target test using runner
 ./runut tests/test_<target>.py
-
-# 2. Branch off develop using standardized branch script
-./scripts/create_branch.sh fix/<issue-number>-<short-description>
-# Or via shortcut:
 ./create_branch fix/<issue-number>-<short-description>
 ```
 
 ### 2. Surgical Patch & Verify
 ```bash
-# Apply fix, then verify target test passes
+# Verify target test passes, then full suite (failure rules: guidelines/workflows/failure.md)
 ./runut tests/test_<target>.py
-
-# Verify full suite passes
-# If any failure occurs or test script has a defect, follow guidelines/workflows/failure.md
 ./runut
 ```
 
@@ -47,14 +39,9 @@
 ```bash
 git add <files>
 git commit -m "fix: <description> (#<issue-number>)"
-
-# Push dedicated branch and open PR targeting develop
-./scripts/open_pr.sh --title "fix: <description> (#<issue-number>)" --body "## Summary\n<details of root cause and fix>"
-# Or via shortcut:
 ./open_pr -t "fix: <description> (#<issue-number>)" -b "## Summary\n<details of root cause and fix>"
 ```
 
 ### 4. User Review Gate
-- Present PR URL, root cause explanation, and test verification output for explicit user review.
-- Never merge without user approval.
+- Present PR URL to user for review.
 - Once approved, merge using `./merge_pr <pr-number>`.
