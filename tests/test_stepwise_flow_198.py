@@ -183,3 +183,99 @@ def test_no_bare_run_requested_set_in_initiating_handlers():
     src = _app_src()
     assert src.count("st.session_state.stepwise_run_requested = True") == 0, \
         "all run requests must go through request_step_run"
+
+
+# ---------------------------------------------------------------------------
+# Issue #350: every stepwise failure offers a "Move to next step" bypass —
+# a retry-only dead end is not acceptable. The human is right once the
+# step's own attempts are exhausted.
+# ---------------------------------------------------------------------------
+
+def test_record_step_failure_counts_consecutively():
+    s = _state()
+    assert sf.record_step_failure(s, 3) == 1
+    assert sf.record_step_failure(s, 3) == 2
+    assert sf.step_fail_count(s, 3) == 2
+    # Other steps are untouched; never-failed steps read 0.
+    assert sf.step_fail_count(s, 4) == 0
+
+
+def test_clear_step_fail_count_resets_only_that_step():
+    s = _state()
+    sf.record_step_failure(s, 2)
+    sf.record_step_failure(s, 3)
+    sf.clear_step_fail_count(s, 3)
+    assert sf.step_fail_count(s, 3) == 0
+    assert sf.step_fail_count(s, 2) == 1
+
+
+def test_mark_step_bypassed_and_query():
+    s = _state()
+    assert sf.step_was_bypassed(s, 5) is False
+    sf.mark_step_bypassed(s, 5)
+    assert sf.step_was_bypassed(s, 5) is True
+    assert sf.step_was_bypassed(s, 4) is False
+
+
+def test_reset_stepwise_run_markers_clears_counts_and_bypasses():
+    s = _state()
+    sf.record_step_failure(s, 2)
+    sf.mark_step_bypassed(s, 2)
+    sf.reset_stepwise_run_markers(s)
+    assert sf.step_fail_count(s, 2) == 0
+    assert sf.step_was_bypassed(s, 2) is False
+
+
+def test_failure_panel_renders_bypass_button():
+    """The failure panel shows 'Move to next step' with a next-step help tag."""
+    src = _app_src()
+    assert '"Move to next step"' in src
+    assert 'icon=":material/skip_next:"' in src
+    assert 'key="bypass_stepwise_step"' in src
+    assert 'continue with step {err_step + 1}' in src
+
+
+def test_bypass_marks_skipped_clears_failure_and_advances():
+    """The bypass handler records the skip, drops the failure, and moves on."""
+    src = _app_src()
+    bypass_pos = src.index('key="bypass_stepwise_step"')
+    handler = src[bypass_pos:bypass_pos + 1200]
+    assert "mark_step_bypassed(st.session_state, err_step)" in handler
+    assert "clear_step_fail_count(st.session_state, err_step)" in handler
+    assert "st.session_state.generation_error = None" in handler
+    assert "st.session_state.stepwise_current_step = err_step + 1" in handler
+
+
+def test_bypass_not_offered_at_final_step():
+    """Step 6 is the integrate & validate that produces the script — there
+    is no next step, so the bypass is only laid out for steps 1-5."""
+    src = _app_src()
+    assert "_bypassable = err_step < 6" in src
+
+
+def test_failure_caption_shows_fail_count():
+    """The panel tells the user how many times the step has failed."""
+    src = _app_src()
+    assert "_fail_n = step_fail_count(st.session_state, err_step)" in src
+    assert "failed ({_fail_n} {_fail_word})" in src
+
+
+def test_run_block_records_failure_and_clears_on_success():
+    """The except path counts the failure; a later success resets the count."""
+    src = _app_src()
+    assert "record_step_failure(st.session_state, curr_step)  # issue #350" in src
+    assert "clear_step_fail_count(st.session_state, curr_step)  # issue #350" in src
+
+
+def test_bypassed_steps_render_as_skipped_in_checkpoint():
+    """Skipped steps render with the step-skip style — never as done."""
+    src = _app_src()
+    assert ".step-skip" in src
+    assert "if step_was_bypassed(st.session_state, idx):" in src
+    assert "Step {s_num} skipped" in src
+
+
+def test_launch_restart_exit_reset_run_markers():
+    """Launch, restart, and exit all clear fail counts + bypassed marks."""
+    src = _app_src()
+    assert src.count("reset_stepwise_run_markers(st.session_state)  # issue #350") == 3

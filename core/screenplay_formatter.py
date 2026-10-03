@@ -1,7 +1,7 @@
 """Industry-standard screenplay formatter for 9:16 vertical Hindi Reels.
 Implements the canonical professional script structure:
 - Scene Detail (setting & atmosphere)
-- Characters & Clothing (tone-aligned attire, no genre clashes)
+- Characters & Clothing (emotion-aligned attire, no genre clashes)
 - Beats with continuous camera cues (no contradictory cuts)
 - Physical actor action lines only (bodies, props, expressions)
 - Spoken Hindi dialogues in Devanagari
@@ -174,7 +174,7 @@ def resolve_character_attire(first_name: str, sample_clothing_map: Dict[str, str
 
     Fail-loud rule: attire must come from the sample story's explicit clothing
     map or the Stage 2 character bible (SceneItem.character_attire).
-    Keyword-guessing wardrobes by role/tone invents clothing the pipeline never
+    Keyword-guessing wardrobes by role/emotion invents clothing the pipeline never
     designed — return "" and let the caller list the name without an invented
     outfit.
     """
@@ -334,7 +334,9 @@ def format_industry_screenplay(
             lines.append(f"Audio/SFX: {sc.audio_sfx}")
 
 
-        lines.append(f'{char_upper}: "{act_dialogue}"')
+        # #354: emotion delivery cue — the actor reads HOW to say the line.
+        emotion = _beat_emotion(sc, idx)
+        lines.append(f'{char_upper} ({emotion}): "{act_dialogue}"')
         lines.append("")
 
     return "\n".join(lines).strip()
@@ -342,14 +344,37 @@ def format_industry_screenplay(
 
 
 def format_teleprompter_text(script) -> str:
-    """Format clean voiceover / teleprompter lines in Devanagari Hindi."""
+    """Format clean voiceover / teleprompter lines in Devanagari Hindi.
+
+    #354: each header carries the beat's feeling so human speakers and
+    voiceover synthesis know the exact emotional inflection:
+    [CHARACTER | Feeling: Anger — Part 1 (0:00 - 0:05)]
+    """
     lines = []
-    for sc in script.scenes:
+    for idx, sc in enumerate(script.scenes):
         act_dialogue = strip_commenting_and_cta(sc.dialogue or sc.narration_line or "")
         char_clean = sanitize_character_name(sc.character)
         char_name = get_first_name(char_clean).upper()
-        lines.append(f"[{char_name} — Part {sc.scene_number} ({sc.timestamp})]\n{act_dialogue}\n")
+        emotion = _beat_emotion(sc, idx)
+        lines.append(f"[{char_name} | Feeling: {emotion} — Part {sc.scene_number} ({sc.timestamp})]\n{act_dialogue}\n")
     return "\n".join(lines).strip()
+
+
+def _beat_emotion(sc, idx: int) -> str:
+    """Return the beat's frozen emotion for delivery cues. Fail-loud.
+
+    #354: every beat carries the reel's genuine feeling as its delivery
+    direction. A missing emotion is a pipeline contract breach — rendering a
+    cue without it (or inventing one here) is not allowed.
+    """
+    emotion = (getattr(sc, "emotion", "") or "").strip()
+    if not emotion:
+        raise ValueError(
+            f"Screenplay formatting failed: beat {idx + 1} (scene {sc.scene_number}) has no emotion. "
+            "The pipeline must stamp the reel's frozen emotion on every beat — "
+            "delivery cues cannot be rendered without it."
+        )
+    return emotion
 
 
 def format_director_prompts(script) -> str:

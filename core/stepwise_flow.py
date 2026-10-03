@@ -76,3 +76,47 @@ def step_run_inflight(state):
     :func:`complete_step_run` runs.
     """
     return bool(state.get(INFLIGHT_KEY) or state.get(RUN_REQUESTED_KEY))
+
+
+# Issue #350: per-step failure tracking + user bypass markers. A step that
+# fails persistently must never trap the user in a retry-only dead end —
+# once the step's own attempts are exhausted, the human is right and may
+# move to the next step. These helpers take the same plain-dict state
+# protocol as the run-state functions above, so they stay unit-testable
+# without Streamlit.
+
+FAIL_COUNTS_KEY = "stepwise_step_fail_counts"
+BYPASSED_KEY = "stepwise_bypassed_steps"
+
+
+def record_step_failure(state, step):
+    """Increment the consecutive-failure count for *step*; return the new count."""
+    counts = state.setdefault(FAIL_COUNTS_KEY, {})
+    counts[step] = counts.get(step, 0) + 1
+    return counts[step]
+
+
+def step_fail_count(state, step):
+    """Consecutive failures recorded for *step* (0 when it never failed)."""
+    return (state.get(FAIL_COUNTS_KEY) or {}).get(step, 0)
+
+
+def clear_step_fail_count(state, step):
+    """Reset the failure count for *step* (success, bypass, or navigation)."""
+    (state.get(FAIL_COUNTS_KEY) or {}).pop(step, None)
+
+
+def mark_step_bypassed(state, step):
+    """Record that the user bypassed failed *step* via 'Move to next step'."""
+    state.setdefault(BYPASSED_KEY, set()).add(step)
+
+
+def step_was_bypassed(state, step):
+    """True when *step* was skipped via the failure-panel bypass."""
+    return step in (state.get(BYPASSED_KEY) or set())
+
+
+def reset_stepwise_run_markers(state):
+    """Clear failure counts and bypassed marks on launch / restart / exit."""
+    state[FAIL_COUNTS_KEY] = {}
+    state[BYPASSED_KEY] = set()

@@ -87,9 +87,10 @@ def _running_commit() -> str | None:
 
 _RUNNING_COMMIT = _running_commit()
 from core.constants import (
-    VIBE_DESI_SWAG, VIBE_HERITAGE, VIBE_VIRAL, VIBE_COMEDY, VIBE_BREAKING,
-    VIBE_ANALYSIS, VIBE_CINEMATIC, VIBE_EMOTIONAL, VIBE_HEATED,
-    VIBE_DISPLAY_NAMES, vibe_display_name, vibe_plain_name,
+    EMOTION_ANGER, EMOTION_SHOCK, EMOTION_JOKE, EMOTION_SORROW,
+    EMOTION_CURIOSITY, EMOTION_PRIDE, EMOTION_FEAR, EMOTION_HOPE,
+    ALL_EMOTIONS, EMOTION_HINDI, EMOTION_DELIVERY, EMOTION_TO_ANGLE,
+    emotion_to_angle,
     FORMAT_DIALOGUE, FORMAT_ARGUMENT, FORMAT_SPEECH, FORMAT_NARRATION,
     FORMAT_INTERVIEW, FORMAT_DEBATE, FORMAT_MONOLOGUE, FORMAT_LAMENT,
     STAGE_NAMES, STAGE_VALIDATION,
@@ -116,6 +117,12 @@ from core.stepwise_flow import (
     request_step_run,
     complete_step_run,
     inflight_action,
+    record_step_failure,
+    step_fail_count,
+    clear_step_fail_count,
+    mark_step_bypassed,
+    step_was_bypassed,
+    reset_stepwise_run_markers,
     ACTION_LAUNCH,
     ACTION_RETRY,
     ACTION_PROCEED,
@@ -232,34 +239,26 @@ STORY_SOURCES = [
 ]
 
 # ---------------------------------------------------------------------------
-# Vibe = Tone + Angle merged (2 groups instead of 3).
-# The Vibe dropdown is the single creative-flavor selector shown in the UI.
-# The legacy "angle" is derived from the vibe via this map so all
-# downstream pipeline code (which expects an angle) keeps working unchanged.
+# Emotion = genuine human feeling (#354, replaces the old Vibe = Tone + Angle).
+# The Emotion dropdown is the single creative-flavor selector shown in the UI.
+# The pipeline angle is derived from the frozen emotion via EMOTION_TO_ANGLE
+# (core.constants) so all downstream pipeline code keeps working unchanged.
 # ---------------------------------------------------------------------------
-TONE_TO_ANGLE = {
-    VIBE_DESI_SWAG: "Inspirational & Uplifting",
-    VIBE_HERITAGE: "Inspirational & Uplifting",
-    VIBE_VIRAL: "Gen-Z Hinglish",
-    VIBE_COMEDY: "Funny & Relatable",
-    VIBE_BREAKING: "Dramatic Storytelling",
-    VIBE_ANALYSIS: "Investigative Deep-Dive",
-    VIBE_CINEMATIC: "Dramatic Storytelling",
-    VIBE_EMOTIONAL: "Tragic & Heartbreaking",
-    VIBE_HEATED: "Sarcastic & Edgy",
-}
 DEFAULT_ANGLE = "Funny & Relatable"
 
 
 def get_effective_angle() -> str:
-    """Derive the pipeline angle from the selected vibe (tone)."""
-    vibe = st.session_state.get("chosen_tone", "")
-    return TONE_TO_ANGLE.get(vibe, DEFAULT_ANGLE)
+    """Derive the pipeline angle from the selected emotion."""
+    emotion = st.session_state.get("chosen_emotion", "")
+    try:
+        return emotion_to_angle(emotion)
+    except ValueError:
+        return DEFAULT_ANGLE
 
 
 # ---------------------------------------------------------------------------
-# Vibe display names: imported from core.constants (emoji-prefixed, UI only).
-# Pipeline-facing values stay plain text; agents NEVER receive emojis.
+# Emotion display: the frozen 8 emotions are shown directly in the creator UI
+# (#354) — plain names, no composite marketing phrases, no emojis.
 # ---------------------------------------------------------------------------
 
 
@@ -294,33 +293,43 @@ def format_internal_value(display: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Vibe <-> Format compatibility: contradictory combos are blocked.
-# Sorrow is grief-only — no comedy, hype, or clash vibes.
-# Comedy vibe cannot use the Sorrow format.
+# Emotion <-> Format compatibility (#354; preserves the #217 rules).
+# Sorrow is grief-only — the Lament format strictly requires the Sorrow
+# emotion and is incompatible with every other frozen emotion.
+# The Joke emotion cannot be paired with the Sorrow (Lament) format.
+# Incompatible pairings emit standard HIG warning banners (st.warning).
 # ---------------------------------------------------------------------------
-_SORROW_INCOMPATIBLE_VIBES = {
-    VIBE_COMEDY,
-    VIBE_VIRAL,
-    VIBE_DESI_SWAG,
-    VIBE_HEATED,
+_SORROW_INCOMPATIBLE_EMOTIONS = {
+    EMOTION_ANGER,
+    EMOTION_SHOCK,
+    EMOTION_JOKE,
+    EMOTION_CURIOSITY,
+    EMOTION_PRIDE,
+    EMOTION_FEAR,
+    EMOTION_HOPE,
 }
-_FUNNY_VIBE = VIBE_COMEDY
 
 
-def check_vibe_format_compatible() -> tuple[bool, str]:
-    """Return (is_compatible, reason). Blocks contradictory Vibe + Format."""
-    vibe = st.session_state.get("chosen_tone", "")
+def _emotion_label(emotion: str) -> str:
+    """Creator-facing emotion label: name + Hindi feeling."""
+    hindi = EMOTION_HINDI.get(emotion, "")
+    return f"{emotion} ({hindi})" if hindi else emotion
+
+
+def check_emotion_format_compatible() -> tuple[bool, str]:
+    """Return (is_compatible, reason). Blocks contradictory Emotion + Format."""
+    emotion = st.session_state.get("chosen_emotion", "")
     fmt = st.session_state.get("chosen_scene_style", FORMAT_DIALOGUE)
-    if fmt == FORMAT_LAMENT and vibe in _SORROW_INCOMPATIBLE_VIBES:
+    if fmt == FORMAT_LAMENT and emotion in _SORROW_INCOMPATIBLE_EMOTIONS:
         return False, (
             f"'{format_display_name(fmt)}' format is grief-only and clashes with "
-            f"the '{vibe_display_name(vibe)}' vibe. Pick '{format_display_name(FORMAT_DIALOGUE)}' / "
-            f"'{format_display_name(FORMAT_DEBATE)}' for that vibe, or switch the vibe to "
-            f"'{vibe_display_name(VIBE_EMOTIONAL)}'."
+            f"the '{_emotion_label(emotion)}' emotion. Pick '{format_display_name(FORMAT_DIALOGUE)}' / "
+            f"'{format_display_name(FORMAT_DEBATE)}' for that emotion, or switch the emotion to "
+            f"'{_emotion_label(EMOTION_SORROW)}'."
         )
-    if vibe == _FUNNY_VIBE and fmt == FORMAT_LAMENT:
+    if emotion == EMOTION_JOKE and fmt == FORMAT_LAMENT:
         return False, (
-            f"The '{vibe_display_name(vibe)}' vibe cannot use the '{format_display_name(fmt)}' format — "
+            f"The '{_emotion_label(emotion)}' emotion cannot use the '{format_display_name(fmt)}' format — "
             f"sorrow forbids all jokes and laughter."
         )
     return True, ""
@@ -348,14 +357,14 @@ def validate_config() -> list[str]:
     Returns a list of human-readable issue strings (empty = valid).
     """
     issues: list[str] = []
-    vibe = st.session_state.get("chosen_tone", "")
+    emotion = st.session_state.get("chosen_emotion", "")
     fmt = st.session_state.get("chosen_scene_style", "Dialogue")
     char_count = int(st.session_state.get("chosen_character_count", 1) or 1)
     duration = int(st.session_state.get("chosen_duration", 30) or 30)
     batch = int(st.session_state.get("chosen_batch_count", 1) or 1)
 
-    # 1. Vibe + Format compatibility
-    ok, reason = check_vibe_format_compatible()
+    # 1. Emotion + Format compatibility
+    ok, reason = check_emotion_format_compatible()
     if not ok:
         issues.append(reason)
 
@@ -396,25 +405,6 @@ def sanitize_visual_prompt(text: str) -> str:
     if not t.lower().startswith("cinematic 9:16 vertical"):
         t = f"Cinematic 9:16 vertical shot: {t}"
     return t.strip()
-
-
-POLITICAL_NAMES_BLACKLIST = {
-    "rahul", "modi", "narendra", "kejriwal", "gandhi", "amit shah", "amit",
-    "yogi", "adityanath", "sonia", "priyanka", "mamata", "stalin", "pawar",
-    "fadnavis", "shinde", "thackeray", "nitish", "lalu", "tejaswi"
-}
-
-
-def sanitize_character_name(name: str) -> str:
-    """Ensure characters never use politician names to prevent policy flags."""
-    if not name:
-        return ""
-    t = name
-    for pol in POLITICAL_NAMES_BLACKLIST:
-        if re.search(rf"\b{pol}\b", t, re.IGNORECASE):
-            t = re.sub(rf"\b{pol}\b", "Rohan", t, flags=re.IGNORECASE)
-            t = t.replace("राहुल", "रोहन").replace("अमित", "आरव").replace("मोदी", "कबीर")
-    return t
 
 
 def clean_beat_action(text: str) -> str:
@@ -835,6 +825,7 @@ st.markdown(
     .step-done { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--ok-text); padding: 4px 0; border-bottom: 3px solid var(--ok-text); }
     .step-now { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--primary-strong); padding: 4px 0; border-bottom: 3px solid var(--primary); }
     .step-wait { text-align: center; font-size: 0.75rem; font-weight: 500; color: var(--muted); padding: 4px 0; border-bottom: 3px solid var(--line); }
+    .step-skip { text-align: center; font-size: 0.75rem; font-weight: 700; color: var(--warn-text); padding: 4px 0; border-bottom: 3px solid var(--warn-text); }
 
     .ios-section-label {
         font-size: 0.78rem; font-weight: 700; color: var(--muted) !important;
@@ -2455,8 +2446,10 @@ if "chosen_engine_mode" not in st.session_state:
     st.session_state.chosen_engine_mode = app_cfg.get("default_engine", "first_local_then_agy")
 if "chosen_duration" not in st.session_state:
     st.session_state.chosen_duration = app_cfg.get("default_duration", 30)
-if "chosen_tone" not in st.session_state:
-    st.session_state.chosen_tone = app_cfg.get("default_tone", VIBE_DESI_SWAG)
+if "chosen_emotion" not in st.session_state:
+    _saved_emotion = app_cfg.get("default_emotion", "")
+    # #354: legacy vibe values are NOT mapped to emotions — fall back to default.
+    st.session_state.chosen_emotion = _saved_emotion if _saved_emotion in ALL_EMOTIONS else EMOTION_CURIOSITY
 if "chosen_batch_count" not in st.session_state:
     st.session_state.chosen_batch_count = app_cfg.get("batch_count", 1)
 if "chosen_max_retries" not in st.session_state:
@@ -2530,6 +2523,13 @@ if "stepwise_inflight" not in st.session_state:
     st.session_state.stepwise_inflight = None
 if "stepwise_completed_steps" not in st.session_state:
     st.session_state.stepwise_completed_steps = {}
+if "stepwise_step_fail_counts" not in st.session_state:
+    # Issue #350: consecutive failures per step — the failure panel shows
+    # the count and offers the "Move to next step" bypass.
+    st.session_state.stepwise_step_fail_counts = {}
+if "stepwise_bypassed_steps" not in st.session_state:
+    # Issue #350: steps the user skipped via the failure-panel bypass.
+    st.session_state.stepwise_bypassed_steps = set()
 
 # Server action handlers (Self-contained Web Controls)
 server_action = st.session_state.get("server_action")
@@ -2591,12 +2591,14 @@ if _v15_view == "library":
 srv_info = get_server_info()
 col_brand, col_srv = st.columns([7.8, 2.2], vertical_alignment="center")
 with col_brand:
-    _commit_suffix = f" · {_RUNNING_COMMIT}" if _RUNNING_COMMIT else ""
+    # #365 (HIG §1): the product title carries the version only — the git
+    # commit hash is developer metadata, so it lives in the Server expander
+    # below, not in the most prominent element on screen.
     st.markdown(
         f"""
         <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
             <div>
-                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}{_commit_suffix}</span></div>
+                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}</span></div>
             </div>
         </div>
         """,
@@ -2606,7 +2608,8 @@ with col_srv:
     # macOS HIG: disclosure triangle (inline expansion), never a popover on click.
     with st.expander(f"Server · :{srv_info['port']}", expanded=False):
         st.markdown("**Server Status: Running**")
-        st.caption(f"Host: `{srv_info['host']}` • Port: `{srv_info['port']}` • PID: `{srv_info['pid']}`")
+        _commit_detail = f" • Commit: `{_RUNNING_COMMIT}`" if _RUNNING_COMMIT else ""
+        st.caption(f"Host: `{srv_info['host']}` • Port: `{srv_info['port']}` • PID: `{srv_info['pid']}`{_commit_detail}")
         if srv_info['is_standard_port']:
             st.caption("Standard HTTP/HTTPS release ports active")
 
@@ -2629,13 +2632,14 @@ with col_settings:
         with story_heading:
             st.markdown('<div class="ios-section-label">Story &amp; Topic</div>', unsafe_allow_html=True)
         with story_refresh:
-            # HIG §3 (#196, #325): the Refresh button owns its loading state —
-            # it swaps to a spinner icon and stays disabled while a fetch it
-            # kicked off is in flight. No detached spinner.
+            # HIG §3 (#196, #325, #365): the Refresh button owns its loading
+            # state — stable icon in both states, disabled while a fetch it
+            # kicked off is in flight. The spinner at the fetch site marks
+            # the in-flight work. No icon swap, no detached labeled spinner.
             # #264: icon-only (house rule) — no text label; the hover help
             # tag carries the description.
             _refresh_busy = is_refresh_busy(st.session_state)
-            refresh_news = st.button("", icon=":material/progress_activity:" if _refresh_busy else ":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
+            refresh_news = st.button("", icon=":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
         # Claim the click once per fragment run: the first fetch site below
         # takes the claim; stacked re-clicks (busy or inside the cooldown
         # window) are ignored — no second fetch, ever.
@@ -2727,10 +2731,12 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
-                            # it shows the spinner icon while busy. No detached
+                            # HIG §3 (#196, #325, #365): the Refresh button owns this
+                            # fetch — stable icon + disabled while busy; the spinner
+                            # below marks the in-flight fetch. No detached labeled
                             # spinner.
-                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            with st.spinner(""):
+                                _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2783,10 +2789,12 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
-                            # it shows the spinner icon while busy. No detached
+                            # HIG §3 (#196, #325, #365): the Refresh button owns this
+                            # fetch — stable icon + disabled while busy; the spinner
+                            # below marks the in-flight fetch. No detached labeled
                             # spinner.
-                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            with st.spinner(""):
+                                _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2839,60 +2847,62 @@ with col_settings:
                     _need_headlines = (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat or st.session_state.get("loaded_hashtag") != st.session_state.get("active_hashtag"))
                     if _need_headlines and (not refresh_news or _claim_refresh_once() or not st.session_state.live_news_articles):
                         articles = []
-                        try:
-                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
-                            # it shows the spinner icon while busy. No detached
-                            # spinner.
-                            _ht = (st.session_state.get("active_hashtag") or "").strip()
-                            if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
-                                # Hashtag mode: every hashtag carries its own headline —
-                                # use it directly, no extra search needed.
-                                # Normalize the hashtag dict entry to a NewsArticle-like object
-                                # (dicts have "headline", articles need "title").
-                                if active_hashtag_article:
-                                    if isinstance(active_hashtag_article, dict):
-                                        from types import SimpleNamespace
-                                        articles = [SimpleNamespace(
-                                            title=active_hashtag_article.get("headline", ""),
-                                            link=active_hashtag_article.get("link", ""),
-                                            source=active_hashtag_article.get("source", ""),
-                                            time_label="",
-                                        )]
+                        # HIG §3 (#196, #325, #365): the Refresh button owns this
+                        # fetch — stable icon + disabled while busy; the spinner
+                        # below marks the in-flight fetch. No detached labeled
+                        # spinner.
+                        with st.spinner(""):
+                            try:
+                                _ht = (st.session_state.get("active_hashtag") or "").strip()
+                                if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
+                                    # Hashtag mode: every hashtag carries its own headline —
+                                    # use it directly, no extra search needed.
+                                    # Normalize the hashtag dict entry to a NewsArticle-like object
+                                    # (dicts have "headline", articles need "title").
+                                    if active_hashtag_article:
+                                        if isinstance(active_hashtag_article, dict):
+                                            from types import SimpleNamespace
+                                            articles = [SimpleNamespace(
+                                                title=active_hashtag_article.get("headline", ""),
+                                                link=active_hashtag_article.get("link", ""),
+                                                source=active_hashtag_article.get("source", ""),
+                                                time_label="",
+                                            )]
+                                        else:
+                                            articles = [active_hashtag_article]
                                     else:
-                                        articles = [active_hashtag_article]
+                                        # Custom typed hashtag: search news about the topic.
+                                        _query = _ht.lstrip("#").replace("#", " ")
+                                        articles = news_fetcher.search_news(_query, limit=16)
+                                elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                                        articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                                elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                                        articles = news_fetcher.get_india_trending(limit=16)
+                                elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
+                                        articles = news_fetcher.get_top_indian_politics_news(limit=16)
+                                elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
+                                        articles = news_fetcher.get_top_indian_culture_news(limit=16)
+                                elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
+                                        articles = news_fetcher.get_top_india_tech_news(limit=16)
+                                elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
+                                        articles = news_fetcher.get_top_tech_news(limit=16)
+                                elif "World" in selected_news_cat:
+                                        articles = news_fetcher.get_top_world_news(limit=16)
+                                elif "Business" in selected_news_cat:
+                                        articles = news_fetcher.get_top_business_news(limit=16)
                                 else:
-                                    # Custom typed hashtag: search news about the topic.
-                                    _query = _ht.lstrip("#").replace("#", " ")
-                                    articles = news_fetcher.search_news(_query, limit=16)
-                            elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
-                                    articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
-                            elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                                    articles = news_fetcher.get_india_trending(limit=16)
-                            elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                                    articles = news_fetcher.get_top_indian_politics_news(limit=16)
-                            elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                                    articles = news_fetcher.get_top_indian_culture_news(limit=16)
-                            elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                                    articles = news_fetcher.get_top_india_tech_news(limit=16)
-                            elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                                    articles = news_fetcher.get_top_tech_news(limit=16)
-                            elif "World" in selected_news_cat:
-                                    articles = news_fetcher.get_top_world_news(limit=16)
-                            elif "Business" in selected_news_cat:
-                                    articles = news_fetcher.get_top_business_news(limit=16)
-                            else:
-                                    articles = news_fetcher.get_top_india_news(limit=16)
-                        except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
-                            # Loud failure: visible error banner, and allow an immediate retry.
-                            reset_refresh_claim(st.session_state)
-                            st.error(str(_nfe))
-                            articles = []
-                        except Exception:
-                            # Fail loudly (#196): never swallow unexpected errors; allow an immediate retry.
-                            reset_refresh_claim(st.session_state)
-                            raise
-                        finally:
-                            release_refresh(st.session_state)
+                                        articles = news_fetcher.get_top_india_news(limit=16)
+                            except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
+                                # Loud failure: visible error banner, and allow an immediate retry.
+                                reset_refresh_claim(st.session_state)
+                                st.error(str(_nfe))
+                                articles = []
+                            except Exception:
+                                # Fail loudly (#196): never swallow unexpected errors; allow an immediate retry.
+                                reset_refresh_claim(st.session_state)
+                                raise
+                            finally:
+                                release_refresh(st.session_state)
                         st.session_state.live_news_articles = articles
                         st.session_state.loaded_news_cat = selected_news_cat
                         st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
@@ -2972,17 +2982,17 @@ with col_settings:
                 # Presets are intentionally hidden in Manual Topic mode.
                 topic_presets_list = [
                     ("Custom / Manual Topic", "", ""),
-                    ("🪔 Varanasi Dev Deepawali: Sacred Ganga Ghats Lights", "Varanasi Dev Deepawali: Millions of earthen lamps illuminate the sacred Ganga Ghats as worldwide pilgrims celebrate ancient festival of light.", VIBE_HERITAGE),
-                    ("🚀 ISRO Gaganyaan Mission: Human Spaceflight Systems", "ISRO tests next-generation crew module and human-rating life support systems for India's historic Gaganyaan space mission.", VIBE_DESI_SWAG),
-                    ("🏛️ Ancient Indian Temples: Vedic Acoustic Marvels", "Ancient Indian stone temple architecture and Vedic acoustic engineering certified as architectural marvels by international archaeologists.", VIBE_HERITAGE),
-                    ("📱 Digital India & UPI: 16B Monthly Transactions", "India's UPI and digital infrastructure set global record with 16 billion monthly transactions as nations worldwide partner with NPCI.", VIBE_DESI_SWAG),
-                    ("🏏 Team India Victory: Historic World Championship", "Team India achieves historic cricket championship victory, sparking nationwide celebrations and global acclaim.", VIBE_DESI_SWAG),
-                    ("🌿 Ayurveda & Ancient Wellness: Global Revolution", "Indian Ayurveda and traditional holistic medicine gain unprecedented global scientific validation and adoption.", VIBE_HERITAGE),
+                    ("🪔 Varanasi Dev Deepawali: Sacred Ganga Ghats Lights", "Varanasi Dev Deepawali: Millions of earthen lamps illuminate the sacred Ganga Ghats as worldwide pilgrims celebrate ancient festival of light.", EMOTION_PRIDE),
+                    ("🚀 ISRO Gaganyaan Mission: Human Spaceflight Systems", "ISRO tests next-generation crew module and human-rating life support systems for India's historic Gaganyaan space mission.", EMOTION_PRIDE),
+                    ("🏛️ Ancient Indian Temples: Vedic Acoustic Marvels", "Ancient Indian stone temple architecture and Vedic acoustic engineering certified as architectural marvels by international archaeologists.", EMOTION_PRIDE),
+                    ("📱 Digital India & UPI: 16B Monthly Transactions", "India's UPI and digital infrastructure set global record with 16 billion monthly transactions as nations worldwide partner with NPCI.", EMOTION_PRIDE),
+                    ("🏏 Team India Victory: Historic World Championship", "Team India achieves historic cricket championship victory, sparking nationwide celebrations and global acclaim.", EMOTION_PRIDE),
+                    ("🌿 Ayurveda & Ancient Wellness: Global Revolution", "Indian Ayurveda and traditional holistic medicine gain unprecedented global scientific validation and adoption.", EMOTION_PRIDE),
                 ]
                 if st.session_state.live_news_articles:
                     for art in st.session_state.live_news_articles[:8]:
                         _t = art.get("title", "") if isinstance(art, dict) else getattr(art, "title", "")
-                        topic_presets_list.append((f"📰 {_t[:75]}…", _t, VIBE_BREAKING))
+                        topic_presets_list.append((f"📰 {_t[:75]}…", _t, EMOTION_SHOCK))
 
                 topic_labels = [p[0] for p in topic_presets_list]
                 topic_data_map = {p[0]: (p[1], p[2]) for p in topic_presets_list}
@@ -3012,12 +3022,12 @@ with col_settings:
                     st.session_state.last_selected_topic_choice = selected_topic
                 elif selected_topic != st.session_state.last_selected_topic_choice:
                     st.session_state.last_selected_topic_choice = selected_topic
-                    t_story, t_tone = topic_data_map.get(selected_topic, ("", ""))
+                    t_story, t_emotion = topic_data_map.get(selected_topic, ("", ""))
                     if t_story:
                         st.session_state.active_story_input = t_story
-                        if t_tone:
-                            st.session_state.chosen_tone = t_tone
-                            save_config("default_tone", t_tone)
+                        if t_emotion:
+                            st.session_state.chosen_emotion = t_emotion
+                            save_config("default_emotion", t_emotion)
                         st.rerun()
 
             # Topic text area — always visible; editable in all modes
@@ -3051,8 +3061,8 @@ with col_settings:
                     "Sample Story / Reference Script",
                     value=st.session_state.get("chosen_sample_story", ""),
                     height=75,
-                    placeholder="Paste reference story or script snippet here. If provided, it directs characters, tone and story as the author's guide...",
-                    help="Optional reference story or script snippet. When provided, it acts as the director's guide: its characters, direction and tone override the creative settings above on conflict. Verified news facts always outrank the sample.",
+                    placeholder="Paste reference story or script snippet here. If provided, it directs characters, emotion and story as the author's guide...",
+                    help="Optional reference story or script snippet. When provided, it acts as the director's guide: its characters, direction and emotion override the creative settings above on conflict. Verified news facts always outrank the sample.",
                     key=f"sample_story_textarea_{st.session_state.sample_story_rev}",
                 )
                 if sample_story_val != st.session_state.get("chosen_sample_story", ""):
@@ -3060,7 +3070,7 @@ with col_settings:
 
                 c_info, c_clear = st.columns([4, 1.2])
                 with c_info:
-                    st.caption("Directs characters, narrative and tone — overrides creative settings on conflict (verified facts always win).")
+                    st.caption("Directs characters, narrative and emotion — overrides creative settings on conflict (verified facts always win).")
                 with c_clear:
                     # #199: icon-only control — trash metaphor + verb-first help tag.
                     if st.button("", icon=":material/delete:", key="clear_sample_story_btn", help="Clear sample story reference", use_container_width=True):
@@ -3078,7 +3088,7 @@ with col_settings:
                 reset_cfg = reset_to_defaults()
                 for key, value in {
                     "chosen_engine_mode": reset_cfg["default_engine"], "chosen_duration": reset_cfg["default_duration"],
-                    "chosen_tone": reset_cfg["default_tone"], "chosen_batch_count": reset_cfg["batch_count"],
+                    "chosen_emotion": reset_cfg["default_emotion"], "chosen_batch_count": reset_cfg["batch_count"],
                     "chosen_max_retries": reset_cfg["max_retries"], "chosen_story_source": DEFAULT_STORY_SOURCE,
                     "selected_headline_title": reset_cfg.get("selected_headline", ""),
                     "selected_script_idx": reset_cfg["selected_script_index"],
@@ -3114,14 +3124,13 @@ with col_settings:
             target_dur = int(cfg_row("Duration (s)", lambda: st.number_input("Duration", step=5, value=int(st.session_state.chosen_duration), label_visibility="collapsed")))
             st.session_state.chosen_duration = target_dur
             save_config("default_duration", target_dur)
-            vibe_internals = list(TONE_TO_ANGLE.keys())
-            vibe_displays = [vibe_display_name(v) for v in vibe_internals]
-            current_vibe_display = vibe_display_name(st.session_state.chosen_tone)
-            tone_idx = vibe_displays.index(current_vibe_display) if current_vibe_display in vibe_displays else 0
-            picked_vibe = cfg_row("Vibe", lambda: st.selectbox("Vibe", vibe_displays, index=tone_idx, label_visibility="collapsed",
-                help="The reel's mood and creative flavor — merges the old Tone + Angle pickers into one."))
-            st.session_state.chosen_tone = vibe_plain_name(picked_vibe)
-            save_config("default_tone", st.session_state.chosen_tone)
+            emotion_options = list(ALL_EMOTIONS)
+            current_emotion = st.session_state.chosen_emotion
+            emotion_idx = emotion_options.index(current_emotion) if current_emotion in emotion_options else 0
+            picked_emotion = cfg_row("Emotion", lambda: st.selectbox("Emotion", emotion_options, index=emotion_idx, label_visibility="collapsed",
+                help="The genuine human feeling driving this reel — dialogue is written to be spoken with it, and screenplay cues direct its delivery."))
+            st.session_state.chosen_emotion = picked_emotion
+            save_config("default_emotion", st.session_state.chosen_emotion)
             st.session_state.chosen_batch_count = int(cfg_row("Scripts", lambda: st.number_input("Scripts", step=1, value=int(st.session_state.chosen_batch_count), label_visibility="collapsed")))
             save_config("batch_count", st.session_state.chosen_batch_count)
             st.session_state.chosen_max_retries = int(cfg_row("Retries", lambda: st.number_input(
@@ -3143,12 +3152,12 @@ with col_settings:
                 help="How the reel is structured — the on-screen presentation format."))
             st.session_state.chosen_scene_style = format_internal_value(picked_display)
             save_config("scene_style", st.session_state.chosen_scene_style)
-            _vibe_ok, _vibe_reason = check_vibe_format_compatible()
-            if not _vibe_ok:
+            _emotion_ok, _emotion_reason = check_emotion_format_compatible()
+            if not _emotion_ok:
                 # #217 (HIG §6): this is a WARNING, not an error — render it
                 # with st.warning, not st.error. Keeps the :material/warning:
                 # icon per the merged #199 icon-only convention (no emoji).
-                st.warning(f":material/warning: {_vibe_reason}")
+                st.warning(f":material/warning: {_emotion_reason}")
 
 
         dur_val = int(st.session_state.chosen_duration)
@@ -3158,7 +3167,7 @@ with col_settings:
         instruction_seed = build_tailored_instruction(
             topic=active_topic_text,
             duration_sec=dur_val,
-            vibe=st.session_state.chosen_tone,
+            emotion=st.session_state.chosen_emotion,
             scene_style=st.session_state.chosen_scene_style,
             character_count=st.session_state.chosen_character_count,
             sample_story=st.session_state.get("chosen_sample_story", ""),
@@ -3167,7 +3176,7 @@ with col_settings:
         cfg_sig = (
             dur_val,
             st.session_state.chosen_scene_style,
-            st.session_state.chosen_tone,
+            st.session_state.chosen_emotion,
             get_effective_angle(),
             st.session_state.chosen_character_count,
             active_topic_text,
@@ -3200,14 +3209,14 @@ with col_settings:
             "Instruction",
             height=135,
             label_visibility="collapsed",
-            help="This master instruction combines vibe, format, character count, duration budget, and sample story directives. Divided into specialized sub-instructions by Chief Editor.",
+            help="This master instruction combines emotion, format, character count, duration budget, and sample story directives. Divided into specialized sub-instructions by Chief Editor.",
             key=curr_inst_key,
         )
         st.markdown('<div class="ios-section-label" style="margin-top:14px; margin-bottom:4px;">Generation Mode</div>', unsafe_allow_html=True)
         with st.container(border=True):
             # #199: icon-only control — check-circle metaphor + verb-first help tag.
             if st.button("", icon=":material/check_circle:", use_container_width=True, key="verify_config_btn",
-                           help="Check the setup for vibe, format and character issues"):
+                           help="Check the setup for emotion, format and character issues"):
                 _issues = validate_config()
                 if _issues:
                     st.error(":material/error: Setup has problems:")
@@ -3216,7 +3225,7 @@ with col_settings:
                 else:
                     st.success(f":material/check_circle: Setup looks good — '{format_display_name(st.session_state.chosen_scene_style)}' format "
                                f"with {st.session_state.chosen_character_count} character(s), "
-                               f"'{vibe_display_name(st.session_state.chosen_tone)}' vibe. Ready to generate.")
+                               f"'{_emotion_label(st.session_state.chosen_emotion)}' emotion. Ready to generate.")
         with st.container(border=True):
             wf_modes = ["⚡ Continuous", "🪜 Step-Wise"]
             curr_wf = st.session_state.get("workflow_mode") or app_cfg.get("workflow_mode", "⚡ Continuous")
@@ -3266,6 +3275,7 @@ with col_settings:
                         st.session_state.stepwise_step_model = st.session_state.chosen_engine_mode
                         st.session_state.stepwise_extra_instruction = ""
                         st.session_state.stepwise_completed_steps = {}
+                        reset_stepwise_run_markers(st.session_state)  # issue #350
                         st.session_state.batch_result = None
                         st.session_state.generation_error = None
                         st.session_state.run_topic = st.session_state.get("active_story_input", "").strip()
@@ -3285,6 +3295,7 @@ with col_settings:
                         st.session_state.stepwise_active = False
                         st.session_state.stepwise_state = None
                         st.session_state.stepwise_completed_steps = {}
+                        reset_stepwise_run_markers(st.session_state)  # issue #350
                         st.session_state.stepwise_current_step = 1
                         st.session_state.stepwise_run_requested = False
                         st.rerun()
@@ -3306,6 +3317,7 @@ with col_settings:
                             st.session_state.stepwise_current_step = 1
                             st.session_state.stepwise_state = None
                             st.session_state.stepwise_completed_steps = {}
+                            reset_stepwise_run_markers(st.session_state)  # issue #350
                             st.session_state.batch_result = None
                             st.session_state.generation_error = None
                             st.rerun()
@@ -4000,7 +4012,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
     elif step_num == 2:
         _chars = step_state.get("finalized_characters") or []
         _news = step_state.get("news_input", "")
-        _tone = step_state.get("active_tone", "")
+        _emotion = step_state.get("active_emotion", "")
         _roles = [getattr(c, "role_or_job", "?") for c in _chars]
         _group_a = step_state.get("character_group_a") or []
         _group_b = step_state.get("character_group_b") or []
@@ -4012,7 +4024,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             with st.expander("2.1 Generate Characters — 🤖 AI generation", expanded=True):
                 st.markdown("**📥 Input:**")
                 st.caption(f"News: {_news}")
-                st.caption(f"Vibe: {_tone} | Requested Count: {len(_chars) or step_state.get('character_count', 2)}")
+                st.caption(f"Emotion: {_emotion} | Requested Count: {len(_chars) or step_state.get('character_count', 2)}")
                 st.markdown("**📤 Output (Generated Characters):**")
 
                 if _group_a or _group_b:
@@ -4087,7 +4099,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             if _hooks:
                 with st.expander("2.3 Viral Angles & Hooks Formulation — 🤖 AI generation", expanded=False):
                     st.markdown("**📥 Input:**")
-                    st.caption(f"Selected editorial angle(s) + verified news + vibe: {_tone}")
+                    st.caption(f"Selected editorial angle(s) + verified news + emotion: {_emotion}")
                     st.markdown("**📤 Output (Formulated Hooks):**")
                     for _hi, _hk in enumerate(_hooks, 1):
                         _hook_text = _hk if isinstance(_hk, str) else getattr(_hk, "hook_text", "")
@@ -4107,7 +4119,7 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
             # 3.1 Generate Dialogue (ALL dialogue beats, timing telemetry, and JSON INSIDE here)
             with st.expander("3.1 Generate Dialogue — 🤖 AI generation", expanded=True):
                 st.markdown("**📥 Input:**")
-                st.caption(f"News + {len(step_state.get('finalized_characters') or [])} character(s) + vibe ({step_state.get('active_tone', '')}) → dialogue writer")
+                st.caption(f"News + {len(step_state.get('finalized_characters') or [])} character(s) + emotion ({step_state.get('active_emotion', '')}) → dialogue writer")
                 st.markdown("**📤 Output (Dialogue Beats & Spoken Hindi Script):**")
                 st.caption(f"{len(_s3_dlgs)} script(s), {_s3_nbeats} beat(s) generated:")
                 for _di, _d in enumerate(_s3_dlgs, 1):
@@ -4156,14 +4168,14 @@ def _render_step_output(step_num, step_state, key_prefix="", as_root=True):
                 _s3_check_defs = [
                     ("3.2.1", "structure check", "3.2.1 Structure Check", "code validator",
                      "Generated beats → speaker labels, format rules"),
-                    ("3.2.2", "tone + news check", "3.2.2 Tone + News Check", "AI validator",
-                     f"Required vibe: {step_state.get('active_tone', '')} | AI judges tone + news coverage"),
+                    ("3.2.2", "emotion + news check", "3.2.2 Emotion + News Check", "AI validator",
+                     f"Required emotion: {step_state.get('active_emotion', '')} | AI judges emotion + news coverage"),
                     ("3.2.3", "language check", "3.2.3 Language Check", "code validator",
                      "Dialogue lines → common Hindi (no formal/shuddh words)"),
                     ("3.2.4", "clothing check", "3.2.4 Clothing Check", "code validator",
                      "Character attire specific, visual, job/news-appropriate"),
                     ("3.2.5", "sfx check", "3.2.5 SFX Check", "code validator",
-                     f"SFX matches the required tone ({step_state.get('active_tone', '')})"),
+                     f"SFX matches the required emotion ({step_state.get('active_emotion', '')})"),
                 ]
                 for _ck_num, _ck_name, _ck_title, _ck_validator, _ck_desc in _s3_check_defs:
                     _ck = next((_v for _v in _s3_subs if str(_v.get("stage", "")).strip() == _ck_num or _ck_name in str(_v.get("name", "")).lower()), None)
@@ -4778,7 +4790,7 @@ with col_output:
                         preferred_angle=get_effective_angle(),
                         character_count=st.session_state.chosen_character_count,
                         scene_style=st.session_state.chosen_scene_style,
-                        preferred_tone=st.session_state.chosen_tone,
+                        preferred_emotion=st.session_state.chosen_emotion,
                         sample_story=st.session_state.get("run_sample_story", ""),
                         # #316: one-shot bypass — consumed below so it never sticks.
                         bypass_verification=st.session_state.pop("bypass_stage1_verification", False),
@@ -5035,7 +5047,12 @@ with col_output:
                     )
         if st.session_state.get("stepwise_active"):
             err_step = failure.get("step", st.session_state.get("stepwise_current_step", 1))
-            st.caption(f"Failure occurred during Step {err_step}. You can change the model and retry, or go back to the previous stage.")
+            # Issue #350: surface the consecutive-failure count — the human
+            # is right once the step's own attempts are exhausted, and the
+            # panel below always offers the bypass.
+            _fail_n = step_fail_count(st.session_state, err_step)
+            _fail_word = "time" if _fail_n == 1 else "times"
+            st.caption(f"Step {err_step} failed ({_fail_n} {_fail_word}). You can change the model and retry, go back to the previous stage, or move to the next step.")
             # Output till previous stage: keep every completed stage's output
             # visible so the failure doesn't wipe out the work so far.
             _comp = st.session_state.get("stepwise_completed_steps", {}) or {}
@@ -5048,11 +5065,21 @@ with col_output:
                     for _s_num in _prev_steps:
                         _render_step_output(_s_num, _comp[_s_num], key_prefix=f"failhist{_s_num}_", as_root=True)
                         _render_input_prompts(_comp[_s_num], key_prefix=f"failhistp{_s_num}_")
-            if err_step > 1:
+            # Issue #350: every stepwise failure offers a bypass ("Move to
+            # next step") — a retry-only dead end is not acceptable. Step 6
+            # is the final integrate & validate that produces the script, so
+            # there is no next step to move to.
+            _bypassable = err_step < 6
+            c_back = None
+            c_bypass = None
+            if err_step > 1 and _bypassable:
+                c_retry, c_back, c_bypass, c_abort = st.columns([1, 1, 1.4, 1])
+            elif err_step > 1:
                 c_retry, c_back, c_abort = st.columns([1, 1, 1])
+            elif _bypassable:
+                c_retry, c_bypass, c_abort = st.columns([1, 1.4, 1])
             else:
                 c_retry, c_abort = st.columns([1, 1])
-                c_back = None
             with c_retry:
                 # Issue #198 / HIG §3: Retry initiates a step run — it owns
                 # its loading state (running label shown visibly + disabled
@@ -5079,6 +5106,21 @@ with col_output:
                         st.session_state.generation_error = None
                         st.session_state.stepwise_run_requested = False
                         st.session_state.stepwise_current_step = err_step - 1
+                        st.rerun()
+            if c_bypass is not None:
+                with c_bypass:
+                    # Issue #350: bypass is navigation (like Back) — it runs
+                    # nothing, so it claims no in-flight slot; it marks the
+                    # step skipped, clears the failure, and advances.
+                    # #199: verb-first help tag.
+                    if st.button("Move to next step", icon=":material/skip_next:", key="bypass_stepwise_step",
+                                 use_container_width=True,
+                                 help=f"Skip step {err_step} and continue with step {err_step + 1}"):
+                        mark_step_bypassed(st.session_state, err_step)
+                        clear_step_fail_count(st.session_state, err_step)
+                        st.session_state.generation_error = None
+                        st.session_state.stepwise_run_requested = False
+                        st.session_state.stepwise_current_step = err_step + 1
                         st.rerun()
             with c_abort:
                 # #199: icon-only control — close metaphor + verb-first help tag.
@@ -5128,7 +5170,10 @@ with col_output:
         cols_step = st.columns(6)
         for idx, (c_st, name) in enumerate(zip(cols_step, step_names), 1):
             with c_st:
-                if idx < curr_step:
+                # Issue #350: bypassed steps render as skipped, never as done.
+                if step_was_bypassed(st.session_state, idx):
+                    st.markdown(f'<div class="step-skip">⏭ {name}</div>', unsafe_allow_html=True)
+                elif idx < curr_step:
                     st.markdown(f'<div class="step-done">✓ {name}</div>', unsafe_allow_html=True)
                 elif idx == curr_step:
                     st.markdown(f'<div class="step-now">▶ {name}</div>', unsafe_allow_html=True)
@@ -5150,6 +5195,10 @@ with col_output:
                     if past_st:
                         _render_step_output(s_num, past_st, key_prefix=f"hist{s_num}_", as_root=True)
                         _render_input_prompts(past_st, key_prefix=f"histp{s_num}_")
+                    elif step_was_bypassed(st.session_state, s_num):
+                        # Issue #350: a bypassed step has no output to show —
+                        # say so instead of silently dropping it from history.
+                        st.caption(f"⏭ Step {s_num} skipped — moved to the next step after failure.")
 
             st.markdown('<div class="ios-section-label" style="margin-top:14px;">Next Action &amp; Refinements</div>', unsafe_allow_html=True)
             with st.container(border=True):
@@ -5280,7 +5329,7 @@ with col_output:
                         preferred_angle=get_effective_angle(),
                         character_count=st.session_state.chosen_character_count,
                         scene_style=st.session_state.chosen_scene_style,
-                        preferred_tone=st.session_state.chosen_tone,
+                        preferred_emotion=st.session_state.chosen_emotion,
                         sample_story=st.session_state.get("run_sample_story", ""),
                         extra_instruction=extra_inst,
                     )
@@ -5328,6 +5377,7 @@ with col_output:
                 st.session_state.setdefault("stepwise_completed_steps", {})[curr_step] = copy.deepcopy(st_res)
                 st.session_state.stepwise_extra_instruction = ""
                 st.session_state.generation_error = None
+                clear_step_fail_count(st.session_state, curr_step)  # issue #350
                 s_box.update(label=f"{step_titles.get(curr_step, f'Step {curr_step}')} Ready", state="complete", expanded=False)
             except Exception as e:
                 st.session_state.generation_error = {
@@ -5339,6 +5389,7 @@ with col_output:
                     "attempt_history": getattr(e, "attempt_history", None) or [],
                     "validation_steps": getattr(e, "validation_steps", None) or [],
                 }
+                record_step_failure(st.session_state, curr_step)  # issue #350
                 s_box.update(label=f"Step {curr_step} Failed", state="error")
             finally:
                 # Issue #198 / HIG §3: release the in-flight marker the moment

@@ -201,7 +201,7 @@ def test_find_formal_hindi_passes_common_hindi():
 def test_structural_correction_receives_exact_failed_draft_once():
     """Fail-fast: a structure failure retries exactly once with previous_draft
     set to the exact failed raw_output and ONLY the structure feedback
-    (news/tone/language never ran, so they contribute nothing)."""
+    (news/emotion/language never ran, so they contribute nothing)."""
     from unittest.mock import patch
     import sys
     import agents.dialogue_writer  # noqa: F401
@@ -239,7 +239,7 @@ def test_structural_correction_receives_exact_failed_draft_once():
          patch.object(dw_mod, "find_formal_hindi", return_value=[]):
         result = agent.write_dialogues_batch(
             news_input="talk show episode", items=[{"angle": "Test", "hook": "Welcome to the show", "cta": "Test CTA"}],
-            tone="Neutral", duration_sec=20,
+            emotion="Neutral", duration_sec=20,
             verification=None, character_count=2, scene_style="Interview",
             _max_retries=1,
         )
@@ -247,7 +247,7 @@ def test_structural_correction_receives_exact_failed_draft_once():
     retry_kwargs = seen[1]
     assert retry_kwargs["previous_draft"] == failed_raw, "retry must carry the exact failed draft"
     assert "STRUCTURE FIX" in retry_kwargs["feedback"]
-    # Fail-fast: news/tone/language never ran before the structure failure,
+    # Fail-fast: news/emotion/language never ran before the structure failure,
     # so the retry feedback carries ONLY the structure fix.
     assert "NEWS COVERAGE FIX" not in retry_kwargs["feedback"]
     assert "TONE CORRECTION" not in retry_kwargs["feedback"]
@@ -281,7 +281,7 @@ def test_hindi_correction_receives_exact_draft_and_flagged_tokens():
         seen.append(kwargs)
         return orig(self, **kwargs)
 
-    # Fail-fast: language is check 3.x.4, so structure/news/tone must pass
+    # Fail-fast: language is check 3.x.4, so structure/news/emotion must pass
     # first; the AI judges would fail on the stubbed model output, so patch them.
     with patch.object(dw_mod.DialogueNarrationAgent, "write_dialogues_batch", spy), \
          patch.object(agent, "execute", side_effect=[failed_raw, fixed_raw]), \
@@ -289,7 +289,7 @@ def test_hindi_correction_receives_exact_draft_and_flagged_tokens():
                       return_value=(True, "", True, "mocked pass")):
         result = agent.write_dialogues_batch(
             news_input="rights issue approval", items=[{"angle": "Test", "hook": "राइट्स इश्यू को मंजूरी", "cta": "Test CTA"}],
-            tone="Neutral", duration_sec=20,
+            emotion="Neutral", duration_sec=20,
             verification=None, character_count=1, scene_style="Monologue",
             finalized_characters=[CharacterProfile(name="Ravi", role_or_job="Anchor")],
             _max_retries=1,

@@ -13,7 +13,7 @@ PROJECT_CONFIG_FILE = os.path.join(BASE_DIR, "project_config.json")
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "default_engine": "first_local_then_agy",
-    "default_tone": "😂 Relatable Comedy & Sarcasm (देसी ह्यूमर)",
+    "default_emotion": "Curiosity",  # #354: frozen emotion palette default
     "default_duration": 10,
     "batch_count": 1,
     "max_retries": 5,

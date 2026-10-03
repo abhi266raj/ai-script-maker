@@ -5,7 +5,7 @@ The user reported being "stuck in warming up" on app launch. Root causes:
 1. The #4 probe has a 30s -> 30s -> 60s retry budget (up to 120s) with no
    timeout of its own — a hung probe left the mailbox "warming" forever.
 2. FM_WARMUP_STALE_SECONDS was 600s, so a crashed worker kept the UI
-   showing "Warming up…" for 10 minutes.
+   showing the warming state (spinner + disabled button) for 10 minutes.
 
 Fix: the worker bounds the probe with a 60s hard timeout (daemon inner
 thread, abandoned on timeout), staleness recovery kicks in at 90s, the

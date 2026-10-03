@@ -66,7 +66,7 @@ class ScreenplayCoherenceAgent(BaseAgent):
         self,
         scene: SceneItem,
         prev_scene: Optional[SceneItem] = None,
-        tone: str = "",
+        emotion: str = "",
     ) -> SceneItem:
         """
         Analyze the scene's spoken dialogue for concrete physical objects and verbs,

@@ -241,7 +241,7 @@ class TestFailFastValidation:
         names = re.findall(r'"name":\s*"([^"]+)"', m.group(1))
         assert names == [
             "Structure check",
-            "Tone + news check",
+            "Emotion + news check",
             "Language check",
             "Clothing check",
             "SFX check",
@@ -441,7 +441,7 @@ def base_state(verif):
         "news_input": NEWS_TOPIC,
         "batch_size": 1,
         "active_angle": "Funny & Relatable",
-        "active_tone": "Joke",
+        "active_emotion": "Joke",
         "verification": verif,
         "target_seconds": 30,
         "character_count": 2,

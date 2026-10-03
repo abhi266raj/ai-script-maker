@@ -1,19 +1,20 @@
-"""Warning severity (issue #217).
+"""Warning severity (issue #217) — emotion edition (#354).
 
-A vibe<->format mismatch is a WARNING, not an error — but app.py rendered it
-as a red ``st.error`` banner with a warning emoji: wrong severity (a warning
-dressed as an error).
+An emotion<->format mismatch is a WARNING, not an error — but app.py once
+rendered it as a red ``st.error`` banner with a warning emoji: wrong severity
+(a warning dressed as an error).
 
 Covers:
 - source-level guard: no ``st.error(`` call site in app.py renders warning
-  content (the ``_vibe_reason`` text, or any line carrying the ⚠️ emoji);
+  content (the ``_emotion_reason`` text, or any line carrying the ⚠️ emoji);
 - source-level guard: no ``st.warning(`` call site embeds a redundant ⚠️
   emoji — ``st.warning`` already carries the caution treatment (HIG §6:
   "Use the caution symbol sparingly"), and the no-emoji house rule applies;
-- the vibe<->format mismatch renders via ``st.warning(_vibe_reason)``;
-- behaviour: ``check_vibe_format_compatible`` still classifies the
+- the emotion<->format mismatch renders via ``st.warning(_emotion_reason)``;
+- behaviour: ``check_emotion_format_compatible`` still classifies the
   contradictory combos as incompatible (warning text intact, no ⚠️ added)
-  and compatible combos as fine.
+  and compatible combos as fine — the #354 frozen emotion palette replaces
+  the old vibe values (Joke emotion <-> Sorrow/Lament format).
 
 Run: python -m pytest tests/test_warning_severity_217.py -q
 """
@@ -24,8 +25,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from core.constants import (  # noqa: E402
-    VIBE_COMEDY,
-    VIBE_EMOTIONAL,
+    EMOTION_JOKE,
+    EMOTION_SORROW,
     FORMAT_DIALOGUE,
     FORMAT_LAMENT,
 )
@@ -40,23 +41,23 @@ def _app_src():
 # Source-level guards: warning severity, no redundant caution emoji
 # ---------------------------------------------------------------------------
 
-def test_vibe_warning_never_rendered_as_error():
-    """#217: the vibe<->format warning must not go through st.error."""
+def test_emotion_warning_never_rendered_as_error():
+    """#217: the emotion<->format warning must not go through st.error."""
     src = _app_src()
-    assert "st.error(_vibe_reason)" not in src
-    assert 'st.error(f"{_vibe_reason}' not in src
+    assert "st.error(_emotion_reason)" not in src
+    assert 'st.error(f"{_emotion_reason}' not in src
     for i, line in enumerate(src.splitlines(), start=1):
         if "st.error(" in line:
             assert "⚠️" not in line, (
                 f"app.py:{i}: warning content rendered via st.error — "
                 "warnings must use st.warning"
             )
-            assert "_vibe_reason" not in line, (
-                f"app.py:{i}: _vibe_reason (a warning) rendered via st.error"
+            assert "_emotion_reason" not in line, (
+                f"app.py:{i}: _emotion_reason (a warning) rendered via st.error"
             )
 
 
-def test_vibe_mismatch_renders_st_warning():
+def test_emotion_mismatch_renders_st_warning():
     """#217: the mismatch warning renders via st.warning (not st.error).
 
     The banner keeps the sanctioned :material/warning: icon per the merged
@@ -64,9 +65,9 @@ def test_vibe_mismatch_renders_st_warning():
     """
     src = _app_src()
     warning_lines = [line for line in src.splitlines()
-                     if "st.warning(" in line and "_vibe_reason" in line]
+                     if "st.warning(" in line and "_emotion_reason" in line]
     assert warning_lines, (
-        "the vibe<->format mismatch must render via st.warning(_vibe_reason …)"
+        "the emotion<->format mismatch must render via st.warning(_emotion_reason …)"
     )
     assert all("⚠️" not in line for line in warning_lines)
 
@@ -84,7 +85,7 @@ def test_no_redundant_warning_emoji_on_st_warning():
 
 
 # ---------------------------------------------------------------------------
-# Behaviour: check_vibe_format_compatible (real app module, fake streamlit)
+# Behaviour: check_emotion_format_compatible (real app module, fake streamlit)
 # ---------------------------------------------------------------------------
 
 class _Stop(Exception):
@@ -129,6 +130,9 @@ def _app_with_fake_st():
     def _make_fake(name):
         mod = types.ModuleType(name)
         mod.session_state = state
+        # app.py pins the Streamlit version at import (#200/#254) — the fake
+        # must report the pinned version or the import raises.
+        mod.__version__ = "1.64.0"
 
         def _ga(n):
             if n == "session_state":
@@ -163,29 +167,40 @@ def _app_with_fake_st():
 
 
 def test_clashing_combo_reports_warning_text():
-    """Sorrow + Comedy is incompatible: (False, non-empty reason).
+    """Sorrow format + Joke emotion is incompatible: (False, non-empty reason).
 
     The reason text itself must not carry a ⚠️ prefix — the banner
     (st.warning) already provides the caution treatment (#217).
     """
     app, state = _app_with_fake_st()
-    state["chosen_tone"] = VIBE_COMEDY
+    state["chosen_emotion"] = EMOTION_JOKE
     state["chosen_scene_style"] = FORMAT_LAMENT
-    ok, reason = app.check_vibe_format_compatible()
+    ok, reason = app.check_emotion_format_compatible()
     assert ok is False
     assert reason, "incompatible combo must explain why"
     assert "⚠️" not in reason
 
 
+def test_lament_rejects_all_non_sorrow_emotions():
+    """#354: the Sorrow format strictly requires the Sorrow emotion."""
+    app, state = _app_with_fake_st()
+    for emotion in ("Anger", "Shock", "Joke", "Curiosity", "Pride", "Fear", "Hope"):
+        state["chosen_emotion"] = emotion
+        state["chosen_scene_style"] = FORMAT_LAMENT
+        ok, reason = app.check_emotion_format_compatible()
+        assert ok is False, f"Lament + {emotion} must be incompatible"
+        assert reason
+
+
 def test_compatible_combo_passes():
     app, state = _app_with_fake_st()
-    state["chosen_tone"] = VIBE_COMEDY
+    state["chosen_emotion"] = EMOTION_JOKE
     state["chosen_scene_style"] = FORMAT_DIALOGUE
-    assert app.check_vibe_format_compatible() == (True, "")
+    assert app.check_emotion_format_compatible() == (True, "")
 
 
-def test_sorrow_with_emotional_vibe_passes():
+def test_sorrow_with_sorrow_emotion_passes():
     app, state = _app_with_fake_st()
-    state["chosen_tone"] = VIBE_EMOTIONAL
+    state["chosen_emotion"] = EMOTION_SORROW
     state["chosen_scene_style"] = FORMAT_LAMENT
-    assert app.check_vibe_format_compatible() == (True, "")
+    assert app.check_emotion_format_compatible() == (True, "")

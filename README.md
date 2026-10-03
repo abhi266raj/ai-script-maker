@@ -342,11 +342,10 @@ The Hindi Reel Studio UI implements a warm, paper-inspired editorial design syst
 ## 🌿 Agent & Developer Workflow Rules (Universal)
 
 All AI agents and contributors must strictly adhere to the project's Git workflow:
-- **No Coding on Main:** Agents are strictly forbidden from writing or modifying code directly on `main`.
-- **No Direct Commits to Main:** Direct commits to `main` are prohibited and blocked by pre-commit hooks.
-- **Always Start with a Feature Branch:** `git checkout -b feature/<name>` from up-to-date `main`.
-- **Merge Only When Complete & Tested:** Merge feature branches back into `main` using `--no-ff` once all unit tests pass.
-- Detailed rules: [`AGENTS.md`](./AGENTS.md), [`GEMINI.md`](./GEMINI.md), and [`CONTRIBUTING.md`](./CONTRIBUTING.md).
+- **Protected Branches:** Direct pushes to `main` and `develop` are strictly prohibited (GH013).
+- **Dedicated Branches:** Always branch from up-to-date `develop`: `feature/<name>`, `fix/<name>`, or `chore/<name>`.
+- **Pull Request Workflow:** Submit all changes via GitHub Pull Requests (`gh pr create`).
+- Detailed rules: [`AGENTS.md`](./AGENTS.md), [`guidelines/`](./guidelines/), and [`CONTRIBUTING.md`](./CONTRIBUTING.md).
 
 ---
 

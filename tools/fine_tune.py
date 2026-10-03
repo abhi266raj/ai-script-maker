@@ -21,8 +21,8 @@ class FineTuneError(Exception):
     """A fine-tune turn could not be completed. Never silent."""
 
 
-# System instructions for the refining model. Mirrors the tone-compliance
-# rules of prompts/dialogue_writer (an unfollowed tone requirement is a bug),
+# System instructions for the refining model. Mirrors the emotion-compliance
+# rules of prompts/dialogue_writer (an unfollowed emotion requirement is a bug),
 # but generalized: the script being refined may be the final screenplay
 # format, not just the dialogue batch.
 FINE_TUNE_SYSTEM_INSTRUCTIONS = """You are refining a finalized Hindi reel script from the user's own library, based on their change instruction. This is a SURGICAL REFINEMENT — not a fresh generation.
@@ -30,7 +30,7 @@ FINE_TUNE_SYSTEM_INSTRUCTIONS = """You are refining a finalized Hindi reel scrip
 REFINE MANDATE
 - Change ONLY what the user's instruction targets. Keep every line, beat, joke, and character moment that already works.
 - The user's instruction is the HIGHEST PRIORITY. Follow it exactly — but stay inside the script's existing structure and format.
-- TONE (NON-NEGOTIABLE): the script's tone is "{tone}". The instruction may ask for a different tone or mood — when it does, apply the NEW tone consistently. Whichever tone governs the result: at least 70% of beats must clearly embody it and ZERO beats may contradict it. Funny → every funny beat carries a REAL joke (setup + punchline), with laughter where humor lands. Somber → no jokes, no laughter anywhere. A tone shift never licenses dropping the news facts.
+- EMOTION (NON-NEGOTIABLE): the script's emotion is "{emotion}". The instruction may ask for a different emotion or mood — when it does, apply the NEW emotion consistently. Whichever emotion governs the result: at least 70% of beats must clearly embody it and ZERO beats may contradict it. Funny → every funny beat carries a REAL joke (setup + punchline), with laughter where humor lands. Somber → no jokes, no laughter anywhere. A emotion shift never licenses dropping the news facts.
 - Keep the news grounded: the refined script must still carry the story's key event, people/entities, and verified facts — woven into the characters' voices, never as a lecture.
 - Dialogue stays in pure spoken Hindi (Devanagari), matching the current draft's voice. Never quote the instruction back; just apply it.
 - Keep the current script's length and structure (same sections, same beats) unless the instruction explicitly asks to add, remove, or restructure.
@@ -64,7 +64,7 @@ def build_fine_tune_prompt(
     instruction: str,
     story_context: str = "",
     history: Sequence[Dict[str, str]] = (),
-    tone: str = "",
+    emotion: str = "",
 ) -> str:
     """Assemble the refinement prompt: context + script + history + instruction."""
     history_lines: List[str] = []
@@ -80,7 +80,7 @@ def build_fine_tune_prompt(
 
     return (
         f"STORY CONTEXT\n{(story_context or '').strip() or '(none)'}\n\n"
-        f"TONE\n{(tone or '').strip() or '(keep the tone already established in the current draft)'}\n\n"
+        f"EMOTION\n{(emotion or '').strip() or '(keep the emotion already established in the current draft)'}\n\n"
         f"CURRENT SCRIPT — the exact visible script; your ONLY baseline\n{current_script}\n\n"
         f"PREVIOUS FINE-TUNE TURNS (oldest first — the last turn produced the current script above)\n{history_block}\n\n"
         f"USER'S NEW INSTRUCTION (HIGHEST PRIORITY)\n{instruction}\n\n"
@@ -93,7 +93,7 @@ def fine_tune_script(
     instruction: str,
     story_context: str = "",
     history: Sequence[Dict[str, str]] = (),
-    tone: str = "",
+    emotion: str = "",
     generate_fn: Callable[[str, str], str] | None = None,
     engine_mode: str | None = None,
 ) -> str:
@@ -104,8 +104,8 @@ def fine_tune_script(
         instruction: what the user wants changed (e.g. "make it funnier").
         story_context: story title / topic / headline for grounding.
         history: prior turns, oldest first — each ``{"instruction", "script"}``.
-        tone: the script's tone (from the story meta); carried into the
-            system instructions so tone compliance stays non-negotiable.
+        emotion: the script's emotion (from the story meta); carried into the
+            system instructions so emotion compliance stays non-negotiable.
         generate_fn: ``(prompt, instructions) -> str``; defaults to the
             dual-engine path. Injectable for tests.
         engine_mode: the user's selected engine mode (#210), threaded to
@@ -133,13 +133,13 @@ def fine_tune_script(
             "to fine-tune.")
 
     instructions = FINE_TUNE_SYSTEM_INSTRUCTIONS.format(
-        tone=(tone or "").strip() or "as established in the current draft")
+        emotion=(emotion or "").strip() or "as established in the current draft")
     prompt = build_fine_tune_prompt(
         current_script=script,
         instruction=instruction_text,
         story_context=story_context or "",
         history=history or (),
-        tone=tone or "",
+        emotion=emotion or "",
     )
     generate = generate_fn or (lambda p, i: _default_generate(p, i, engine_mode))
     try:

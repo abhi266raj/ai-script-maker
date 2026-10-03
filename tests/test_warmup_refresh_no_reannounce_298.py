@@ -61,8 +61,12 @@ class _FakeSt:
         self.toasts.append((msg, icon))
 
     def button(self, label, **kw):
-        self.buttons.append(label)
-        return self.button_results.get(label, False)
+        self.buttons.append((label, kw.get("icon")))
+        return self.button_results.get(kw.get("icon") or label, False)
+
+    def spinner(self, text):
+        import contextlib
+        return contextlib.nullcontext()
 
     def rerun(self):
         self.reruns += 1
@@ -182,10 +186,10 @@ def test_render_without_tap_starts_nothing(libdir, ui, monkeypatch):
 
 
 def test_button_tap_registers_run_in_session(libdir, ui, monkeypatch):
-    """Tapping "Cold start" kicks off the probe AND records the run's
+    """Tapping the warm-up button kicks off the probe AND records the run's
     started_at in this session, so the completion toast announces."""
     monkeypatch.setattr(lib, "_fm_warmup_worker", lambda *a: None)
-    ui.button_results["Cold start"] = True
+    ui.button_results[lui._FM_WARMUP_ICON] = True
 
     lui._render_fm_warmup_button()
 
@@ -197,12 +201,12 @@ def test_button_tap_registers_run_in_session(libdir, ui, monkeypatch):
         "the tap must register exactly the kicked-off run"
 
 
-def test_tap_still_shows_cold_start_idle_label(libdir, ui, monkeypatch):
-    """Idle label stays "Cold start" (no rename); the tap target is the
-    Cold start button."""
+def test_tap_target_is_icon_only_warmup_button(libdir, ui, monkeypatch):
+    """The tap target is the icon-only warm-up button (#365): empty label,
+    stable icon, help tag carrying the description."""
     monkeypatch.setattr(lib, "_fm_warmup_worker", lambda *a: None)
     lui._render_fm_warmup_button()
-    assert ui.buttons == ["Cold start"], ui.buttons
+    assert ui.buttons == [("", lui._FM_WARMUP_ICON)], ui.buttons
 
 
 # ---------------------------------------------------------------------------

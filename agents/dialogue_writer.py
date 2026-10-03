@@ -50,9 +50,9 @@ def clean_hook_for_dialogue(hook: str) -> str:
     return "\n".join(ln for ln in lines if ln)
 
 
-def get_sentence_guidance(duration_sec: int, rec_w: int, max_w: int, tone: str = "", angle: str = "") -> str:
+def get_sentence_guidance(duration_sec: int, rec_w: int, max_w: int, emotion: str = "", angle: str = "") -> str:
     """Return explicit structural sentence advice calibrated to target reel duration with Fun-First support."""
-    combined = f"{tone} {angle}".lower()
+    combined = f"{emotion} {angle}".lower()
     is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "roast", "relatable", "joke"])
 
     if duration_sec <= 8:
@@ -624,7 +624,7 @@ def extract_sample_story_personas(sample_story: str) -> Optional[List[str]]:
 def get_character_personas(
     scene_style: str,
     character_count: int,
-    tone: str,
+    emotion: str,
     angle: str,
     topic_or_script: str = "",
     sample_story: Optional[str] = None,
@@ -632,7 +632,7 @@ def get_character_personas(
     """Generate rich, socioeconomically diverse character personas grounded in the script topic and representing India."""
     # NOTE: a provided sample story is the director's guide — when it names or
     # implies a cast, that cast wins over the configured character count and
-    # vibe/tone settings below. Verified news facts still outrank the sample,
+    # emotion settings below. Verified news facts still outrank the sample,
     # but the sample outranks creative setup on every character choice.
 
     # Director's guide first: an explicit sample cast bypasses the setup rules.
@@ -645,9 +645,11 @@ def get_character_personas(
             return sample_personas
 
     import random
-    combined = f"{tone} {angle}".lower()
+    combined = f"{emotion} {angle}".lower()
     context_text = f"{topic_or_script} {sample_story or ''}"
-    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic", "emotional"])
+    # #354: the frozen emotion palette flows through `emotion`. "Sorrow" must hit
+    # the sad path; "Joke" already hits the funny path via "joke".
+    is_sad = any(w in combined for w in ["sad", "sorrow", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic", "emotional"])
     is_funny = any(w in combined for w in ["funny", "comedy", "sarcasm", "ह्यूमर", "देसी", "मजाकिया", "रोस्ट", "edgy", "relatable", "joke"])
     is_culture = any(w in combined for w in ["culture", "heritage", "pride", "गौरव", "धरोहर", "traditional", "wisdom", "desi", "swag"])
     style_lower = scene_style.lower()
@@ -864,7 +866,7 @@ def validate_dialogue_structure(scene_lines, scene_style: str, speaker_names=Non
 
     Returns human-readable issue strings; empty means compliant. Only checks
     what is verifiable in code (speaker order, coverage, question marks,
-    solo-voice, lament laughter ban) \u2014 never tone or wit.
+    solo-voice, lament laughter ban) \u2014 never emotion or wit.
     """
     style = (scene_style or "dialogue").strip().lower()
     if style == "dialogue":
@@ -995,9 +997,9 @@ def find_formal_hindi(text: str) -> list:
 _COMEDY_KEYWORDS = ["funny", "humor", "humour", "humorous", "comedy", "comic", "sarcasm", "satire", "satirical", "witty", "fun", "joke", "\u0939\u094d\u092f\u0942\u092e\u0930", "\u0926\u0947\u0938\u0940", "\u092e\u091c\u093e\u0915", "\u0939\u0902\u0938\u0940"]
 
 
-def is_comedy_request(tone: str, angle: str) -> bool:
-    """True when the requested tone/angle demands comedy — jokes become mandatory, not optional."""
-    combined = f"{tone or ''} {angle or ''}".lower()
+def is_comedy_request(emotion: str, angle: str) -> bool:
+    """True when the requested emotion/angle demands comedy — jokes become mandatory, not optional."""
+    combined = f"{emotion or ''} {angle or ''}".lower()
     return any(w in combined for w in _COMEDY_KEYWORDS)
 
 
@@ -1039,7 +1041,7 @@ def validate_clothing_specificity(characters: list) -> list:
     return issues
 
 
-# --- SFX tone mismatch ban (code-enforced) ---
+# --- SFX emotion mismatch ban (code-enforced) ---
 _COMEDIC_SFX_IN_SERIOUS = [
     "party horn",
     "slide whistle",
@@ -1049,17 +1051,17 @@ _COMEDIC_SFX_IN_SERIOUS = [
     "record scratch",
     "fart",
 ]
-_SERIOUS_TONES = ["sad", "sorrow", "grief", "tragic", "heartbreaking", "lament", "serious", "urgent", "breaking", "emotional"]
+_SERIOUS_EMOTIONS = ["sad", "sorrow", "grief", "tragic", "heartbreaking", "lament", "serious", "urgent", "breaking", "emotional"]
 
 
-def validate_sfx_tone_match(scene_lines: list, tone: str) -> list:
-    """Code-enforced: SFX must match the tone.
+def validate_sfx_emotion_match(scene_lines: list, emotion: str) -> list:
+    """Code-enforced: SFX must match the emotion.
 
-    Comedic SFX in serious/sad tones is a mismatch.
-    Returns issue strings; empty means SFX tone is OK.
+    Comedic SFX in serious/sad emotions is a mismatch.
+    Returns issue strings; empty means SFX emotion is OK.
     """
-    tone_lower = (tone or "").lower()
-    is_serious = any(t in tone_lower for t in _SERIOUS_TONES)
+    tone_lower = (emotion or "").lower()
+    is_serious = any(t in tone_lower for t in _SERIOUS_EMOTIONS)
     if not is_serious:
         return []
     issues = []
@@ -1073,8 +1075,8 @@ def validate_sfx_tone_match(scene_lines: list, tone: str) -> list:
         for banned_sfx in _COMEDIC_SFX_IN_SERIOUS:
             if banned_sfx in sfx_lower:
                 issues.append(
-                    f"Beat {idx + 1}: SFX '{banned_sfx}' mismatches serious tone '{tone}'. "
-                    "Use tone-appropriate SFX: somber ambience, silence, or subtle dramatic beats."
+                    f"Beat {idx + 1}: SFX '{banned_sfx}' mismatches serious emotion '{emotion}'. "
+                    "Use emotion-appropriate SFX: somber ambience, silence, or subtle dramatic beats."
                 )
                 break
     return issues
@@ -1146,17 +1148,40 @@ def ai_judge_news_coverage(
         )
 
 
-def ai_judge_tone_compliance(
+def _emotion_judge_context(emotion: str) -> str:
+    """Build the emotion context block for AI judge prompts (#354).
+
+    Names the required feeling, its Hindi name, and its delivery direction so
+    the judge validates genuine emotional embodiment — not a vague 'emotion'.
+    Falls back to the raw value for non-palette callers (fail-loud stays in
+    get_emotion_instruction; the judge must never crash on odd input).
+    """
+    t = (emotion or "").strip()
+    try:
+        from core.constants import EMOTION_HINDI, EMOTION_DELIVERY, ALL_EMOTIONS
+        if t in ALL_EMOTIONS:
+            return (
+                f"REQUIRED EMOTION: {t} ({EMOTION_HINDI[t]})\n"
+                f"DELIVERY: {EMOTION_DELIVERY[t]}.\n"
+                f"MEANING: every line must be written to be SPOKEN with this feeling — "
+                f"an actor reading the ({t}) parenthetical must know exactly how to deliver it."
+            )
+    except Exception:
+        pass
+    return f"REQUIRED EMOTION: {t or '(unspecified)'}"
+
+
+def ai_judge_emotion_compliance(
     agent,
     scene_lines: List[Dict[str, str]],
-    tone: str,
+    emotion: str,
     angle: str,
     engine_mode: str = "first_local_then_agy",
 ) -> Tuple[bool, str]:
-    """Ask the AI directly: does this dialogue maintain the required tone?
+    """Ask the AI directly: does this dialogue maintain the required emotion?
 
-    Keyword matching for tone (funny/sad/etc.) is brittle — the AI judge
-    understands humor, emotion, and tone semantically.
+    Keyword matching for emotion (funny/sad/etc.) is brittle — the AI judge
+    understands humor, emotion, and delivery semantically.
 
     Returns (is_compliant, feedback). If not compliant, feedback describes
     the specific issue so it can be fed back to the AI for regeneration.
@@ -1169,23 +1194,24 @@ def ai_judge_tone_compliance(
     required_beats = (total_beats * 7 + 9) // 10  # 70% rounded up
 
     prompt = (
-        "You are a tone compliance validator for short Hindi comedy/drama reels.\n\n"
-        f"REQUIRED TONE: {tone}\n"
+        "You are an emotion compliance validator for short Hindi comedy/drama reels.\n\n"
+        f"{_emotion_judge_context(emotion)}\n"
         f"ANGLE: {angle}\n"
-        f"TOTAL BEATS: {total_beats} (at least {required_beats} beats must clearly embody the tone)\n\n"
+        f"TOTAL BEATS: {total_beats} (at least {required_beats} beats must clearly embody the emotion)\n\n"
         f"DIALOGUE:\n{dialogue_text}\n\n"
-        "QUESTION: Does this dialogue maintain the required tone?\n\n"
-        "For FUNNY/HUMOROUS tone: at least 70% of beats must have genuine humor — "
+        "QUESTION: Does this dialogue maintain the required emotion?\n\n"
+        "For JOKE emotion: at least 70% of beats must have genuine humor — "
         "a real setup and punchline, witty observations, funny exaggerations, relatable comedy. "
         "Mild amusement or neutral fact-delivery does NOT count as funny.\n"
-        "For SAD/LAMENT/SORROW tone: at least 70% of beats must be CLEARLY emotional, "
-        "grief-stricken, sorrowful, or heartbreaking — not just neutral or informational. "
-        "A beat that is merely 'hopeful' or 'informational' does NOT count as sad. "
+        "For SORROW emotion: at least 70% of beats must be CLEARLY sorrowful, "
+        "grief-stricken, or heartbreaking — not just neutral or informational. "
+        "A beat that is merely 'hopeful' or 'informational' does NOT count. "
         "ZERO jokes, ZERO laughter, ZERO comedic beats. Somber throughout.\n"
-        "For other tones: the emotional quality must be present in most beats, never contradicted.\n\n"
+        "For other emotions: the feeling must be present in most beats — lines written to be "
+        "spoken with that feeling — and never contradicted.\n\n"
         "Answer in exactly this format:\n"
         "VERDICT: YES or NO\n"
-        "FUNNY_BEATS: <count> out of <total> (for funny tone; else N/A)\n"
+        "EMOTION_BEATS: <count> out of <total> (beats clearly embodying the emotion; else N/A)\n"
         "ISSUE: <one sentence describing the specific problem, or 'None' if compliant>"
     )
     try:
@@ -1193,7 +1219,7 @@ def ai_judge_tone_compliance(
         verdict_match = re.search(r"VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
         is_ok = verdict_match.group(1).upper() == "YES" if verdict_match else False
         issue_match = re.search(r"ISSUE:\s*(.+)", response, re.IGNORECASE)
-        issue = issue_match.group(1).strip() if issue_match else "Tone not maintained"
+        issue = issue_match.group(1).strip() if issue_match else "Emotion not maintained"
         if is_ok:
             return True, ""
         return False, issue
@@ -1208,18 +1234,18 @@ def ai_judge_script_quality(
     scene_lines: List[Dict[str, str]],
     news_topic: str,
     hook: str,
-    tone: str,
+    emotion: str,
     angle: str,
     engine_mode: str = "first_local_then_agy",
 ) -> Tuple[bool, str, bool, str]:
-    """ONE AI call judging BOTH tone compliance (enforced) and news coverage (advisory).
+    """ONE AI call judging BOTH emotion compliance (enforced) and news coverage (advisory).
 
     This is the SOLE AI validator in Stage 3 (token saving): the old separate
-    news-coverage judge and tone judge each cost one model call per script per
+    news-coverage judge and emotion judge each cost one model call per script per
     attempt; this merged judge costs one. The verdict is split deterministically.
 
-    Returns (tone_ok, tone_issue, news_ok, news_reason).
-      - tone_ok=False -> enforced: fails the check, fail-fast, retry feedback.
+    Returns (emotion_ok, emotion_issue, news_ok, news_reason).
+      - emotion_ok=False -> enforced: fails the check, fail-fast, retry feedback.
       - news_ok=False -> advisory only: surfaced in the check output, never
                          fails the stage, never triggers a retry, never feeds
                          retry feedback.
@@ -1237,21 +1263,22 @@ def ai_judge_script_quality(
 
     prompt = (
         "You are a script quality validator for short Hindi comedy/drama reels. "
-        "Judge TWO things about the dialogue below: (1) TONE compliance, (2) NEWS coverage.\n\n"
-        f"REQUIRED TONE: {tone}\n"
+        "Judge TWO things about the dialogue below: (1) EMOTION compliance, (2) NEWS coverage.\n\n"
+        f"{_emotion_judge_context(emotion)}\n"
         f"ANGLE: {angle}\n"
-        f"TOTAL BEATS: {total_beats} (at least {required_beats} beats must clearly embody the tone)\n\n"
+        f"TOTAL BEATS: {total_beats} (at least {required_beats} beats must clearly embody the emotion)\n\n"
         f"NEWS: {news_topic}\n"
         f"NEWS ANGLE: {hook}\n\n"
         f"DIALOGUE:\n{dialogue_text}\n\n"
-        "--- TONE ---\n"
-        "For FUNNY/HUMOROUS tone: at least 70% of beats must have genuine humor -- "
+        "--- EMOTION ---\n"
+        "For JOKE emotion: at least 70% of beats must have genuine humor -- "
         "a real setup and punchline, witty observations, funny exaggerations, relatable comedy. "
         "Mild amusement or neutral fact-delivery does NOT count as funny.\n"
-        "For SAD/LAMENT/SORROW tone: at least 70% of beats must be CLEARLY emotional, "
-        "grief-stricken, sorrowful, or heartbreaking -- not just neutral or informational. "
+        "For SORROW emotion: at least 70% of beats must be CLEARLY sorrowful, "
+        "grief-stricken, or heartbreaking -- not just neutral or informational. "
         "ZERO jokes, ZERO laughter, ZERO comedic beats. Somber throughout.\n"
-        "For other tones: the emotional quality must be present in most beats, never contradicted.\n\n"
+        "For other emotions: the feeling must be present in most beats -- lines written to be "
+        "spoken with that feeling -- and ZERO beats may contradict it.\n\n"
         "--- NEWS ---\n"
         "Would a viewer who ONLY hears this dialogue (no visuals, no captions) understand WHAT news "
         "this is about -- the key event and what happened? "
@@ -1259,24 +1286,24 @@ def ai_judge_script_quality(
         "Generic filler with no specific event does NOT count. "
         "The news should be woven in creatively through the characters' voices -- not lectured.\n\n"
         "Answer in exactly this format:\n"
-        "TONE_VERDICT: YES or NO\n"
-        "TONE_ISSUE: <one sentence describing the specific tone problem, or 'None' if compliant>\n"
+        "EMOTION_VERDICT: YES or NO\n"
+        "EMOTION_ISSUE: <one sentence describing the specific emotion problem, or 'None' if compliant>\n"
         "NEWS_VERDICT: YES or NO\n"
         "NEWS_REASON: <one sentence explaining why>"
     )
     try:
         response = agent.execute(prompt, engine_mode=engine_mode)
-        tone_match = re.search(r"TONE_VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
-        tone_ok = tone_match.group(1).upper() == "YES" if tone_match else False
-        tone_issue_match = re.search(r"TONE_ISSUE:\s*(.+)", response, re.IGNORECASE)
-        tone_issue = tone_issue_match.group(1).strip() if tone_issue_match else "Tone not maintained"
+        emotion_match = re.search(r"EMOTION_VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
+        emotion_ok = emotion_match.group(1).upper() == "YES" if emotion_match else False
+        emotion_issue_match = re.search(r"EMOTION_ISSUE:\s*(.+)", response, re.IGNORECASE)
+        emotion_issue = emotion_issue_match.group(1).strip() if emotion_issue_match else "Emotion not maintained"
         news_match = re.search(r"NEWS_VERDICT:\s*(YES|NO)", response, re.IGNORECASE)
         news_ok = news_match.group(1).upper() == "YES" if news_match else False
         news_reason_match = re.search(r"NEWS_REASON:\s*(.+)", response, re.IGNORECASE)
         news_reason = news_reason_match.group(1).strip() if news_reason_match else "No reason given by the judge"
-        if tone_ok:
-            tone_issue = ""
-        return tone_ok, tone_issue, news_ok, news_reason
+        if emotion_ok:
+            emotion_issue = ""
+        return emotion_ok, emotion_issue, news_ok, news_reason
     except Exception as e:
         _warn = (
             f"\u26a0\ufe0f AI script-quality judge engine error ({type(e).__name__}: {e}). "
@@ -1285,9 +1312,9 @@ def ai_judge_script_quality(
         return False, _warn, False, _warn
 
 
-def get_role_identity(scene_style: str, tone: str, angle: str) -> str:
+def get_role_identity(scene_style: str, emotion: str, angle: str) -> str:
     """Role priming for the dialogue writer: a funny screenwriter identity when comedy is requested."""
-    if is_comedy_request(tone, angle):
+    if is_comedy_request(emotion, angle):
         return (
             "You are a FUNNY SCREENWRITER for viral Hindi comedy reels \u2014 a joke writer, not a news reporter. "
             f"You are writing a {angle or 'Funny'} {scene_style or 'Dialogue'} reel. "
@@ -1296,10 +1323,15 @@ def get_role_identity(scene_style: str, tone: str, angle: str) -> str:
     return "You are a master Hindi Dialogue & Voiceover Scriptwriter for short reels and videos."
 
 
-def get_creative_guidelines(scene_style: str, character_count: int, tone: str, angle: str) -> str:
+def get_creative_guidelines(scene_style: str, character_count: int, emotion: str, angle: str) -> str:
     """Generate explicit directives to ensure AI respects Angle (creative situation), Tone (jokes/emotions), and Style."""
-    combined = f"{tone} {angle}".lower()
-    is_sad = any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic", "emotional"])
+    combined = f"{emotion} {angle}".lower()
+    # #354: frozen emotions flow through `emotion`. Match them explicitly first —
+    # keyword fallbacks below stay for robustness with legacy callers.
+    _emotion = (emotion or "").strip()
+    is_sorrow_emotion = _emotion == "Sorrow" or "sorrow" in combined
+    is_joke_emotion = _emotion == "Joke"
+    is_sad = is_sorrow_emotion or any(w in combined for w in ["sad", "heartbreak", "tragedy", "दुख", "दर्द", "शोक", "lament", "loss", "grief", "भावुक", "tragic", "emotional"])
 
     # Angle Guidance
     angle_guidance = (
@@ -1315,46 +1347,93 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
         f"  * If Inspirational & Uplifting: Frame as a triumphant journey of courage, hard work, and national pride."
     )
 
-    # Tone Guidance
+    # Emotion Guidance (#354): the frozen emotion drives how every line is
+    # spoken. Each branch carries the delivery direction so the writer scripts
+    # lines an actor can perform — not just words on a page.
     if is_sad:
-        tone_guidance = (
-            f"😢 TONE DIRECTIVE ({tone}):\n"
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE ({emotion or 'Sorrow'} — genuine human sorrow):\n"
             f"- Infuse deep emotional weight, quiet sorrow, and heartfelt empathy.\n"
             f"- Spoken dialogue must honor human grief with tender sensitivity and solemn dignity.\n"
-            f"- Avoid loud, sensational, or rushed delivery."
+            f"- DELIVERY: quiet grief, respectful restraint, somber pauses. Avoid loud, sensational, or rushed delivery.\n"
+            f"- ZERO jokes, ZERO laughter anywhere — at least 70% of beats CLEARLY sorrowful."
         )
-    elif is_comedy_request(tone, angle):
-        tone_guidance = (
-            f"😂 TONE DIRECTIVE ({tone}) — COMPLIANCE IS MANDATORY, NOT OPTIONAL:\n"
+    elif is_joke_emotion or is_comedy_request(emotion, angle):
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE ({emotion or 'Joke'} — genuine human amusement) — COMPLIANCE IS MANDATORY, NOT OPTIONAL:\n"
             f"- AT LEAST 70% OF BEATS (round up) must be GENUINELY FUNNY. A comedy reel that is mostly dry news recitation is a SYSTEM BUG.\n"
-            f"- JOKE MANDATE: every funny beat must contain at least one REAL JOKE — a setup followed by a punchline. A 'humorous tone' with no actual joke is a FAILURE.\n"
+            f"- JOKE MANDATE: every funny beat must contain at least one REAL JOKE — a setup followed by a punchline. A 'humorous feeling' with no actual joke is a FAILURE.\n"
+            f"- DELIVERY: punchline timing, witty banter, teasing.\n"
             f"- Joke tools (use at least 2 across the reel): exaggerate the news absurdity, rule of three, callback to an earlier beat, misdirection, relatable everyday comparison (rent, traffic, relatives, jugaad).\n"
             f"- Solo Speech/Monologue: speak directly to the viewer — rhetorical question as setup, then punchline; callback the opening joke in the final beat.\n"
             f"- The remaining beats may deliver straight facts but must stay NEUTRAL — never somber, never dark, never contradicting the comedy.\n"
             f"- Characters react with funny shock, tease each other mercilessly, and make hilarious relatable comparisons to everyday Indian life.\n"
             f"- Comedy comes FROM the news facts: exaggerate the absurdity, roast the irony, land meme-worthy punchlines grounded in verified facts.\n"
-            f"- Audio/SFX for comedic tone MUST include comedic background music AND laughter in beats where humor lands.\n"
-            f"- SELF-CHECK: count your beats — at least 70% funny, zero beats contradicting the tone. Rewrite failures before emitting."
+            f"- Audio/SFX for comedic emotion MUST include comedic background music AND laughter in beats where humor lands.\n"
+            f"- SELF-CHECK: count your beats — at least 70% funny, zero beats contradicting the emotion. Rewrite failures before emitting."
+        )
+    elif _emotion == "Anger":
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE (Anger — क्रोध / गुस्सा):\n"
+            f"- DELIVERY: fast, abrupt, aggressive, interruptive. Write every line to be SPOKEN furious — "
+            f"short bursts, interruptions, rising heat at scams, price hikes, negligence, injustice.\n"
+            f"- Characters confront, accuse, and escalate; never calm detachment about the outrage.\n"
+            f"- COMPLIANCE: at least 70% of beats clearly embody this anger; ZERO beats contradict it."
+        )
+    elif _emotion == "Shock":
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE (Shock — स्तब्ध / झटका):\n"
+            f"- DELIVERY: gasping, wide-eyed disbelief, rapid urgency. Write every line to be SPOKEN stunned — "
+            f"sharp intakes, 'are you serious?!' disbelief at sudden developments, unbelievable numbers, scandals.\n"
+            f"- COMPLIANCE: at least 70% of beats clearly embody this shock; ZERO beats contradict it."
+        )
+    elif _emotion == "Curiosity":
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE (Curiosity — जिज्ञासा / पड़ताल):\n"
+            f"- DELIVERY: inquisitive, investigative, steady. Write every line to be SPOKEN curious — probing "
+            f"questions, peeling layers on investigations, tech/space mysteries, 'why this matters'.\n"
+            f"- COMPLIANCE: at least 70% of beats clearly embody this curiosity; ZERO beats contradict it."
+        )
+    elif _emotion == "Pride":
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE (Pride — गर्व / स्वाभिमान):\n"
+            f"- DELIVERY: confident, celebratory, inspiring. Write every line to be SPOKEN proud — chest-out "
+            f"celebration of national triumphs, space missions, championship wins; uplifting cadence.\n"
+            f"- COMPLIANCE: at least 70% of beats clearly embody this pride; ZERO beats contradict it (no cynicism)."
+        )
+    elif _emotion == "Fear":
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE (Fear — डर / चिंता):\n"
+            f"- DELIVERY: rapid, cautious, tense concern. Write every line to be SPOKEN afraid — urgent warnings "
+            f"about cyber scams, health warnings, financial threats; nervous checking, tight-throated caution.\n"
+            f"- COMPLIANCE: at least 70% of beats clearly embody this fear; ZERO beats contradict it."
+        )
+    elif _emotion == "Hope":
+        emotion_guidance = (
+            f"EMOTION DIRECTIVE (Hope — उम्मीद / राहत):\n"
+            f"- DELIVERY: warm, relaxed, comforting reassurance. Write every line to be SPOKEN hopeful — gentle "
+            f"relief at crises averted, rescues, good news; optimistic steadiness.\n"
+            f"- COMPLIANCE: at least 70% of beats clearly embody this hope; ZERO beats contradict it."
         )
     elif any(w in combined for w in ["viral", "high energy", "धमाकेदार"]):
-        tone_guidance = (
-            f"🔥 TONE DIRECTIVE ({tone}):\n"
+        emotion_guidance = (
+            f"🔥 EMOTION DIRECTIVE ({emotion}):\n"
             f"- High-voltage excitement! Deliver shock-value hooks, explosive energy, and dramatic pacing."
         )
     elif any(w in combined for w in ["culture", "heritage", "pride", "desi", "swag", "गौरव"]):
-        tone_guidance = (
-            f"🪔 TONE DIRECTIVE ({tone}):\n"
+        emotion_guidance = (
+            f"🪔 EMOTION DIRECTIVE ({emotion}):\n"
             f"- Celebrate timeless Indian heritage, deep cultural pride, and respectful desi swag with authentic idioms."
         )
     elif any(w in combined for w in ["argument", "बहस", "तकरार", "clash", "heated"]):
-        tone_guidance = (
-            f"⚔️ TONE DIRECTIVE ({tone}):\n"
+        emotion_guidance = (
+            f"⚔️ EMOTION DIRECTIVE ({emotion}):\n"
             f"- High-voltage heated argument & verbal clash! Characters passionately disagree, trade sharp witty counter-punches,\n"
             f"- Emotional friction and defensive comebacks grounded in realistic relationship stakes (colleagues, friends, husband-wife, father-son).\n"
             f"- Build up escalating tension and conclude with an unexpected reality check or punchline!"
         )
     else:
-        tone_guidance = f"🎙️ TONE DIRECTIVE ({tone}):\n- Embody the spirit of {tone} with authentic spoken Hindi."
+        emotion_guidance = f"🎙️ EMOTION DIRECTIVE ({emotion}):\n- Embody the spirit of {emotion} with authentic spoken Hindi."
 
     # Style Guidance
     style_lower = scene_style.lower()
@@ -1402,7 +1481,7 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
         )
 
     insta_story_guidance = (
-        "📱 REAL INSTAGRAM STORY / REEL VIBE & CADENCE:\n"
+        "📱 REAL INSTAGRAM STORY / REEL FEEL & CADENCE:\n"
         "- The dialogue MUST feel like a genuine, viral Instagram Story or Reel shot on a phone camera!\n"
         "- Spontaneous, snappy, highly conversational spoken Hindi/Hinglish.\n"
         "- Natural conversational openers & reactions: 'अरे यार सुनो!', 'सच में?', 'तू मज़ाक कर रहा है क्या?', 'भाई ये क्या सीन है?!', 'अरे यार दिमाग खराब हो गया!'\n"
@@ -1430,7 +1509,7 @@ def get_creative_guidelines(scene_style: str, character_count: int, tone: str, a
         "- Every turn must advance the story forward: direct reactions, sharp dialogue banter, prop interaction, and logical punchy resolution."
     )
 
-    return f"{angle_guidance}\n\n{tone_guidance}\n\n{style_guidance}\n\n{insta_story_guidance}\n\n{diversity_guidance}\n\n{no_commenting_rule}\n\n{single_video_flow_rule}"
+    return f"{angle_guidance}\n\n{emotion_guidance}\n\n{style_guidance}\n\n{insta_story_guidance}\n\n{diversity_guidance}\n\n{no_commenting_rule}\n\n{single_video_flow_rule}"
 
 
 def run_validation_checks_fail_fast(check_specs, stage_prefix, val_num, emit=None):
@@ -1616,7 +1695,7 @@ class DialogueNarrationAgent(BaseAgent):
         news_input: str,
         hook: str,
         cta: str,
-        tone: str,
+        emotion: str,
         duration_sec: int,
         verification: NewsVerificationReport,
         correction_feedback: Optional[str] = None,
@@ -1644,7 +1723,7 @@ class DialogueNarrationAgent(BaseAgent):
             min_words=budget["min_words"],
             sub_directive=sub_directive,
             guidance=guidance,
-            tone=tone,
+            emotion=emotion,
             cta=cta,
             correction_note=correction_note,
             facts_list=facts_list,
@@ -1674,7 +1753,7 @@ class DialogueNarrationAgent(BaseAgent):
         self,
         news_input: str,
         items: List[Dict[str, str]],
-        tone: str,
+        emotion: str,
         duration_sec: int,
         verification: NewsVerificationReport,
         character_count: int = 1,
@@ -1694,7 +1773,7 @@ class DialogueNarrationAgent(BaseAgent):
         attempt_history: Optional[List[str]] = None,
         on_substep=None,
     ) -> List[ScriptDialogue]:
-        """Craft spoken Hindi dialogues for all items scene-by-scene respecting character count, style, tone, and angle.
+        """Craft spoken Hindi dialogues for all items scene-by-scene respecting character count, style, emotion, and angle.
 
         Linear retry flow with three-level numbering:
         - 3.1, 3.3, 3.5... = generation steps (odd)
@@ -1724,10 +1803,10 @@ class DialogueNarrationAgent(BaseAgent):
             ]
         else:
             personas = get_character_personas(
-                scene_style, character_count, tone, preferred_angle,
+                scene_style, character_count, emotion, preferred_angle,
                 topic_or_script=news_input, sample_story=sample_story
             )
-        creative_rules = get_creative_guidelines(scene_style, character_count, tone, preferred_angle)
+        creative_rules = get_creative_guidelines(scene_style, character_count, emotion, preferred_angle)
 
         # Defensive: never enter generation with fewer personas than configured.
         if len(personas) < character_count:
@@ -1738,7 +1817,7 @@ class DialogueNarrationAgent(BaseAgent):
                 if _t:
                     _have_first.add(_t[0])
             for _gp in get_character_personas(
-                scene_style, character_count + _need, tone, preferred_angle,
+                scene_style, character_count + _need, emotion, preferred_angle,
                 topic_or_script=news_input, sample_story=sample_story,
             ):
                 _gt = re.findall(r"[\w]+", _gp.lower(), flags=re.UNICODE)
@@ -1778,8 +1857,8 @@ class DialogueNarrationAgent(BaseAgent):
                 f"\n📌 SAMPLE STORY \u2014 DIRECTOR'S GUIDE (highest creative precedence):\n"
                 f"\"{sample_story.strip()}\"\n"
                 f"Follow this sample as the director's guide: its characters, relationships, "
-                f"direction, and tone lead the script. If the sample conflicts with the creative "
-                f"settings above (vibe, character count, scene style), the SAMPLE WINS.\n"
+                f"direction, and emotion lead the script. If the sample conflicts with the creative "
+                f"settings above (emotion, character count, scene style), the SAMPLE WINS.\n"
                 f"Hard boundary: verified news facts always outrank the sample \u2014 the NEWS "
                 f"wins on facts, the sample wins on creative choices.\n"
             )
@@ -1839,7 +1918,7 @@ class DialogueNarrationAgent(BaseAgent):
 
         # --- Role priming: funny screenwriter identity when comedy is requested ---
         _eff_angle = (items[0].get("angle") if items else "") or preferred_angle or ""
-        role_identity = get_role_identity(scene_style, tone, _eff_angle)
+        role_identity = get_role_identity(scene_style, emotion, _eff_angle)
 
         sub_directive = f"\nChief Editor Directive & Dialogue Word Limits:\n{sub_instruction}\n" if sub_instruction else ""
 
@@ -1950,7 +2029,7 @@ class DialogueNarrationAgent(BaseAgent):
             scene_templates.append(
                 f"BEAT {s_idx}:\n"
                 f"Camera Focus & Action: [{act}]\n"
-                f"Audio/SFX: [Background music bed fitting the tone + ambient scene SFX + laughter where the beat is funny]\n"
+                f"Audio/SFX: [Background music bed fitting the emotion + ambient scene SFX + laughter where the beat is funny]\n"
                 f"Text Overlay (Optional): [Short punchy ENGLISH popup text only if it adds punch]\n"
                 f"{spk}: \"[{dial}]\""
             )
@@ -1961,7 +2040,7 @@ class DialogueNarrationAgent(BaseAgent):
         sample_scenes = (
             "[Format Requirement: All scene descriptions in English, Dialogues strictly in Hindi]\n\n"
             "SCENE DETAIL:\n"
-            f"\u26ac [{setting_location_text} \u2014 vivid English description of the location, vibe and energy]\n\n"
+            f"\u26ac [{setting_location_text} \u2014 vivid English description of the location, emotion and energy]\n\n"
             "CHARACTERS & CLOTHING:\n"
             f"{_cast_lines}\n\n"
             + "\n\n".join(scene_templates)
@@ -2020,7 +2099,7 @@ class DialogueNarrationAgent(BaseAgent):
             items_desc=items_desc,
             num_scripts=len(items),
             sample_scenes=sample_scenes,
-            tone=tone,
+            emotion=emotion,
         )
 
         # --- RETRY PATH: dedicated refine prompt (not the generation prompt) ---
@@ -2049,7 +2128,7 @@ class DialogueNarrationAgent(BaseAgent):
                 character_count=character_count,
                 speaker_names_list="\n".join(f"- {n}" for n in speaker_names),
                 angle=retry_angle,
-                tone=tone,
+                emotion=emotion,
                 hook_idea=retry_hook,
                 dialogue_type_name=scene_style or "Dialogue",
                 dialogue_type_directive=dialogue_type_directive,
@@ -2064,7 +2143,7 @@ class DialogueNarrationAgent(BaseAgent):
         _gen_name_early = "Dialogue generation" if _retry_round == 0 else f"Retry generation {_retry_round}"
         self._emit_substep(on_substep, f"3.{_gen_num_early}", _gen_name_early, "start",
                            detail=f"Writing dialogue (attempt {_retry_round + 1})",
-                           input=f"News: {(news_input or '')[:150]}\nVibe: {tone} | Style: {scene_style}")
+                           input=f"News: {(news_input or '')[:150]}\nEmotion: {emotion} | Style: {scene_style}")
         try:
             raw_output = self.execute(prompt, engine_mode=engine_mode)
         except ModelGenerationError:
@@ -2292,7 +2371,7 @@ class DialogueNarrationAgent(BaseAgent):
         _gen_name = "Dialogue generation" if _retry_round == 0 else f"Retry generation {_retry_round}"
         _gen_input = (
             f"News: {(news_input or '')[:150]}\n"
-            f"Vibe: {tone} | Angle: {preferred_angle or '—'}\n"
+            f"Emotion: {emotion} | Angle: {preferred_angle or '—'}\n"
             f"Style: {scene_style} | Characters: {character_count} | Duration: {duration_sec}s\n"
             f"Speakers: {', '.join(_speaker_names) if _speaker_names else 'N/A'}"
         )
@@ -2321,11 +2400,11 @@ class DialogueNarrationAgent(BaseAgent):
 
         # === STAGE 3.x VALIDATION STEP (3.2, 3.4, 3.6... even numbers) ===
         # FAIL-FAST, ordered by failure likelihood (most failure-prone first):
-        #   3.x.1 Structure -> 3.x.2 News coverage -> 3.x.3 Tone -> 3.x.4 Language
+        #   3.x.1 Structure -> 3.x.2 News coverage -> 3.x.3 Emotion -> 3.x.4 Language
         # The first failure stops the remaining checks: they are recorded as
         # "Skipped (<failed check> failed)" -- never executed -- and the
         # single retry fixes only the first failure. Re-validation then runs
-        # all checks fresh. This saves time and model calls (news/tone use
+        # all checks fresh. This saves time and model calls (news/emotion use
         # the AI judge). One combined retry after the first failure, not one
         # retry per validation type.
         _val_num = 2 * _retry_round + 2
@@ -2398,29 +2477,29 @@ class DialogueNarrationAgent(BaseAgent):
             return {"problems": _problems, "pass_output": "Passed - attire specific", "feedback": _fb}
 
         def _check_sfx():
-            # Code-enforced: SFX must match the required tone.
+            # Code-enforced: SFX must match the required emotion.
             _problems = []
             if raw_output and raw_output.strip():
                 for _idx, _nar in enumerate(narrations):
                     _sl = getattr(_nar, "scene_lines", None) or []
-                    _sfx_iss = validate_sfx_tone_match(_sl, tone)
+                    _sfx_iss = validate_sfx_emotion_match(_sl, emotion)
                     if _sfx_iss:
                         _problems.append(f"Script {_idx + 1}: " + "; ".join(_sfx_iss))
             _fb = ""
             if _problems:
                 _fb = (
-                    "SFX FIX (HIGHEST PRIORITY — sound effects clash with the required tone):\n"
+                    "SFX FIX (HIGHEST PRIORITY — sound effects clash with the required emotion):\n"
                     + "\n".join(f"- {p}" for p in _problems)
-                    + f"\nRewrite ONLY the Audio/SFX lines of the flagged beats so the sound matches the '{tone}' tone "
+                    + f"\nRewrite ONLY the Audio/SFX lines of the flagged beats so the sound matches the '{emotion}' emotion "
                       "(serious/sad story: somber score and natural ambience — NO comedic sounds, NO laughter). "
                       "Keep every line of dialogue EXACTLY as-is."
                 )
-            return {"problems": _problems, "pass_output": "Passed - SFX matches tone", "feedback": _fb}
+            return {"problems": _problems, "pass_output": "Passed - SFX matches emotion", "feedback": _fb}
 
         def _check_quality():
             # ONE AI validator call per script: ai_judge_script_quality (wrapping
-            # ai_judge_news_coverage and ai_judge_tone_compliance) judges
-            # tone (ENFORCED) + news coverage (ADVISORY) together in a single
+            # ai_judge_news_coverage and ai_judge_emotion_compliance) judges
+            # emotion (ENFORCED) + news coverage (ADVISORY) together in a single
             # model call. Tone failure fails this check, triggers fail-fast
             # and feeds retry feedback; the news verdict is surfaced in the
             # output but never blocks, never retries, never feeds feedback.
@@ -2432,37 +2511,37 @@ class DialogueNarrationAgent(BaseAgent):
                     _it = items[_idx] if _idx < len(items) else {}
                     _ith = (_it.get("hook") if isinstance(_it, dict) else "") or ""
                     _hook = clean_hook_for_dialogue(_ith)
-                    _t_ok, _t_issue, _n_ok, _n_reason = ai_judge_script_quality(
-                        self, _sl, news_input, _hook, tone, preferred_angle,
+                    _e_ok, _t_issue, _n_ok, _n_reason = ai_judge_script_quality(
+                        self, _sl, news_input, _hook, emotion, preferred_angle,
                         engine_mode=engine_mode,
                     )
                     _judge_notes.append(
-                        f"Script {_idx + 1}: tone={'PASS' if _t_ok else 'FAIL'}; "
+                        f"Script {_idx + 1}: emotion={'PASS' if _e_ok else 'FAIL'}; "
                         f"news={'PASS' if _n_ok else 'advisory note'}"
                     )
-                    if not _t_ok:
+                    if not _e_ok:
                         _problems.append(f"Script {_idx + 1}: {_t_issue}")
                     if not _n_ok:
                         _judge_notes.append(
                             f"Script {_idx + 1} news (advisory, not blocking): {_n_reason}"
                         )
-            _pass_output = "Passed - tone maintained"
+            _pass_output = "Passed - emotion maintained"
             if _judge_notes:
                 _pass_output += ". " + " | ".join(_judge_notes)
             _fb = ""
             if _problems:
                 _fb = (
-                    "TONE CORRECTION REQUIRED:\n"
+                    "EMOTION CORRECTION REQUIRED:\n"
                     + "\n".join(f"- {p}" for p in _problems)
-                    + f"\n\nThe required tone is '{tone}'. "
-                      f"At least 70% of beats must clearly embody this tone. "
+                    + f"\n\nThe required emotion is '{emotion}'. "
+                      f"At least 70% of beats must clearly embody this emotion. "
                       "\nIMPORTANT: Do NOT write a new script from scratch. Take the previous draft and "
                       "UPDATE ONLY the beats that failed. Keep what works, fix what doesn't."
                 )
             return {"problems": _problems, "pass_output": _pass_output, "feedback": _fb}
 
         # Fail-fast spec list: ORDER IS THE CONTRACT -- Structure, Tone+news
-        # (one AI validator call: tone enforced, news advisory), Language,
+        # (one AI validator call: emotion enforced, news advisory), Language,
         # Clothing, SFX (most failure-prone first).
         # The helper stops at the first failure; later checks are recorded as
         # skipped, never executed. There is no separate final gate: when all
@@ -2473,15 +2552,15 @@ class DialogueNarrationAgent(BaseAgent):
         _check_specs = [
             {"sub": "1", "name": "Structure check", "validator": "code validator", "run": _check_structure,
              "input": f"Dialogue type: {scene_style} | Speakers: {', '.join(_speaker_names) if _speaker_names else 'N/A'}"},
-            {"sub": "2", "name": "Tone + news check", "validator": "AI validator", "run": _check_quality,
-             "input": f"Required vibe: {tone} | Angle: {preferred_angle or '—'} — ONE AI call judges tone (enforced, 70% of beats) + news coverage (advisory)",
-             "start_detail": f"Required vibe: {tone}"},
+            {"sub": "2", "name": "Emotion + news check", "validator": "AI validator", "run": _check_quality,
+             "input": f"Required emotion: {emotion} | Angle: {preferred_angle or '—'} — ONE AI call judges emotion (enforced, 70% of beats) + news coverage (advisory)",
+             "start_detail": f"Required emotion: {emotion}"},
             {"sub": "3", "name": "Language check", "validator": "code validator", "run": _check_language,
              "input": "Scanned dialogue for formal/bureaucratic Hindi (common-person Hindi required)"},
             {"sub": "4", "name": "Clothing check", "validator": "code validator", "run": _check_clothing,
              "input": "Character attire must be specific, visual, job/news-appropriate (no generic clothing)"},
             {"sub": "5", "name": "SFX check", "validator": "code validator", "run": _check_sfx,
-             "input": f"SFX must match the required tone ({tone})"},
+             "input": f"SFX must match the required emotion ({emotion})"},
         ]
         _sub_checks, _retry_feedback_parts = run_validation_checks_fail_fast(
             _check_specs,
@@ -2519,7 +2598,7 @@ class DialogueNarrationAgent(BaseAgent):
                 return self.write_dialogues_batch(
                     news_input=news_input,
                     items=items,
-                    tone=tone,
+                    emotion=emotion,
                     duration_sec=duration_sec,
                     verification=verification,
                     character_count=character_count,
@@ -2552,10 +2631,10 @@ class DialogueNarrationAgent(BaseAgent):
                 partial_output=raw_output or "",
             )
 
-        # All 5 numbered checks passed above (structure, tone+news, language,
+        # All 5 numbered checks passed above (structure, emotion+news, language,
         # clothing, SFX) — the narrations are fully validated. There
-        # is no separate final gate: it used to re-run structure/language/tone
-        # (including a duplicate paid tone-judge AI call per script) after the
+        # is no separate final gate: it used to re-run structure/language/emotion
+        # (including a duplicate paid emotion-judge AI call per script) after the
         # numbered checks had already passed. Fail-loud behavior is preserved:
         # if the retry budget is exhausted, the raise above fires with evidence.
 

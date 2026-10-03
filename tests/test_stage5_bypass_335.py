@@ -75,7 +75,7 @@ def _base_state(**overrides):
         }],
         "news_input": "Metro news",
         "target_seconds": 30,
-        "active_tone": "Joke",
+        "active_emotion": "Joke",
         "active_angle": "Funny & Relatable",
         "scene_style": "Dialogue",
         "character_count": 2,

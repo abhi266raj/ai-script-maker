@@ -3,6 +3,7 @@
 import re
 from typing import List, Optional, Dict, Any, Tuple
 from agents.base import BaseAgent
+from core.constants import ALL_EMOTIONS, EMOTION_CURIOSITY
 from core.models import SceneItem
 from core.metrics import get_duration_budget
 from core.dual_engine import ModelGenerationError
@@ -87,7 +88,7 @@ class SceneVisualsDirectorAgent(BaseAgent):
         key_locations: Optional[List[str]] = None,
         core_conflict_or_irony: str = "",
         tangible_actions: Optional[List[str]] = None,
-        tone: str = "Funny & Relatable",
+        emotion: str = EMOTION_CURIOSITY,
         angle: str = "Funny & Relatable",
         scene_style: str = "Dialogue",
         personas: Optional[List[str]] = None,
@@ -102,6 +103,17 @@ class SceneVisualsDirectorAgent(BaseAgent):
         Scene count is completely dynamic (1 to 5 scenes) driven by content complexity,
         story structure, upstream dialogue beats, and generative video clip feasibility.
         """
+        # #354: every beat carries the reel's frozen emotion as its delivery
+        # direction. Fail loudly on a non-palette value — stamping a vibe or
+        # invented string here would corrupt the screenplay parentheticals.
+        _emotion = (emotion or "").strip()
+        if _emotion not in ALL_EMOTIONS:
+            raise ModelGenerationError(
+                f"Stage 5 failed: emotion {emotion!r} is not a frozen emotion. "
+                f"Valid emotions: {ALL_EMOTIONS}. Refusing to stamp a non-emotion "
+                "value on SceneItem.emotion."
+            )
+
         # Dynamic scene allocation:
         # 1. User/caller explicit preference (1..5)
         # 2. Upstream dialogue scene count (scene_lines)
@@ -265,6 +277,9 @@ class SceneVisualsDirectorAgent(BaseAgent):
                             # On-screen popup text is ALWAYS English — never fall back to Hindi dialogue.
                             on_screen_text=text,
                             audio_sfx=sfx,
+                            # #354: the reel's frozen emotion — delivery direction
+                            # for screenplay parentheticals + teleprompter.
+                            emotion=_emotion,
                         )
                     )
 

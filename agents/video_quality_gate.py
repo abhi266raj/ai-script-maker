@@ -105,7 +105,7 @@ class VideoQualityGateAgent(BaseAgent):
         self,
         package_summary: str,
         scene_style: str,
-        tone: str,
+        emotion: str,
         angle: str,
         characters: List[str],
         target_seconds: int,
@@ -120,7 +120,7 @@ class VideoQualityGateAgent(BaseAgent):
         prompt = render_prompt(
             VALIDATE_INTEGRATION_PROMPT,
             scene_style=scene_style,
-            tone=tone,
+            emotion=emotion,
             angle=angle or "High-retention viral perspective",
             characters=", ".join(characters) if characters else "(none finalized)",
             target_seconds=target_seconds,
@@ -132,10 +132,10 @@ class VideoQualityGateAgent(BaseAgent):
         return self.parse_validation_issues(raw_output, script_id=script_id)
 
     # Deterministic check → stage mapping. The model's stage attribution is
-    # unreliable (e.g. it says "Stage 2" for dialogue tone issues), so we
+    # unreliable (e.g. it says "Stage 2" for dialogue emotion issues), so we
     # override it based on the check type. Detection is always Stage 6.
     CHECK_TO_STAGE = {
-        "tone-70": "Stage 3",
+        "emotion-70": "Stage 3",
         "style-fidelity": "Stage 3",
         "news-intelligibility": "Stage 3",
         "dialogue-scene-connection": "Stage 4",

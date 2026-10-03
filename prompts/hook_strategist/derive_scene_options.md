@@ -13,7 +13,7 @@ You must propose TWO DISTINCT scene sets (SET A and SET B). The user will pick O
 - If the dialogue implies only one real location, you may still split coverage (e.g. wide vs close-up zone) but scenes must be visibly distinct framings of the dialogue's world.
 
 # BE VERY IMAGINATIVE
-- Design visually striking, filmable locations with character — specific textures, memorable background details, dynamic lighting moods that serve the tone.
+- Design visually striking, filmable locations with character — specific textures, memorable background details, dynamic lighting moods that serve the emotion.
 - Base your imagination on the dialogue's story: what the characters DO, where their actions naturally happen, what the scene story demands.
 - SET A and SET B must take DIFFERENT creative approaches to the same dialogue. For example:
   * SET A: intimate, close-up, interior-focused interpretation
@@ -33,7 +33,7 @@ You must propose TWO DISTINCT scene sets (SET A and SET B). The user will pick O
 
 # INPUT
 - News Story: {news_topic}
-- Tone: {tone} | Angle: {angle}
+- Emotion: {emotion} | Angle: {angle}
 - Scene Style: {scene_style}
 - Characters:
 {characters_text}
@@ -55,7 +55,7 @@ SET A:
 SCENE 1:
 Location: [Specific location / setting name extracted from the dialogue beats]
 Atmosphere: [Visual environment and background details seen in the beats]
-Lighting: [Lighting and mood fitting the tone]
+Lighting: [Lighting and mood fitting the emotion]
 Props: [Key physical props visible in these beats, comma-separated]
 Grounded in beats: [Beat numbers, e.g. 1, 2]
 

@@ -1983,54 +1983,64 @@ def _render_upload_popover_trigger(story_id: str) -> None:
 _FM_WARMUP_TOAST_ANNOUNCED_KEY = "fm_warmup_toast_announced_for"
 
 # #298: warm-up runs the user actually started in THIS session (via the
-# "Cold start" button), keyed by the run's `started_at`. The mailbox file
+# warm-up button), keyed by the run's `started_at`. The mailbox file
 # persists a terminal state forever, so without this a page refresh
 # (fresh session state) would re-fire the toast for a run from a previous
 # session. The toast/result only ever announces session-initiated runs.
 _FM_WARMUP_SESSION_RUNS_KEY = "fm_warmup_session_runs"
 
+# #365: the warm-up control is icon-only (HIG §2 — the header is icon-only,
+# so no text label; the help tag carries the description).
+_FM_WARMUP_ICON = ":material/whatshot:"
+_FM_WARMUP_HELP = "Warm up the on-device Apple FM model"
+
 
 def _fm_warmup_button_props(state: dict) -> tuple:
-    """Pure helper: (label, disabled) for the warm-up button given the
+    """Pure helper: (icon, disabled) for the warm-up button given the
     mailbox state. Kept pure so the HIG loading/disabled contract is
-    unit-testable without a Streamlit runtime."""
+    unit-testable without a Streamlit runtime.
+
+    #365: the icon is stable across states (HIG §3 — the starting control
+    owns its progress with a spinner, never a label/icon swap); only the
+    disabled flag changes."""
     if (state or {}).get("state") == "warming":
-        return "Warming up…", True
-    return "Cold start", False
+        return _FM_WARMUP_ICON, True
+    return _FM_WARMUP_ICON, False
 
 
 def _render_fm_warmup_button() -> None:
-    """Manual-only warm-up control (issue #37): labeled "Cold start",
-    sits next to the Studio/Library tab bar. Tapping it kicks off the #4 FM
-    probe in a daemon thread so the first real generation skips the
-    cold-start delay. Nothing automatic: warm-up runs ONLY on tap.
+    """Manual-only warm-up control (issue #37): icon-only (#365), sits next
+    to the Studio/Library tab bar. Tapping it kicks off the #4 FM probe in
+    a daemon thread so the first real generation skips the cold-start
+    delay. Nothing automatic: warm-up runs ONLY on tap.
 
-    HIG: the button owns its progress — while warming it paints
-    "Warming up…" and stays disabled (no second tap). The render
-    auto-polls until the worker writes its terminal state; the daemon
-    worker cannot trigger st.rerun() itself. Same pattern as the library
-    refresh flow — the loop always terminates because the worker always
-    writes a terminal state within 60s (#122) and stale states are
+    HIG: the button owns its progress — while warming it keeps its stable
+    icon, shows a spinner next to it, and stays disabled (no second tap).
+    The render auto-polls until the worker writes its terminal state; the
+    daemon worker cannot trigger st.rerun() itself. Same pattern as the
+    library refresh flow — the loop always terminates because the worker
+    always writes a terminal state within 60s (#122) and stale states are
     recovered.
     """
     _state = lib.read_fm_warmup_state()
-    _label, _disabled = _fm_warmup_button_props(_state)
+    _icon, _disabled = _fm_warmup_button_props(_state)
     if _disabled:
-        st.button(_label, key="fm_warmup_btn", disabled=True,
-                  help="Warm up the on-device Apple FM model",
+        st.button("", icon=_icon, key="fm_warmup_btn", disabled=True,
+                  help=_FM_WARMUP_HELP,
                   use_container_width=True)
         # Manual warm-up: the initiating control owns its loading state.
+        # Stable icon + spinner while the probe is in flight (#365, HIG §3).
         # Auto-poll while the probe is in flight: the daemon worker
         # cannot trigger st.rerun() itself. Same pattern as the library
         # refresh flow — the loop always terminates because the worker
         # always writes a terminal state within 60s (#122) and stale
         # states are recovered.
-        _time.sleep(1.0)
+        with st.spinner(""):
+            _time.sleep(1.0)
         st.rerun()
         return
-    if st.button(_label, key="fm_warmup_btn", disabled=False,
-                 help="Warm up the Apple FM model to skip the first "
-                      "generation's cold-start delay",
+    if st.button("", icon=_icon, key="fm_warmup_btn", disabled=False,
+                 help=_FM_WARMUP_HELP,
                  use_container_width=True):
         _ok, _reason = lib.start_fm_warmup()
         if not _ok:
@@ -2438,7 +2448,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
         raise ValueError("Cannot save: the final-stage screenplay text is empty.")
     hashtag = st.session_state.get("active_hashtag", "") or ""
     hashtags = [hashtag] if hashtag else []
-    tone = st.session_state.get("chosen_tone", "") or ""
+    emotion = st.session_state.get("chosen_emotion", "") or ""  # #354: frozen emotion
     topic = st.session_state.get("run_topic", "") or ""
     headline = st.session_state.get("selected_headline_title", "") or ""
     title = _build_autosave_title(script)
@@ -2449,7 +2459,7 @@ def _save_current_story(batch_result, script, pro_screenplay: str) -> str:
         hashtags = _derive_local_hashtags(title, topic, headline)
     return lib.save_story(
         title=title,
-        tone=tone,
+        tone=emotion,  # library schema key stays 'tone'; the value is the frozen emotion
         hashtags=hashtags,
         dialogue_md="",
         script_md=pro_screenplay.strip(),
@@ -3868,7 +3878,7 @@ def _render_fine_tune_section(story_id: str, meta: dict, script_md: str,
                 instruction=_instruction,
                 story_context="\n".join(_ctx_parts),
                 history=_history,
-                tone=(meta.get("tone") or "").strip(),
+                emotion=(meta.get("tone") or "").strip(),  # schema key stays; value is the frozen emotion
                 # #210: the toolbar's selected engine — never the default.
                 # None (AI disabled) raises loudly inside fine_tune_script.
                 engine_mode=_library_ai_engine(),

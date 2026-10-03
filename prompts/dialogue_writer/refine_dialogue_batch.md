@@ -6,7 +6,7 @@ You are refining a finalized Hindi reel dialogue draft based on a user's custom 
 {speaker_names_list}
 - EVERY listed character MUST speak at least one beat. No narrator, no crowd, no extra voices.
 - Angle (keep the same premise — every beat must live inside this situation): {angle}
-- Tone (NON-NEGOTIABLE — at least 70% of beats must embody it, ZERO beats may contradict it): {tone}
+- Emotion (NON-NEGOTIABLE — at least 70% of beats must embody it, ZERO beats may contradict it): {emotion} — write every line to be SPOKEN with this feeling
 - Hook idea (meaning only — NEVER quote it verbatim): {hook_idea}
 - Dialogue type (MANDATORY structure — every beat must obey it, not just keep its name):
 {dialogue_type_directive}
@@ -51,6 +51,6 @@ RAJESH: "<pure Hindi spoken line in Devanagari>"
 
 (Speaker label is the bare character name in CAPS followed by the Hindi line in double quotes.)
 
-REFINE REMINDERS: surgical refinement only — keep every locked decision above. TONE COMPLIANCE is non-negotiable: at least 70% of beats (round up) must clearly embody the required tone, and ZERO beats may contradict it (funny tone → every funny beat carries a REAL joke with setup + punchline, plus laughter where humor lands; somber tone → no jokes, no laughter anywhere). SELF-CHECK each beat before emitting.
+REFINE REMINDERS: surgical refinement only — keep every locked decision above. EMOTION COMPLIANCE is non-negotiable: at least 70% of beats (round up) must clearly embody the required emotion, and ZERO beats may contradict it (Joke emotion → every funny beat carries a REAL joke with setup + punchline, plus laughter where humor lands; Sorrow emotion → no jokes, no laughter anywhere). SELF-CHECK each beat before emitting.
 
 OUTPUT BANS (a violation fails the output): never print word counts, timings, profiles, emojis, bracketed instructions, or metadata. Scene descriptions, camera, action, SFX and overlays are ENGLISH ONLY. ONLY the quoted speaker lines are Hindi (Devanagari).
