@@ -72,7 +72,7 @@ When the agent's GitHub access is read-only (e.g. a restricted VM), do not hand 
 - PR: `https://github.com/<owner>/<repo>/compare/develop...<branch>?title=<enc-title>&body=<enc-body>`
 - Issue: `https://github.com/<owner>/<repo>/issues/new?title=<enc-title>&body=<enc-body>&labels=<enc-labels>`
 
-**AI attribution:** every GitHub action (PR, issue, comment) must name the AI that performed it — e.g. `(Muse)`, `(Antigravity)`. Pass `--ai "<name>"` (or export `AI_NAME="<name>"`) to `./open_pr`; the script appends `_Raised by <name>_` to the PR body. For issues and comments, append `_Raised by <name>_` to the body yourself.
+**AI attribution:** every GitHub action (PR, issue, comment) must name the AI that performed it — e.g. `(Muse)`, `(Antigravity)`. Pass `--ai "<name>"` (or export `AI_NAME="<name>"`) to `./open_pr` and `./resolve_comment`; the scripts append `_Raised by <name>_` to the PR body / thread reply. For issues and other comments, append `_Raised by <name>_` to the body yourself.
 
 ### 4. Address Review Comments & Resolve via Script
 When review comments are submitted on a PR:

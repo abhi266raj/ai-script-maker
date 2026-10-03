@@ -1,18 +1,32 @@
 #!/usr/bin/env bash
-# Usage: ./resolve_comment <pr-number> [reply-message]
-#        ./resolve_comment <thread-id>
+# Usage: ./resolve_comment <pr-number> [reply-message] [--ai "<name>"]
+#        ./resolve_comment <thread-id> [--ai "<name>"]
 # Resolves GitHub PR review comment threads via GitHub CLI / GraphQL.
+# AI attribution: --ai "<name>" (or AI_NAME env) appends "_Raised by <name>_" to the reply message.
 set -euo pipefail
 
 command -v gh >/dev/null 2>&1 || { echo "ERROR: gh CLI not installed." >&2; exit 1; }
 
+AI_NAME="${AI_NAME:-}"
+ARGS=()
+while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+        -a|--ai) AI_NAME="$2"; shift 2 ;;
+        *) ARGS+=("$1"); shift ;;
+    esac
+done
+set -- "${ARGS[@]}"
+
 if [ "$#" -lt 1 ]; then
-    echo "ERROR: Missing argument. Usage: $0 <pr-number> [reply-message] OR $0 <thread-id>" >&2
+    echo "ERROR: Missing argument. Usage: $0 <pr-number> [reply-message] [--ai \"<name>\"] OR $0 <thread-id> [--ai \"<name>\"]" >&2
     exit 1
 fi
 
 TARGET="$1"
 REPLY_MSG="${2:-}"
+if [ -n "$REPLY_MSG" ] && [ -n "$AI_NAME" ]; then
+    REPLY_MSG="${REPLY_MSG}"$'\n\n'"_Raised by ${AI_NAME}_"
+fi
 
 # Direct resolution by Thread ID
 if [[ "$TARGET" =~ ^PRRT_ ]]; then
