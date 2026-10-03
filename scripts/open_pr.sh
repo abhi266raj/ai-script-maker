@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# Usage: ./open_pr -t "<title>" -b "<body>" [--ai "<name>"]
+# Usage: ./open_pr -t "<title>" [-b "<body>"] [--ai "<name>"]
 # Protected-branch guard, pushes dedicated branch, opens PR targeting develop.
+# -b omitted: body is auto-derived from branch commits (issue #359) — commit
+# subjects listed under "## Summary", plus "#N fixed" per unique (#N) found.
 # AI attribution: --ai "<name>" (or AI_NAME env) appends "_Raised by <name>_" to the PR body.
 set -euo pipefail
 
@@ -28,7 +30,29 @@ while [[ "$#" -gt 0 ]]; do
 done
 
 [ -n "$PR_TITLE" ] || { echo "ERROR: -t/--title is required." >&2; exit 1; }
-PR_BODY="${PR_BODY:-## Summary\nPR for $CURRENT_BRANCH}"
+
+if [ -z "$PR_BODY" ]; then
+    # Auto-derive the PR body from branch commit messages (issue #359).
+    git fetch origin develop --quiet 2>/dev/null || true
+    if ! git rev-parse --verify --quiet origin/develop >/dev/null; then
+        echo "ERROR: Cannot resolve origin/develop. Fetch it or pass -b with an explicit body." >&2
+        exit 1
+    fi
+    COMMITS="$(git log --format='- %s' origin/develop..HEAD)"
+    if [ -z "$COMMITS" ]; then
+        echo "ERROR: No commits in origin/develop..HEAD — nothing to derive a PR body from. Pass -b with an explicit body." >&2
+        exit 1
+    fi
+    ISSUE_IDS="$(printf '%s\n' "$COMMITS" | grep -oE '\(#[0-9]+\)' | grep -oE '[0-9]+' | sort -nu || true)"
+    if [ -z "$ISSUE_IDS" ]; then
+        echo "ERROR: No issue ID (#N) found in commit subjects. Include (#N) in a commit message or pass -b with an explicit body." >&2
+        exit 1
+    fi
+    PR_BODY="## Summary"$'\n'"${COMMITS}"
+    for ID in $ISSUE_IDS; do
+        PR_BODY="${PR_BODY}"$'\n\n'"#${ID} fixed"
+    done
+fi
 if [ -n "$AI_NAME" ]; then
     PR_BODY="${PR_BODY}"$'\n\n'"_Raised by ${AI_NAME}_"
 fi
