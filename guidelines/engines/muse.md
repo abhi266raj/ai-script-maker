@@ -1,20 +1,10 @@
-# Muse (Assistant) — Repo Operating Notes
+# Muse
 
-Instructions specific to **Muse, the Meta personal AI assistant**, when working on this repository.
+When Muse (or on-device model) works on this repo.
 
----
-
-## 🚦 When to Apply & What to Expect
-
-- **When to Apply:** Any task where this assistant works on this repo.
-- **What to Expect:** All `guidelines/workflows/` rules apply as-is; the notes below cover Muse-specific environment handling only.
-
----
-
-## 🛑 Muse-Specific Invariants
-
-1. **GitHub Token (repo-scoped):** This VM's default `gh` is read-only. Every launch for this repo, read the token from `~/.config/muse/repos/ai-script-maker/github_token` (mode 600, user-managed and rotated) and use it as `GH_TOKEN="$(cat ~/.config/muse/repos/ai-script-maker/github_token)"` for `gh` writes (open PR, create issue, comment, merge).
-2. **Never Expose the Token:** Never echo, print, or copy the token into chat replies, memory files, logs, or any other file.
-3. **Write Fallbacks:** If the token file is absent, use a session token pasted in chat; if none is available, produce prefilled links instead of shell commands — `https://github.com/<owner>/<repo>/compare/develop...<branch>?title=<enc>&body=<enc>` for PRs, `https://github.com/<owner>/<repo>/issues/new?title=<enc>&body=<enc>&labels=<enc>` for issues (URL-encoded).
-4. **Token-Lean Output:** Keep patches, summaries, and terminal output concise — no filler, no redundant explanations.
-5. **AI Attribution:** My AI name is `Muse`. Every GitHub action I perform (PR, issue, comment) must carry it — pass `--ai Muse` (or `AI_NAME=Muse`) to `./open_pr` and `./resolve_comment`; append `_Raised by Muse_` to issue and other comment bodies.
+1. **Diffs:** Small, targeted block edits. Keep signatures, docstrings, issue notes.
+2. **Environment:** Python 3.11, stdlib, macOS Apple Silicon. No network/cloud APIs during authoring.
+3. **Fail-loud:** Raise. No silent `None` or empty fallback.
+4. **Token:** Read `GH_TOKEN` from `~/.config/muse/repos/ai-script-maker/github_token` if default `gh` is read-only. Never expose token.
+5. **Write fallback:** If no token, use chat token or prefilled GitHub compare/issue URLs.
+6. **Attribution:** Pass `--ai Muse` (or `AI_NAME=Muse`) to `./open_pr` / `./resolve_comment`; append `_Raised by Muse_` to issues/comments.
