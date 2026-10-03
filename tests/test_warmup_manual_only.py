@@ -1,13 +1,13 @@
 """Manual-only local LLM warm-up (issue #37).
 
-"warming up should only happen on click of button and the idle button
-title is 'Cold start'. Nothing automatic."
+"warming up should only happen on click of button. Nothing automatic."
 
 - No automatic warm-up trigger exists anywhere: warm-up runs ONLY when
   the user taps the button.
-- The idle button label is exactly "Cold start".
-- HIG loading-state contract: while warming, the button paints
-  "Warming up…" and stays disabled (no second tap).
+- The button is icon-only (#365, HIG §2): the icon is stable across
+  states; the help tag carries the description.
+- HIG loading-state contract: while warming, the button keeps its stable
+  icon, shows a spinner next to it, and stays disabled (no second tap).
 
 library_ui needs streamlit (absent in this env), so UI contracts are
 asserted statically against the source.
@@ -76,33 +76,35 @@ def test_start_fm_warmup_only_runnable_explicitly(tmp_path, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Button title: exactly "Cold start"
+# Button: icon-only with a stable icon across states (#365)
 # ---------------------------------------------------------------------------
 
-def test_idle_button_label_is_cold_start():
+def test_idle_button_props_use_stable_icon():
     body = _button_props_src()
-    assert 'return "Cold start", False' in body, \
-        'idle warm-up button label must be exactly "Cold start"'
+    assert "return _FM_WARMUP_ICON, False" in body, \
+        "idle warm-up button must return the stable icon, not disabled"
 
 
 # ---------------------------------------------------------------------------
 # HIG: the button owns its loading state
 # ---------------------------------------------------------------------------
 
-def test_warming_button_label_and_disabled():
+def test_warming_button_props_stable_icon_and_disabled():
     body = _button_props_src()
-    assert 'return "Warming up…", True' in body, \
-        "while warming the button must show progress and be disabled"
+    assert "return _FM_WARMUP_ICON, True" in body, \
+        "while warming the button must keep its stable icon and be disabled"
 
 
 def test_warming_button_rendered_disabled():
-    """The disabled render path passes disabled=True with the warming
-    label (no second tap)."""
+    """The disabled render path passes disabled=True with the stable icon
+    (no second tap) and shows a spinner next to the button."""
     src = _ui_src()
     idx = src.index("def _render_fm_warmup_button()")
     end = src.index("def _render_fm_warmup_result()", idx)
     body = src[idx:end]
     assert 'key="fm_warmup_btn", disabled=True' in body
+    assert 'with st.spinner(""):' in body, \
+        "while warming the button must show a spinner (stable icon, HIG §3)"
 
 
 def test_double_start_refused(tmp_path, monkeypatch):

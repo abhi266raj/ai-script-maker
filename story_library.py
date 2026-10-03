@@ -3292,7 +3292,7 @@ def start_fm_warmup() -> Tuple[bool, str]:
     (e.g. a warm-up is already running).
 
     Manual-only: warm-up is NEVER triggered automatically. It runs solely
-    when the user taps the "Cold start" button.
+    when the user taps the warm-up button in the tab bar.
     """
     try:
         state = read_fm_warmup_state()
