@@ -1,41 +1,24 @@
-# AI Coding Agent Guidelines (Master Index)
+# Agent rules (code only; not app runtime)
 
-This repository index governs **how AI agents author, modify, test, and integrate code** in this codebase.  
-*(Note: These rules apply strictly to code generation and development workflows, NOT application runtime output).*
+Dispatch: re-read the matching file each task. Do not reuse prior-task assumptions.
 
----
+| Task | File |
+| :--- | :--- |
+| Feature | `guidelines/workflows/feature.md` |
+| Bug fix | `guidelines/workflows/bugfix.md` |
+| Git / PR | `guidelines/workflows/git.md` |
+| Test or script failure | `guidelines/workflows/failure.md` |
+| Release | `guidelines/workflows/release.md` |
+| Gemini | `guidelines/engines/gemini.md` |
+| Grok | `guidelines/engines/grok.md` |
+| Muse | `guidelines/engines/muse.md` |
 
-## 🚦 Task Dispatch Matrix (`guidelines/workflows/`)
-
-| Task Category | When to Apply | What to Expect | Rule File |
-| :--- | :--- | :--- | :--- |
-| **New Feature** | Writing new capabilities, UI controls, models, or prompt matrices | Spec/plan gate $\rightarrow$ branch $\rightarrow$ fail-loud code $\rightarrow$ unit tests | [`guidelines/workflows/feature.md`](./guidelines/workflows/feature.md) |
-| **Bug Fix** | Fixing crashes, defects, test failures, or UI regressions | Root cause analysis $\rightarrow$ fix branch $\rightarrow$ surgical minimal diff $\rightarrow$ test pass | [`guidelines/workflows/bugfix.md`](./guidelines/workflows/bugfix.md) |
-| **Git & PR Workflow** | Branch creation, commit gates, test execution, opening Pull Requests | Prohibition on direct push to main/develop $\rightarrow$ PR creation $\rightarrow$ user approval | [`guidelines/workflows/git.md`](./guidelines/workflows/git.md) |
-| **Test Failure & Bug** | Test runner failures, triage, script defects | Root cause triage $\rightarrow$ code fix OR GitHub bug report for test defects | [`guidelines/workflows/failure.md`](./guidelines/workflows/failure.md) |
-| **Release & Spec** | Version bumps, release audits, requirements lifecycle | Formal spec & plan $\rightarrow$ commit gate $\rightarrow$ post-release requirement audit | [`guidelines/workflows/release.md`](./guidelines/workflows/release.md) |
-
----
-
-## 🤖 Model-Specific Code Generation Rules (`guidelines/engines/`)
-
-| Model / Agent | When to Apply | Code Generation Standards | Rule File |
-| :--- | :--- | :--- | :--- |
-| **Gemini** | When Gemini writes/edits code in this repo | Python 3.11 type hints, surgical edits, Streamlit HIG compliance | [`guidelines/engines/gemini.md`](./guidelines/engines/gemini.md) |
-| **Grok** | When Grok writes/edits code in this repo | Idiomatic Python, no unapproved dependencies, contract fidelity | [`guidelines/engines/grok.md`](./guidelines/engines/grok.md) |
-| **Muse** | When the Muse assistant works on this repo | Assistant operating notes: repo-scoped GitHub token handling | [`guidelines/engines/muse.md`](./guidelines/engines/muse.md) |
-
----
-
-## 🛑 Universal Coding Invariants (All Tasks)
-
-1. **Protected Branches (Main & Develop):** Direct pushes to `main` and `develop` are **strictly blocked** by GitHub branch rules (`GH013`). Never attempt direct pushes. All changes MUST be submitted via a dedicated branch and Pull Request (`gh pr create` or `./open_pr`).
-2. **Standardized Scripts First:** Agents must run reusable workflow scripts in `scripts/` (see [`guidelines/workflows/git.md`](./guidelines/workflows/git.md)) instead of raw git commands.
-3. **User Confirmation Gate:** Never merge Pull Requests automatically. Present the PR link, diff summary, and test status for explicit user approval before calling `./merge_pr`.
-4. **Fail-Loud:** No silent fallbacks or invented defaults in generated code. Raise explicit errors with diagnostic details on invalid inputs.
-5. **Preserve Documentation:** Retain all docstrings, comments, and issue references (`#138`, `#217`, `#344`).
-6. **Clean Slate Protocol (Clear After Work, Re-Read When Needed):** Clear task-specific rules and assumptions upon completing each work unit. Never carry over stale task context. When starting any new task, re-identify the task type and re-read the required guideline file afresh.
-7. **Strict Unit Test Gate (Code-Only):** Run unit tests (`./runut`) **ONLY** when executable code (`.py`) is touched. Strictly **DO NOT** run unit tests when only instructions, guidelines, documentation, or Markdown files (`.md`) are modified.
-8. **Master Failure & Script Defect Policy (Agent Task Scripts & Tests):** When a script fails (whether an Agent Task Script in `scripts/` or a test verification script in `tests/`), diagnose the root cause. If the script itself contains a bug or is outdated, agents are **strictly forbidden** from silently hacking or altering the script unilaterally—agents **MUST raise a GitHub bug report** (`gh issue create`) documenting the script defect.
-9. **Token-Lean Conciseness (Avoid Redundancy):** Use as few words as possible across all guidelines, code comments, and terminal messages. Eliminate filler, verbosity, and redundant explanations. Keep instructions concise, punchy, and direct to conserve agent context.
-10. **Workflow Files Execute from Main:** `pull_request_target` workflows (e.g. `label-merged-prs.yml`) run the file as it exists on the default branch (`main`), not on `develop`. A workflow fix merged only into `develop` does **not** take effect until a release merges it to `main`.
+1. **Branches:** `main` and `develop` reject direct push (`GH013`). Branch + PR (`./open_pr` or `gh pr create`). Never push those branches.
+2. **Scripts:** Use `scripts/` shortcuts (`./sync_develop`, `./create_branch`, `./stash`, `./runut`, `./open_pr`, `./resolve_comment`, `./merge_pr`). See `guidelines/workflows/git.md`.
+3. **Merge:** Never merge unprompted. Show GitHub PR URL, diff, test status, and `./merge_pr <num>` (generated by `./open_pr`). Merge only after user says yes (`./merge_pr`).
+4. **Fail-loud:** No silent fallbacks or invented defaults. Raise with input, expected, stage.
+5. **Keep docs:** Docstrings, comments, issue refs (`#138`, `#217`, `#344`).
+6. **UT gate:** `./runut` only if `.py` changed. Skip for `.md`, guidelines, prompts, docs.
+7. **Script/test bugs:** If `scripts/` or `tests/` is wrong, do not patch it. `gh issue create`. See `guidelines/workflows/failure.md`.
+8. **Tokens:** Fewest words in guidelines, comments, and terminal text.
+9. **Workflows run from main:** `pull_request_target` workflows run from `main`, not `develop`. Fixes take effect after release merge to `main`.
