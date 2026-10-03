@@ -4780,8 +4780,28 @@ with col_output:
 
     if st.session_state.get("run_requested"):
         st.session_state.run_requested = False
-        st.session_state._last_pipeline_step = 1
-        st.session_state._stage_outputs = {}
+        # Failure recovery: resume from the failed/skipped stage instead of
+        # restarting the whole pipeline. The completed stages' outputs are
+        # kept — only a fresh run wipes them.
+        _resume_from = st.session_state.pop("_resume_from_stage", None)
+        _resume_state = st.session_state.pop("_resume_state", None)
+        _is_resume = (
+            isinstance(_resume_from, int)
+            and 2 <= _resume_from <= 6
+            and isinstance(_resume_state, dict)
+        )
+        if _is_resume:
+            st.session_state._last_pipeline_step = _resume_from
+        else:
+            if _resume_from is not None or _resume_state is not None:
+                # Fail loudly: a resume was requested but its payload is
+                # unusable — never silently downgrade to a fresh run.
+                raise RuntimeError(
+                    "Cannot resume the pipeline: invalid resume payload "
+                    f"(from_stage={_resume_from!r})."
+                )
+            st.session_state._last_pipeline_step = 1
+            st.session_state._stage_outputs = {}
         # Live substep tracker: shows every substep's running/waiting/
         # pass/fail status as events arrive from the pipeline.
         live_tracker_box = st.empty()
@@ -4796,23 +4816,33 @@ with col_output:
                 progress_bar = st.progress(0)
                 status_text = st.empty()
                 try:
-                    pipeline = reel_workflow.run_stream(
-                        news_input=st.session_state.run_topic,
-                        scenario=st.session_state.run_scenario,
-                        batch_size=st.session_state.chosen_batch_count,
-                        target_seconds=st.session_state.chosen_duration,
-                        engine_mode=st.session_state.chosen_engine_mode,
-                        max_retries=st.session_state.chosen_max_retries,
-                        preferred_angle=get_effective_angle(),
-                        character_count=st.session_state.chosen_character_count,
-                        scene_style=st.session_state.chosen_scene_style,
-                        preferred_emotion=st.session_state.chosen_emotion,
-                        sample_story=st.session_state.get("run_sample_story", ""),
-                        # #316: one-shot bypass — consumed below so it never sticks.
-                        bypass_verification=st.session_state.pop("bypass_stage1_verification", False),
-                        # #335: one-shot Stage 5 no-facts bypass — same pattern.
-                        bypass_stage5_no_facts=st.session_state.pop("bypass_stage5_no_facts", False),
-                    )
+                    if _is_resume:
+                        # Failure recovery: replay stages _resume_from..6 on
+                        # the failed stage's predecessor state. Same event
+                        # protocol as run_stream, so the loop below is shared.
+                        pipeline = reel_workflow.resume_stream(
+                            state=_resume_state,
+                            from_stage=_resume_from,
+                            engine_mode=st.session_state.chosen_engine_mode,
+                        )
+                    else:
+                        pipeline = reel_workflow.run_stream(
+                            news_input=st.session_state.run_topic,
+                            scenario=st.session_state.run_scenario,
+                            batch_size=st.session_state.chosen_batch_count,
+                            target_seconds=st.session_state.chosen_duration,
+                            engine_mode=st.session_state.chosen_engine_mode,
+                            max_retries=st.session_state.chosen_max_retries,
+                            preferred_angle=get_effective_angle(),
+                            character_count=st.session_state.chosen_character_count,
+                            scene_style=st.session_state.chosen_scene_style,
+                            preferred_emotion=st.session_state.chosen_emotion,
+                            sample_story=st.session_state.get("run_sample_story", ""),
+                            # #316: one-shot bypass — consumed below so it never sticks.
+                            bypass_verification=st.session_state.pop("bypass_stage1_verification", False),
+                            # #335: one-shot Stage 5 no-facts bypass — same pattern.
+                            bypass_stage5_no_facts=st.session_state.pop("bypass_stage5_no_facts", False),
+                        )
                     for step in pipeline:
                         # Live substep events: update tracker + heading, keep pumping.
                         if step.get("type") == "substep":
@@ -4965,15 +4995,151 @@ with col_output:
             _err_step_txt = f" during Step {failure['step']}" if failure.get("step") else ""
             st.caption(f"Error detail: `{failure['error_type']}`{_err_step_txt}")
         st.warning(failure["message"])
-        # #316: Stage 1 verification failure (all 5 news sources failed) —
-        # offer a one-shot bypass that continues without verification.
-        # Detected by step == 1 plus the Stage 1 failure signature.
+        # #316 / #335 signatures (hoisted: the unified action bar below needs
+        # them to avoid duplicating the contextual bypasses).
         _is_stage1_verify_fail = (
             _f_step == 1
             and ("stage 1 verification failed" in _f_msg
                  or "newsfetcherror" in _f_msg
                  or "live wire feed returned no articles" in _f_msg)
         )
+        _is_stage5_nofacts_fail = (
+            _f_step == 5
+            and "no verified facts available to ground video prompts" in _f_msg
+        )
+        # Unified failure actions — top of the view, every mode, every stage:
+        # Skip stage / Retry stage / Retry fresh / Stop. No failure may be a
+        # retry-only dead end (#350 gave step-wise a bypass; continuous had
+        # no recovery actions at all). Buttons hidden only when meaningless:
+        # Skip needs a next stage; Retry stage needs a known failed stage.
+        _err_step = failure.get("step") or st.session_state.get("stepwise_current_step", 1)
+        _is_stepwise = bool(st.session_state.get("stepwise_active"))
+        _can_skip = isinstance(_err_step, int) and 1 <= _err_step <= 5
+        _can_retry_stage = isinstance(_err_step, int) and 1 <= _err_step <= 6
+        # The #316 / #335 contextual bypasses below ARE the working skip /
+        # retry for those two signatures — a plain skip/retry there would
+        # re-run the same gate and fail again, so the generic button hides.
+        _show_skip = _can_skip and not _is_stage1_verify_fail
+        _show_retry_stage = _can_retry_stage and not _is_stage5_nofacts_fail
+
+        def _failact_skip():
+            """Skip the failed stage and continue with the next one."""
+            if _is_stepwise:
+                # Issue #350: bypass is navigation — it runs nothing.
+                mark_step_bypassed(st.session_state, _err_step)
+                clear_step_fail_count(st.session_state, _err_step)
+                st.session_state.generation_error = None
+                st.session_state.stepwise_run_requested = False
+                st.session_state.stepwise_current_step = _err_step + 1
+            elif _err_step == 1:
+                # No predecessor state to resume from — continue without
+                # verification (#316 semantics: facts marked UNVERIFIED).
+                st.session_state.generation_error = None
+                st.session_state.batch_result = None
+                st.session_state.bypass_stage1_verification = True
+                begin_run(st.session_state)
+            else:
+                _prev = (st.session_state.get("_stage_outputs") or {}).get(_err_step - 1)
+                if not isinstance(_prev, dict):
+                    # Fail loudly: never silently downgrade to a fresh run.
+                    st.error(
+                        f"Cannot skip stage {_err_step}: no completed output "
+                        f"from stage {_err_step - 1} to resume from."
+                    )
+                    return
+                st.session_state.generation_error = None
+                st.session_state.batch_result = None
+                st.session_state._resume_from_stage = _err_step + 1
+                st.session_state._resume_state = copy.deepcopy(_prev)
+                begin_run(st.session_state)
+            st.rerun()
+
+        def _failact_retry_stage():
+            """Re-run the failed stage on the previous stages' outputs."""
+            if _is_stepwise:
+                st.session_state.generation_error = None
+                if not request_step_run(st.session_state, ACTION_RETRY):
+                    st.error("A step-wise run is already in flight — please wait for it to finish.")
+                else:
+                    st.rerun()
+            elif _err_step == 1:
+                # Retrying stage 1 is a fresh run by definition.
+                st.session_state.generation_error = None
+                st.session_state.batch_result = None
+                begin_run(st.session_state)
+                st.rerun()
+            else:
+                _prev = (st.session_state.get("_stage_outputs") or {}).get(_err_step - 1)
+                if not isinstance(_prev, dict):
+                    st.error(
+                        f"Cannot retry stage {_err_step}: no completed output "
+                        f"from stage {_err_step - 1} to resume from."
+                    )
+                    return
+                st.session_state.generation_error = None
+                st.session_state.batch_result = None
+                st.session_state._resume_from_stage = _err_step
+                st.session_state._resume_state = copy.deepcopy(_prev)
+                begin_run(st.session_state)
+                st.rerun()
+
+        def _failact_retry_fresh():
+            """Restart the full pipeline from stage 1."""
+            st.session_state.generation_error = None
+            st.session_state.batch_result = None
+            if _is_stepwise:
+                reset_stepwise_run_markers(st.session_state)
+                st.session_state.stepwise_state = None
+                st.session_state.stepwise_completed_steps = {}
+                st.session_state.stepwise_current_step = 1
+                st.session_state.stepwise_extra_instruction = ""
+                if not request_step_run(st.session_state, ACTION_RESTART):
+                    st.error("A step-wise run is already in flight — please wait for it to finish.")
+                else:
+                    st.rerun()
+            else:
+                begin_run(st.session_state)
+                st.rerun()
+
+        def _failact_stop():
+            """Discard the failed run and return to setup."""
+            st.session_state.generation_error = None
+            st.session_state.batch_result = None
+            if _is_stepwise:
+                st.session_state.stepwise_active = False
+            else:
+                st.session_state._stage_outputs = {}
+                st.session_state._live_substeps = {}
+                st.session_state._last_pipeline_step = 1
+                end_run(st.session_state)  # idempotent; the run already ended
+            st.rerun()
+
+        _fail_actions = []
+        if _show_skip:
+            _skip_help = (
+                f"Skip stage {_err_step} and continue with stage {_err_step + 1}"
+                if (_is_stepwise or _err_step > 1)
+                else "Skip verification and continue without verified facts"
+            )
+            _fail_actions.append(("Skip stage", ":material/skip_next:", _skip_help, "failact_skip", _failact_skip))
+        if _show_retry_stage:
+            _fail_actions.append(("Retry stage", ":material/refresh:",
+                                 f"Re-run stage {_err_step} with the same settings",
+                                 "failact_retry_stage", _failact_retry_stage))
+        _fail_actions.append(("Retry fresh", ":material/restart_alt:",
+                              "Restart the full pipeline from stage 1",
+                              "failact_retry_fresh", _failact_retry_fresh))
+        _fail_actions.append(("Stop", ":material/stop:",
+                              "Discard this run and return to setup",
+                              "failact_stop", _failact_stop))
+        _fail_cols = st.columns(len(_fail_actions))
+        for _fcol, (_flabel, _ficon, _fhelp, _fkey, _ffn) in zip(_fail_cols, _fail_actions):
+            with _fcol:
+                if st.button(_flabel, icon=_ficon, key=_fkey, use_container_width=True,
+                             help=_fhelp, type="primary" if _flabel == "Retry stage" else "secondary"):
+                    _ffn()
+        # #316: Stage 1 verification failure (all 5 news sources failed) —
+        # offer a one-shot bypass that continues without verification.
         if _is_stage1_verify_fail:
             st.info(
                 "All 5 news sources failed (Google, Bing, DuckDuckGo, Yahoo, GDELT). "
@@ -4992,10 +5158,6 @@ with col_output:
         # #335: Stage 5 no-facts refusal — offer a bypass instead of a dead end.
         # Retrying re-runs the same gate with the same (empty) facts, so it can
         # never succeed. Every fail-loud failure must give a bypass option.
-        _is_stage5_nofacts_fail = (
-            _f_step == 5
-            and "no verified facts available to ground video prompts" in _f_msg
-        )
         if _is_stage5_nofacts_fail:
             st.info(
                 "Stage 5 needs verified facts to ground the video prompts, but none "
@@ -5062,13 +5224,15 @@ with col_output:
                         key=f"fail_attempt_{_a_idx}",
                     )
         if st.session_state.get("stepwise_active"):
-            err_step = failure.get("step", st.session_state.get("stepwise_current_step", 1))
+            err_step = _err_step
             # Issue #350: surface the consecutive-failure count — the human
-            # is right once the step's own attempts are exhausted, and the
-            # panel below always offers the bypass.
+            # is right once the step's own attempts are exhausted. Recovery
+            # actions (Skip stage / Retry stage / Retry fresh / Stop) live in
+            # the top action bar; only Back stays here (navigation, not
+            # recovery).
             _fail_n = step_fail_count(st.session_state, err_step)
             _fail_word = "time" if _fail_n == 1 else "times"
-            st.caption(f"Step {err_step} failed ({_fail_n} {_fail_word}). You can change the model and retry, go back to the previous stage, or move to the next step.")
+            st.caption(f"Step {err_step} failed ({_fail_n} {_fail_word}). Choose a recovery action above.")
             # Output till previous stage: keep every completed stage's output
             # visible so the failure doesn't wipe out the work so far.
             _comp = st.session_state.get("stepwise_completed_steps", {}) or {}
@@ -5081,87 +5245,24 @@ with col_output:
                     for _s_num in _prev_steps:
                         _render_step_output(_s_num, _comp[_s_num], key_prefix=f"failhist{_s_num}_", as_root=True)
                         _render_input_prompts(_comp[_s_num], key_prefix=f"failhistp{_s_num}_")
-            # Issue #350: every stepwise failure offers a bypass ("Move to
-            # next step") — a retry-only dead end is not acceptable. Step 6
-            # is the final integrate & validate that produces the script, so
-            # there is no next step to move to.
-            _bypassable = err_step < 6
-            c_back = None
-            c_bypass = None
-            if err_step > 1 and _bypassable:
-                c_retry, c_back, c_bypass, c_abort = st.columns([1, 1, 1.4, 1])
-            elif err_step > 1:
-                c_retry, c_back, c_abort = st.columns([1, 1, 1])
-            elif _bypassable:
-                c_retry, c_bypass, c_abort = st.columns([1, 1.4, 1])
-            else:
-                c_retry, c_abort = st.columns([1, 1])
-            with c_retry:
-                # Issue #198 / HIG §3: Retry initiates a step run — it owns
-                # its loading state (running label shown visibly + disabled
-                # until the step result lands); a duplicate click is refused
-                # loudly.
-                # #199: icon-only control at rest — refresh metaphor +
-                # verb-first help tag.
-                _retry_inflight = inflight_action(st.session_state) == ACTION_RETRY
-                _retry_label = f"Retrying Step {err_step}…" if _retry_inflight else ""
-                _retry_icon = None if _retry_inflight else ":material/refresh:"
-                if st.button(_retry_label, icon=_retry_icon, key="retry_stepwise_step", type="primary", use_container_width=True,
-                             disabled=step_run_inflight(st.session_state),
-                             help=f"Retry step {err_step} with the same settings"):
-                    if not request_step_run(st.session_state, ACTION_RETRY):
-                        st.error("A step-wise run is already in flight — please wait for it to finish.")
-                    else:
-                        st.session_state.generation_error = None
-                        st.rerun()
-            if c_back is not None:
-                with c_back:
-                    # #199: icon-only control — back-arrow metaphor + verb-first help tag.
-                    if st.button("", icon=":material/arrow_back:", key="back_stepwise_step", use_container_width=True,
-                                 help=f"Go back to step {err_step - 1} and continue from there"):
-                        st.session_state.generation_error = None
-                        st.session_state.stepwise_run_requested = False
-                        st.session_state.stepwise_current_step = err_step - 1
-                        st.rerun()
-            if c_bypass is not None:
-                with c_bypass:
-                    # Issue #350: bypass is navigation (like Back) — it runs
-                    # nothing, so it claims no in-flight slot; it marks the
-                    # step skipped, clears the failure, and advances.
-                    # #199: verb-first help tag.
-                    if st.button("Move to next step", icon=":material/skip_next:", key="bypass_stepwise_step",
-                                 use_container_width=True,
-                                 help=f"Skip step {err_step} and continue with step {err_step + 1}"):
-                        mark_step_bypassed(st.session_state, err_step)
-                        clear_step_fail_count(st.session_state, err_step)
-                        st.session_state.generation_error = None
-                        st.session_state.stepwise_run_requested = False
-                        st.session_state.stepwise_current_step = err_step + 1
-                        st.rerun()
-            with c_abort:
-                # #199: icon-only control — close metaphor + verb-first help tag.
-                if st.button("", icon=":material/close:", key="cancel_stepwise_err", use_container_width=True,
-                             help="Exit step-wise generation mode"):
+            if err_step > 1:
+                # #199: icon-only control — back-arrow metaphor + verb-first help tag.
+                if st.button("", icon=":material/arrow_back:", key="back_stepwise_step", use_container_width=True,
+                             help=f"Go back to step {err_step - 1} and continue from there"):
                     st.session_state.generation_error = None
-                    st.session_state.stepwise_active = False
+                    st.session_state.stepwise_run_requested = False
+                    st.session_state.stepwise_current_step = err_step - 1
                     st.rerun()
         else:
             # Continuous mode: show completed stage outputs so Stage 1/2 views
             # don't disappear on failure. Same shared cumulative preview as the
             # live run — every completed stage stays visible and verifiable.
+            # Recovery actions (Skip stage / Retry stage / Retry fresh / Stop)
+            # live in the top action bar.
             _stage_outs = st.session_state.get("_stage_outputs", {}) or {}
             if _stage_outs:
                 _render_cumulative_preview(_stage_outs, key_prefix="failhist_")
-            st.caption("No script was generated. Resolve the model issue and try again.")
-            if st.button("Try again", key="retry_failed_generation", use_container_width=True,
-                         help="Retry the failed generation"):
-                st.session_state.generation_error = None
-                st.session_state.batch_result = None
-                # Issue #195: claim the single-flight slot so the Generate
-                # button renders disabled for the whole retry run. Raises
-                # loudly if a run is somehow already in flight.
-                begin_run(st.session_state)
-                st.rerun()
+            st.caption("No script was generated. Choose a recovery action above.")
 
     def _stepwise_go_back(target_step: int):
         """Go back to a completed step for fine-tuning (works on success too).
