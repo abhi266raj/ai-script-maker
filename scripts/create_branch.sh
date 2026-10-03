@@ -12,7 +12,11 @@ for arg in "$@"; do
         RAW_ARGS+=("$arg")
     fi
 done
-set -- "${RAW_ARGS[@]}"
+if [ "${#RAW_ARGS[@]}" -gt 0 ]; then
+    set -- "${RAW_ARGS[@]}"
+else
+    set --
+fi
 
 if [ "$#" -lt 1 ]; then
     echo "ERROR: Branch missing. Usage: $0 <prefix>/<name> [--stash]" >&2
