@@ -67,6 +67,11 @@ git commit -m "<type>: <concise description>"
 ./open_pr -t "<type>: <description>" -b "## Summary\n<details of change>"
 ```
 
+**No `gh` write access? Produce the prefilled link instead of running `./open_pr`.**
+When the agent's GitHub access is read-only (e.g. a restricted VM), do not hand over a shell command — produce a clickable link with title/body prefilled (URL-encoded); the user just hits Create:
+- PR: `https://github.com/<owner>/<repo>/compare/develop...<branch>?title=<enc-title>&body=<enc-body>`
+- Issue: `https://github.com/<owner>/<repo>/issues/new?title=<enc-title>&body=<enc-body>&labels=<enc-labels>`
+
 ### 4. Address Review Comments & Resolve via Script
 When review comments are submitted on a PR:
 1. Make surgical code/doc corrections and commit.
