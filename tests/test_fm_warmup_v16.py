@@ -1,6 +1,6 @@
 """Developer on-demand Apple FM warm-up (issue #37).
 
-The "Cold start" button next to the Studio/Library tab bar kicks
+The icon-only warm-up button next to the Studio/Library tab bar kicks
 off the #4 availability probe (30s -> 30s -> 60s) in a daemon thread so
 the first real generation skips the cold-start delay. Manual-only:
 nothing automatic — warm-up runs solely on button tap.
@@ -30,7 +30,7 @@ import story_library as lib  # noqa: E402
 import core  # noqa: E402
 import sys as _sys  # noqa: E402
 _dual_engine_mod = _sys.modules["core.dual_engine"]
-from library_ui import _fm_warmup_button_props  # noqa: E402
+from library_ui import _fm_warmup_button_props, _FM_WARMUP_ICON  # noqa: E402
 
 
 @pytest.fixture
@@ -202,13 +202,13 @@ def test_worker_failed_when_probe_raises(libdir, monkeypatch):
 # ---------------------------------------------------------------------------
 
 def test_button_idle_props():
-    assert _fm_warmup_button_props({}) == ("Cold start", False)
-    assert _fm_warmup_button_props({"state": "done"}) == ("Cold start", False)
-    assert _fm_warmup_button_props({"state": "failed"}) == ("Cold start", False)
+    assert _fm_warmup_button_props({}) == (_FM_WARMUP_ICON, False)
+    assert _fm_warmup_button_props({"state": "done"}) == (_FM_WARMUP_ICON, False)
+    assert _fm_warmup_button_props({"state": "failed"}) == (_FM_WARMUP_ICON, False)
 
 
 def test_button_warming_props_disabled():
-    label, disabled = _fm_warmup_button_props({"state": "warming"})
+    icon, disabled = _fm_warmup_button_props({"state": "warming"})
     assert disabled is True
-    assert "Warming" in label
-    assert label != "Cold start", "the starter must visibly own its progress"
+    assert icon == _FM_WARMUP_ICON, \
+        "stable icon while warming — the spinner + disabled state own the progress (#365)"

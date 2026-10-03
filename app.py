@@ -2591,12 +2591,14 @@ if _v15_view == "library":
 srv_info = get_server_info()
 col_brand, col_srv = st.columns([7.8, 2.2], vertical_alignment="center")
 with col_brand:
-    _commit_suffix = f" · {_RUNNING_COMMIT}" if _RUNNING_COMMIT else ""
+    # #365 (HIG §1): the product title carries the version only — the git
+    # commit hash is developer metadata, so it lives in the Server expander
+    # below, not in the most prominent element on screen.
     st.markdown(
         f"""
         <div class="nav" style="padding-bottom: 0px; margin-bottom: 0px;">
             <div>
-                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}{_commit_suffix}</span></div>
+                <div class="nav-title">Hindi Reel Studio <span class="nav-ver">v{APP_VERSION}</span></div>
             </div>
         </div>
         """,
@@ -2606,7 +2608,8 @@ with col_srv:
     # macOS HIG: disclosure triangle (inline expansion), never a popover on click.
     with st.expander(f"Server · :{srv_info['port']}", expanded=False):
         st.markdown("**Server Status: Running**")
-        st.caption(f"Host: `{srv_info['host']}` • Port: `{srv_info['port']}` • PID: `{srv_info['pid']}`")
+        _commit_detail = f" • Commit: `{_RUNNING_COMMIT}`" if _RUNNING_COMMIT else ""
+        st.caption(f"Host: `{srv_info['host']}` • Port: `{srv_info['port']}` • PID: `{srv_info['pid']}`{_commit_detail}")
         if srv_info['is_standard_port']:
             st.caption("Standard HTTP/HTTPS release ports active")
 
@@ -2629,13 +2632,14 @@ with col_settings:
         with story_heading:
             st.markdown('<div class="ios-section-label">Story &amp; Topic</div>', unsafe_allow_html=True)
         with story_refresh:
-            # HIG §3 (#196, #325): the Refresh button owns its loading state —
-            # it swaps to a spinner icon and stays disabled while a fetch it
-            # kicked off is in flight. No detached spinner.
+            # HIG §3 (#196, #325, #365): the Refresh button owns its loading
+            # state — stable icon in both states, disabled while a fetch it
+            # kicked off is in flight. The spinner at the fetch site marks
+            # the in-flight work. No icon swap, no detached labeled spinner.
             # #264: icon-only (house rule) — no text label; the hover help
             # tag carries the description.
             _refresh_busy = is_refresh_busy(st.session_state)
-            refresh_news = st.button("", icon=":material/progress_activity:" if _refresh_busy else ":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
+            refresh_news = st.button("", icon=":material/refresh:", help="Refresh headlines", use_container_width=True, key="refresh_news", disabled=_refresh_busy)
         # Claim the click once per fragment run: the first fetch site below
         # takes the claim; stacked re-clicks (busy or inside the cooldown
         # window) are ignored — no second fetch, ever.
@@ -2727,10 +2731,12 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
-                            # it shows the spinner icon while busy. No detached
+                            # HIG §3 (#196, #325, #365): the Refresh button owns this
+                            # fetch — stable icon + disabled while busy; the spinner
+                            # below marks the in-flight fetch. No detached labeled
                             # spinner.
-                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            with st.spinner(""):
+                                _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2783,10 +2789,12 @@ with col_settings:
                 if not _trend_cache or refresh_news:
                     if not refresh_news or _claim_refresh_once() or not _trend_cache:
                         try:
-                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
-                            # it shows the spinner icon while busy. No detached
+                            # HIG §3 (#196, #325, #365): the Refresh button owns this
+                            # fetch — stable icon + disabled while busy; the spinner
+                            # below marks the in-flight fetch. No detached labeled
                             # spinner.
-                            _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
+                            with st.spinner(""):
+                                _fetched_tags = news_fetcher.fetch_famous_english_hashtags(limit=12)
                         except Exception as _gt_err:
                             # Loud failure: visible warning, and allow an immediate retry.
                             reset_refresh_claim(st.session_state)
@@ -2839,60 +2847,62 @@ with col_settings:
                     _need_headlines = (refresh_news or not st.session_state.live_news_articles or st.session_state.get("loaded_news_cat") != selected_news_cat or st.session_state.get("loaded_hashtag") != st.session_state.get("active_hashtag"))
                     if _need_headlines and (not refresh_news or _claim_refresh_once() or not st.session_state.live_news_articles):
                         articles = []
-                        try:
-                            # HIG §3 (#196, #325): the Refresh button owns this fetch —
-                            # it shows the spinner icon while busy. No detached
-                            # spinner.
-                            _ht = (st.session_state.get("active_hashtag") or "").strip()
-                            if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
-                                # Hashtag mode: every hashtag carries its own headline —
-                                # use it directly, no extra search needed.
-                                # Normalize the hashtag dict entry to a NewsArticle-like object
-                                # (dicts have "headline", articles need "title").
-                                if active_hashtag_article:
-                                    if isinstance(active_hashtag_article, dict):
-                                        from types import SimpleNamespace
-                                        articles = [SimpleNamespace(
-                                            title=active_hashtag_article.get("headline", ""),
-                                            link=active_hashtag_article.get("link", ""),
-                                            source=active_hashtag_article.get("source", ""),
-                                            time_label="",
-                                        )]
+                        # HIG §3 (#196, #325, #365): the Refresh button owns this
+                        # fetch — stable icon + disabled while busy; the spinner
+                        # below marks the in-flight fetch. No detached labeled
+                        # spinner.
+                        with st.spinner(""):
+                            try:
+                                _ht = (st.session_state.get("active_hashtag") or "").strip()
+                                if selected_news_cat in (TRENDING_HASHTAG_SOURCE, INSTAGRAM_HASHTAG_SOURCE) and _ht:
+                                    # Hashtag mode: every hashtag carries its own headline —
+                                    # use it directly, no extra search needed.
+                                    # Normalize the hashtag dict entry to a NewsArticle-like object
+                                    # (dicts have "headline", articles need "title").
+                                    if active_hashtag_article:
+                                        if isinstance(active_hashtag_article, dict):
+                                            from types import SimpleNamespace
+                                            articles = [SimpleNamespace(
+                                                title=active_hashtag_article.get("headline", ""),
+                                                link=active_hashtag_article.get("link", ""),
+                                                source=active_hashtag_article.get("source", ""),
+                                                time_label="",
+                                            )]
+                                        else:
+                                            articles = [active_hashtag_article]
                                     else:
-                                        articles = [active_hashtag_article]
+                                        # Custom typed hashtag: search news about the topic.
+                                        _query = _ht.lstrip("#").replace("#", " ")
+                                        articles = news_fetcher.search_news(_query, limit=16)
+                                elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
+                                        articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
+                                elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
+                                        articles = news_fetcher.get_india_trending(limit=16)
+                                elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
+                                        articles = news_fetcher.get_top_indian_politics_news(limit=16)
+                                elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
+                                        articles = news_fetcher.get_top_indian_culture_news(limit=16)
+                                elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
+                                        articles = news_fetcher.get_top_india_tech_news(limit=16)
+                                elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
+                                        articles = news_fetcher.get_top_tech_news(limit=16)
+                                elif "World" in selected_news_cat:
+                                        articles = news_fetcher.get_top_world_news(limit=16)
+                                elif "Business" in selected_news_cat:
+                                        articles = news_fetcher.get_top_business_news(limit=16)
                                 else:
-                                    # Custom typed hashtag: search news about the topic.
-                                    _query = _ht.lstrip("#").replace("#", " ")
-                                    articles = news_fetcher.search_news(_query, limit=16)
-                            elif "Funny" in selected_news_cat or "Quirky" in selected_news_cat or "Jugaad" in selected_news_cat:
-                                    articles = news_fetcher.get_top_funny_viral_india_news(limit=16)
-                            elif "Trending" in selected_news_cat or "Viral" in selected_news_cat:
-                                    articles = news_fetcher.get_india_trending(limit=16)
-                            elif "Politics" in selected_news_cat or "Election" in selected_news_cat or "Governance" in selected_news_cat:
-                                    articles = news_fetcher.get_top_indian_politics_news(limit=16)
-                            elif "Culture" in selected_news_cat or "Heritage" in selected_news_cat:
-                                    articles = news_fetcher.get_top_indian_culture_news(limit=16)
-                            elif "Tech" in selected_news_cat or "ISRO" in selected_news_cat:
-                                    articles = news_fetcher.get_top_india_tech_news(limit=16)
-                            elif "Technology" in selected_news_cat or "AI" in selected_news_cat:
-                                    articles = news_fetcher.get_top_tech_news(limit=16)
-                            elif "World" in selected_news_cat:
-                                    articles = news_fetcher.get_top_world_news(limit=16)
-                            elif "Business" in selected_news_cat:
-                                    articles = news_fetcher.get_top_business_news(limit=16)
-                            else:
-                                    articles = news_fetcher.get_top_india_news(limit=16)
-                        except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
-                            # Loud failure: visible error banner, and allow an immediate retry.
-                            reset_refresh_claim(st.session_state)
-                            st.error(str(_nfe))
-                            articles = []
-                        except Exception:
-                            # Fail loudly (#196): never swallow unexpected errors; allow an immediate retry.
-                            reset_refresh_claim(st.session_state)
-                            raise
-                        finally:
-                            release_refresh(st.session_state)
+                                        articles = news_fetcher.get_top_india_news(limit=16)
+                            except NewsFetchError as _nfe:  # #121: loud, with the tried-sources report
+                                # Loud failure: visible error banner, and allow an immediate retry.
+                                reset_refresh_claim(st.session_state)
+                                st.error(str(_nfe))
+                                articles = []
+                            except Exception:
+                                # Fail loudly (#196): never swallow unexpected errors; allow an immediate retry.
+                                reset_refresh_claim(st.session_state)
+                                raise
+                            finally:
+                                release_refresh(st.session_state)
                         st.session_state.live_news_articles = articles
                         st.session_state.loaded_news_cat = selected_news_cat
                         st.session_state.loaded_hashtag = st.session_state.get("active_hashtag", "")
