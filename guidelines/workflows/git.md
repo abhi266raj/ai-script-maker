@@ -30,10 +30,12 @@
 | **Create Branch** | `./create_branch <prefix>/<name>` | [`scripts/create_branch.sh`](../../scripts/create_branch.sh) |
 | **Run Unit Tests** | `./runut` | [`scripts/runut`](../../scripts/runut) |
 | **Push & Open PR** | `./open_pr -t "..." -b "..."` | [`scripts/open_pr.sh`](../../scripts/open_pr.sh) |
+| **Resolve PR Comments** | `./resolve_comment <pr> [reply]` | [`scripts/resolve_comment.sh`](../../scripts/resolve_comment.sh) |
 | **Merge PR** | `./merge_pr <num>` | [`scripts/merge_pr.sh`](../../scripts/merge_pr.sh) |
 
 4. **No Auto-Tests on Branch Creation:** Do not run unit tests on branch creation unless requested. Run tests during verification before commit.
-5. **User Confirmation Gate:** Never merge a Pull Request automatically. Present the PR link, diff summary, and test status for explicit user approval before running `./merge_pr`.
+5. **Resolve Comments via CLI:** Review comments MUST be resolved using `./resolve_comment`, never manually in GitHub UI.
+6. **User Confirmation Gate:** Never merge a Pull Request automatically. Present the PR link, diff summary, and test status for explicit user approval before running `./merge_pr`.
 
 ---
 
@@ -65,7 +67,16 @@ git commit -m "<type>: <concise description>"
 ./open_pr -t "<type>: <description>" -b "## Summary\n<details of change>"
 ```
 
-### 4. User Approval & PR Merge Gate
+### 4. Address Review Comments & Resolve via Script
+When review comments are submitted on a PR:
+1. Make surgical code/doc corrections and commit.
+2. Push commit to remote branch.
+3. Resolve review comment thread via standardized script:
+   ```bash
+   ./resolve_comment <pr-number> "Addressed in <commit-hash>: <concise summary>"
+   ```
+
+### 5. User Approval & PR Merge Gate
 - **STOP HERE:** Present PR URL to user for explicit review and confirmation.
 - Once approved, merge PR:
   ```bash
