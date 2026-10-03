@@ -22,7 +22,16 @@
    - `fix/<issue>-<name>`: Bug fixes and regressions.
    - `refactor/<name>`: Code restructuring without functional change.
    - `chore/<name>`: Maintenance, version bumps, workflow scripts, documentation.
-3. **Standardized Scripts:** Agents must invoke standardized scripts in `scripts/` (or via root shortcuts) instead of executing manual multi-step git commands.
+3. **Standardized Scripts:** Agents must invoke standardized scripts in `scripts/` (or via root shortcuts) instead of executing manual multi-step git commands:
+
+| Task | Shortcut | Script |
+| :--- | :--- | :--- |
+| **Sync Develop** | `./sync_develop` | [`scripts/sync_develop.sh`](../../scripts/sync_develop.sh) |
+| **Create Branch** | `./create_branch <prefix>/<name>` | [`scripts/create_branch.sh`](../../scripts/create_branch.sh) |
+| **Run Unit Tests** | `./runut` | [`scripts/runut`](../../scripts/runut) |
+| **Push & Open PR** | `./open_pr -t "..." -b "..."` | [`scripts/open_pr.sh`](../../scripts/open_pr.sh) |
+| **Merge PR** | `./merge_pr <num>` | [`scripts/merge_pr.sh`](../../scripts/merge_pr.sh) |
+
 4. **No Auto-Tests on Branch Creation:** Do not run unit tests on branch creation unless requested. Run tests during verification before commit.
 5. **User Confirmation Gate:** Never merge a Pull Request automatically. Present the PR link, diff summary, and test status for explicit user approval before running `./merge_pr`.
 
