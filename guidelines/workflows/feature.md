@@ -4,17 +4,17 @@
 
 ## 🚦 When to Apply & What to Expect
 
-- **When to Apply:** Adding new capabilities, UI components, emotions, formats, prompts, or models.
+- **When to Apply:** Authoring new capabilities, UI components, data models, emotions, formats, or prompts.
 - **What to Expect:**
   - Input: Approved requirement specification or user feature request.
-  - Output: Isolated `feature/` branch, fail-loud implementation, backward-compatible models, passing unit tests, and user approval.
+  - Output: Dedicated `feature/` branch, fail-loud implementation, backward-compatible models, passing unit tests, and GitHub Pull Request.
 
 ---
 
 ## 🛑 Rules & Invariants
 
 1. **Commit Gate:** No autonomous feature code without an approved requirement specification (`docs/REQUIREMENTS_vX.Y.md` / GitHub issue) and implementation plan.
-2. **Fail-Loud:** No silent fallbacks or invented defaults. Missing data must raise explicit errors with diagnostic details.
+2. **Fail-Loud Architecture:** No silent fallbacks or invented defaults. Missing data must raise explicit errors with diagnostic details.
 3. **Layer Separation:**
    - Enums & Constants $\rightarrow$ [`core/constants.py`](file:///Users/abhiraj/Documents/news/agent/core/constants.py)
    - Data Models $\rightarrow$ [`core/models.py`](file:///Users/abhiraj/Documents/news/agent/core/models.py)
@@ -26,13 +26,26 @@
 
 ## 📋 Execution Protocol
 
-1. **Plan & Branch:** Ensure requirement scope is defined. Switch to branch:
-   ```bash
-   git checkout -b feature/<descriptive-feature-name>
-   ```
-2. **Implement:** Write code adhering to fail-loud architecture and separation of concerns.
-3. **Test:** Add and run unit tests:
-   ```bash
-   .venv/bin/python3 -m unittest discover tests
-   ```
-4. **User Review:** Present diff summary and test output for user confirmation before merging.
+### 1. Plan & Branch from Develop
+```bash
+git checkout develop && git pull origin develop
+git checkout -b feature/<descriptive-feature-name>
+```
+
+### 2. Implement & Verify
+```bash
+# Implement changes adhering to fail-loud architecture
+.venv/bin/python3 -m unittest discover tests
+```
+
+### 3. Commit & Open Pull Request
+```bash
+git add <files>
+git commit -m "feat: <description>"
+git push -u origin feature/<descriptive-feature-name>
+gh pr create --base develop --title "feat: <description>" --body "## Summary\n<details>"
+```
+
+### 4. User Review Gate
+- Present PR URL, diff summary, and test verification output for explicit user review.
+- Never merge without user approval.
