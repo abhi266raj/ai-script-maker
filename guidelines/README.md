@@ -11,7 +11,7 @@ Canonical rule repository governing **how AI agents author, modify, test, and in
 | :--- | :--- | :--- | :--- |
 | **New Feature** | Writing new capabilities, UI components, data models, or prompts | Spec approval $\rightarrow$ `feature/` branch $\rightarrow$ fail-loud code $\rightarrow$ test pass | [`workflows/feature.md`](./workflows/feature.md) |
 | **Bug Fix** | Fixing crashes, test failures, UI/CSS bugs, regressions | Root cause $\rightarrow$ `fix/` branch $\rightarrow$ minimal diff $\rightarrow$ regression test pass | [`workflows/bugfix.md`](./workflows/bugfix.md) |
-| **Git & Merging** | Branching, testing, committing, merging | No main commits $\rightarrow$ branch naming $\rightarrow$ user approval $\rightarrow$ `--no-ff` merge | [`workflows/git.md`](./workflows/git.md) |
+| **Git & PR Workflow** | Branching, testing, committing, opening Pull Requests | No direct push $\rightarrow$ dedicated branch $\rightarrow$ `gh pr create` $\rightarrow$ user approval | [`workflows/git.md`](./workflows/git.md) |
 | **Release & Spec** | Version bumps, release audits, requirements lifecycle | Spec/plan gate $\rightarrow$ commit gate $\rightarrow$ post-release requirement audit | [`workflows/release.md`](./workflows/release.md) |
 
 ---
@@ -28,7 +28,7 @@ Canonical rule repository governing **how AI agents author, modify, test, and in
 
 ## 🛑 Universal Coding Invariants (All Tasks)
 
-1. **Main is Read-Only:** Never edit/commit on `main`. Branch immediately if on `main`.
+1. **Protected Branches (Main & Develop):** Direct pushes to `main` and `develop` are **strictly blocked** by GitHub branch rules (`GH013`). All changes MUST be submitted via a dedicated branch and Pull Request (`gh pr create`).
 2. **User Confirmation Gate:** Never commit or merge automatically. Always present diff and test results.
 3. **Fail-Loud:** No silent fallbacks or invented defaults in generated code. Raise explicit errors with context.
 4. **Preserve Documentation:** Keep all docstrings, comments, and issue references (`#138`, `#217`, `#344`).

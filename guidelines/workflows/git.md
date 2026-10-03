@@ -1,44 +1,66 @@
-# Git Branching & Workflow Rules
+# Git Branching & Pull Request Workflow
 
 ---
 
 ## 🚦 When to Apply & What to Expect
 
-- **When to Apply:** Any task that modifies code, creates branches, runs verification tests, or merges changes.
+- **When to Apply:** Any task that modifies code, creates branches, runs verification tests, or submits changes.
 - **What to Expect:**
-  - Input: Current git state on `main` or `develop`.
-  - Output: Isolated feature/fix branch, green test run, explicit user review, and `--no-ff` merge on approval.
+  - Input: Current clean git state on `develop`.
+  - Output: Dedicated branch pushed to origin, GitHub Pull Request created (`gh pr create`), and merged into `develop` only after explicit user approval.
 
 ---
 
 ## 🛑 Rules & Invariants
 
-1. **Main is Read-Only:** Zero direct coding or commits on `main`. Check with `git branch --show-current`. Switch immediately if on `main`.
-2. **Dedicated Branch:** Always branch from active trunk (`develop` or `main`).
+1. **Protected Branches (Main & Develop):**
+   - Direct pushes to `develop` and `main` are **strictly blocked** by GitHub repository rules (`GH013: Changes must be made through a pull request`).
+   - Agents are **strictly forbidden** from attempting direct pushes or merges into `main` or `develop`.
+   - **All code changes MUST be submitted via Pull Requests.**
+2. **Dedicated Branch Naming:** Always branch from `origin/develop`:
    - `feature/<name>`: New capabilities or prompts.
    - `fix/<issue>-<name>`: Bug fixes and regressions.
    - `refactor/<name>`: Code restructuring without functional change.
-   - `chore/<name>`: Maintenance, version bumps, workflow scripts.
-3. **No Auto-Tests on Branching:** Do not run unit tests on branch creation unless requested. Run tests only during verification.
-4. **User Confirmation Gate:** Never commit or merge without explicit user confirmation of diff and test results.
+   - `chore/<name>`: Maintenance, version bumps, workflow scripts, documentation.
+3. **No Auto-Tests on Branch Creation:** Do not run unit tests on branch creation unless requested. Run tests during verification before commit.
+4. **User Confirmation Gate:** Never merge a Pull Request automatically. Present the PR link, diff summary, and test status for explicit user approval.
 
 ---
 
 ## 📋 Execution Protocol
 
-1. **Verify & Branch:**
-   ```bash
-   git checkout <base-branch> && git pull origin <base-branch>
-   git checkout -b <prefix>/<descriptive-name>
-   ```
-2. **Develop & Verify:**
-   ```bash
-   .venv/bin/python3 -m unittest discover tests
-   ```
-3. **User Approval:** Present diff and test status. Await confirmation.
-4. **Integration Merge (on User OK):**
-   ```bash
-   git checkout <base-branch> && git pull origin <base-branch>
-   git merge --no-ff <prefix>/<descriptive-name> -m "Merge '<prefix>/<descriptive-name>' into <base-branch>"
-   .venv/bin/python3 -m unittest discover tests
-   ```
+### 1. Verify & Branch from Develop
+```bash
+git checkout develop && git pull origin develop
+git checkout -b <prefix>/<descriptive-name>
+```
+
+### 2. Develop, Verify & Commit
+```bash
+# Verify test suite
+.venv/bin/python3 -m unittest discover tests
+
+# Stage and commit changes
+git add <files>
+git commit -m "<type>: <concise description>"
+```
+
+### 3. Push Branch & Open Pull Request
+```bash
+# Push dedicated branch to remote
+git push -u origin <prefix>/<descriptive-name>
+
+# Create Pull Request targeting develop
+gh pr create --base develop --title "<type>: <description>" --body "## Summary\n<details of change>"
+```
+
+### 4. User Approval & PR Merge
+- Present the Pull Request URL to the user for review.
+- Once explicitly confirmed by the user, merge the PR:
+  ```bash
+  gh pr merge --squash --delete-branch
+  ```
+- Sync local develop:
+  ```bash
+  git checkout develop && git pull origin develop
+  ```
